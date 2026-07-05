@@ -79,7 +79,7 @@
 			</p>
 			<div class="restock-panel">
 				<div class="restock-controls">
-					<h3>Restock times</h3>
+					<h3>Stockout timing</h3>
 					<div class="avg-wrap">
 						<label class="restock-amount-wrap" for="restock-amount">
 							<span>Restock amount</span>
@@ -92,7 +92,7 @@
 								title="Full quantity when an item restocks. Used to estimate the actual restock time before our first snapshot."
 							/>
 						</label>
-						<span>Average of last</span>
+						<span>Avg empty for</span>
 						<div class="avg-buttons" id="avg-buttons"></div>
 						<span id="restock-avg" class="restock-avg"></span>
 					</div>
@@ -100,12 +100,28 @@
 				<div class="restock-controls rate-controls">
 					<h3>Depletion rate</h3>
 					<div class="avg-wrap">
-						<span>Average of last</span>
+						<span>Avg rate</span>
 						<div class="avg-buttons" id="rate-avg-buttons"></div>
 						<span id="rate-avg" class="restock-avg"></span>
 					</div>
 				</div>
-				<ul id="restock-list" class="restock-list"></ul>
+				<p id="cycle-open-note" class="cycle-open-note hidden"></p>
+				<table class="cycle-history">
+					<colgroup>
+						<col span="2" />
+						<col style="width: 7rem" />
+						<col style="width: 7rem" />
+					</colgroup>
+					<thead>
+						<tr>
+							<th>Depleted</th>
+							<th>Restocked</th>
+							<th>Rate</th>
+							<th>Empty for</th>
+						</tr>
+					</thead>
+					<tbody id="cycle-history-body"></tbody>
+				</table>
 			</div>
 		</main>
 

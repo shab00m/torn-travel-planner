@@ -106,14 +106,17 @@ function render() {
 
 el.search.addEventListener("input", () => {
   state.search = el.search.value;
+  savePrefs({ search: state.search });
   render();
 });
 el.countryFilter.addEventListener("change", () => {
   state.countryFilter = el.countryFilter.value;
+  savePrefs({ countryFilter: state.countryFilter });
   render();
 });
 el.inStockOnly.addEventListener("change", () => {
   state.inStockOnly = el.inStockOnly.checked;
+  savePrefs({ inStockOnly: state.inStockOnly });
   render();
 });
 
@@ -126,6 +129,9 @@ el.countries.addEventListener("click", (e) => {
 (async () => {
   await loadCountries();
   await populateCountryFilter();
+  el.search.value = state.search;
+  el.countryFilter.value = state.countryFilter;
+  el.inStockOnly.checked = state.inStockOnly;
   await loadStocks();
   setInterval(loadStocks, 60_000);
 })();

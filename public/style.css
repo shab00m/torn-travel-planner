@@ -286,7 +286,7 @@ body.page-item {
 .prediction-note { color: var(--text-dim); font-size: 0.78rem; }
 .prediction-list strong { color: #a78bfa; }
 .prediction-list .leave-by { color: #f0c674; font-weight: 600; white-space: nowrap; }
-.prediction-list .leave-now { color: var(--red); font-weight: 600; white-space: nowrap; }
+.prediction-list .leave-missed { color: var(--red); font-weight: 600; white-space: nowrap; }
 
 .chart-wrap { position: relative; height: 340px; }
 .page-item .chart-wrap {
@@ -367,6 +367,63 @@ body.page-item {
 }
 
 .restock-avg { color: var(--text); font-weight: 600; }
+
+.cycle-open-note {
+  margin: 10px 0 0;
+  color: var(--red);
+  font-size: 0.84rem;
+}
+
+.cycle-open-note.hidden { display: none; }
+
+.cycle-history {
+  width: 100%;
+  margin-top: 12px;
+  border-collapse: collapse;
+  font-size: 0.84rem;
+  table-layout: fixed;
+}
+
+.cycle-history th,
+.cycle-history td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(42, 51, 69, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cycle-history thead th {
+  text-align: left;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.cycle-history th:nth-child(1),
+.cycle-history td:nth-child(1),
+.cycle-history th:nth-child(2),
+.cycle-history td:nth-child(2) {
+  text-align: left;
+}
+
+.cycle-history th:nth-child(3),
+.cycle-history th:nth-child(4),
+.cycle-history td:nth-child(3),
+.cycle-history td:nth-child(4) {
+  text-align: right;
+}
+
+.cycle-history td {
+  color: var(--text-dim);
+}
+
+.cycle-history .rate-cell { color: var(--green); font-weight: 600; }
+.cycle-history .duration-cell { color: var(--text); font-weight: 500; }
+.cycle-history .empty-note { text-align: center; color: var(--text-dim); }
 
 .restock-list {
   list-style: none;

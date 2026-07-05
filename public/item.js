@@ -10,7 +10,8 @@ const el = {
   chartCanvas: document.getElementById("history-chart"),
   avgButtons: document.getElementById("avg-buttons"),
   restockAvg: document.getElementById("restock-avg"),
-  restockList: document.getElementById("restock-list"),
+  cycleOpenNote: document.getElementById("cycle-open-note"),
+  cycleHistoryBody: document.getElementById("cycle-history-body"),
   rateAvgButtons: document.getElementById("rate-avg-buttons"),
   rateAvg: document.getElementById("rate-avg"),
   predictionButtons: document.getElementById("prediction-buttons"),
@@ -35,7 +36,6 @@ function fmtDuration(seconds) {
 const fmtRate = (r) => (Math.abs(r) >= 10 ? r.toFixed(0) : r.toFixed(1));
 const tsMs = (ts) => ts * 1000;
 
-const SAMPLE_OPTIONS = [1, 3, 5, 10, 20];
 function initAvgButtons(container, defaultN, onSelect) {
   container.innerHTML = SAMPLE_OPTIONS.map(
     (n) => `<button data-n="${n}" class="${n === defaultN ? "active" : ""}">${n}</button>`
@@ -154,7 +154,7 @@ function simulatePredictions(nowTs, endTs, startQty, averages) {
         depletedTs ? Math.max(t, depletedTs + restockSec) : t + restockSec
       );
       if (restockTs > endTs) break;
-      events.push({ type: "restock", ts: restockTs, qty: restockQty });
+      events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: depletedTs });
       t = restockTs;
       qty = restockQty;
       outOfStock = false;
@@ -185,7 +185,7 @@ function simulatePredictions(nowTs, endTs, startQty, averages) {
     }
 
     events.push({ type: "out_of_stock", start: depleteTs, end: restockTs, duration: restockSec });
-    events.push({ type: "restock", ts: restockTs, qty: restockQty });
+    events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: depleteTs });
     t = restockTs;
     qty = restockQty;
   }
@@ -434,45 +434,110 @@ function buildAnnotations(restocks, rates, timeline) {
   return annotations;
 }
 
-function renderRestockPanel() {
+function getCycleHistoryRows() {
   const completed = getAdjustedCompletedRestocks();
+  const adjustedRates = getAdjustedRates();
+  return completed.map((r) => {
+    const origIdx = state.rates.findIndex((w) => w.start_ts === r.restocked_ts);
+    const rate = origIdx >= 0 ? adjustedRates[origIdx]?.rate : null;
+    return {
+      depleted_ts: r.depleted_ts,
+      restocked_ts: r.adjusted_restocked_ts,
+      rate,
+      emptyForSec: r.adjusted_duration,
+    };
+  });
+}
+
+function renderCycleHistory() {
   const open = state.restocks.find((r) => r.restocked_ts == null);
-
-  const rows = [];
+  el.cycleOpenNote.classList.toggle("hidden", !open);
   if (open) {
-    rows.push(
-      `<li class="ongoing">Out of stock since ${fmtTime(open.depleted_ts)} — not restocked yet</li>`
-    );
+    el.cycleOpenNote.textContent = `Currently empty since ${fmtTime(open.depleted_ts)} — not restocked yet`;
   }
-  for (const r of completed.slice(0, 5)) {
-    rows.push(
-      `<li>Depleted ${fmtTime(r.depleted_ts)} → restocked ${fmtTime(r.adjusted_restocked_ts)}
-       <strong>${fmtDuration(r.adjusted_duration)}</strong></li>`
-    );
-  }
-  el.restockList.innerHTML =
-    rows.join("") || `<li class="ongoing">No depletion/restock cycles observed yet.</li>`;
 
-  const sample = completed.slice(0, state.avgSamples);
-  if (sample.length) {
-    const avg = sample.reduce((sum, r) => sum + r.adjusted_duration, 0) / sample.length;
-    el.restockAvg.textContent = `${fmtDuration(avg)} (${sample.length} sample${sample.length === 1 ? "" : "s"})`;
+  const rows = getCycleHistoryRows();
+
+  const stockoutSample = rows.slice(0, state.avgSamples);
+  if (stockoutSample.length) {
+    const avg =
+      stockoutSample.reduce((sum, r) => sum + r.emptyForSec, 0) / stockoutSample.length;
+    el.restockAvg.textContent = `${fmtDuration(avg)} (${stockoutSample.length} sample${stockoutSample.length === 1 ? "" : "s"})`;
   } else {
     el.restockAvg.textContent = "no samples yet";
   }
-}
 
-function renderRatePanel() {
-  const sample = state.rates.slice(0, state.avgRateSamples);
-  if (sample.length) {
-    const avg = sample.reduce((sum, w) => sum + w.rate, 0) / sample.length;
-    el.rateAvg.textContent = `${fmtRate(avg)} items/min (${sample.length} sample${sample.length === 1 ? "" : "s"})`;
+  const rateSample = rows.filter((r) => r.rate != null).slice(0, state.avgRateSamples);
+  if (rateSample.length) {
+    const avg = rateSample.reduce((sum, r) => sum + r.rate, 0) / rateSample.length;
+    el.rateAvg.textContent = `${fmtRate(avg)}/min (${rateSample.length} sample${rateSample.length === 1 ? "" : "s"})`;
   } else {
     el.rateAvg.textContent = "no samples yet";
   }
+
+  if (!rows.length) {
+    el.cycleHistoryBody.innerHTML =
+      `<tr><td colspan="4" class="empty-note">No depletion/restock cycles observed yet.</td></tr>`;
+    return;
+  }
+
+  el.cycleHistoryBody.innerHTML = rows
+    .slice(0, 10)
+    .map(
+      (r) => `<tr>
+        <td>${fmtTime(r.depleted_ts)}</td>
+        <td>${fmtTime(r.restocked_ts)}</td>
+        <td class="rate-cell">${r.rate != null ? `${fmtRate(r.rate)}/min` : "—"}</td>
+        <td class="duration-cell">${fmtDuration(r.emptyForSec)}</td>
+      </tr>`
+    )
+    .join("");
 }
 
-function renderPredictionPanel(events) {
+function depletionAfterRestock(restockTs, events, segments) {
+  const deplete = events.find((ev) => ev.type === "deplete" && ev.ts > restockTs);
+  if (deplete) return deplete.ts;
+  const seg = segments.find((s) => s.start_ts >= restockTs && s.end_qty === 0);
+  return seg?.end_ts ?? null;
+}
+
+function predictedRestockBounds(e, averages, events, segments) {
+  let restockEarliest = e.ts;
+  const amount = currentRestockAmount();
+  if (amount && averages?.rate) {
+    restockEarliest = adjustRestockTime(
+      e.ts,
+      e.qty,
+      averages.rate,
+      amount,
+      e.depleted_ts
+    );
+  }
+  const depleteTs = depletionAfterRestock(e.ts, events, segments);
+  const restockLatest = depleteTs ?? restockEarliest;
+  return { restockEarliest, restockLatest };
+}
+
+function formatRestockLabel(e, i, averages, events, segments) {
+  const { restockEarliest, restockLatest } = predictedRestockBounds(e, averages, events, segments);
+  const prefix = i === 0 ? "Next" : "Then";
+  return `${prefix} restock between ${fmtTimeShort(restockEarliest)} → ${fmtTimeShort(restockLatest)}`;
+}
+
+function formatLeaveWindow(restockEarliest, depletedTs, flightSec, nowTs) {
+  if (flightSec == null || depletedTs == null) return "";
+  const leaveEarliest = depletedTs - flightSec;
+  const leaveLatest = restockEarliest - flightSec;
+
+  if (leaveLatest <= nowTs) {
+    const missedSec = nowTs - leaveLatest;
+    return `<span class="leave-missed">Missed window by ${fmtDuration(missedSec)}</span>`;
+  }
+
+  return `<span class="leave-by">Leave between ${fmtTimeShort(leaveEarliest)} and ${fmtTimeShort(leaveLatest)}</span>`;
+}
+
+function renderPredictionPanel(events, segments) {
   const show = state.predictionHours > 0;
   document.getElementById("prediction-section").classList.toggle("hidden", !show);
   if (!show) return;
@@ -484,6 +549,7 @@ function renderPredictionPanel(events) {
     : "";
 
   const nowTs = Math.floor(Date.now() / 1000);
+  const averages = getAverages();
   const restocks = events.filter((e) => e.type === "restock" && e.ts >= nowTs);
   if (!restocks.length) {
     el.predictionList.innerHTML = `<li class="ongoing">Not enough data to predict restocks.</li>`;
@@ -492,20 +558,10 @@ function renderPredictionPanel(events) {
 
   el.predictionList.innerHTML = restocks
     .map((e, i) => {
-      const leaveTs = flightSec != null ? e.ts - flightSec : null;
-      let leaveHtml = "";
-      if (leaveTs != null) {
-        if (leaveTs <= nowTs) {
-          const arrivalTs = nowTs + flightSec;
-          const lateSec = arrivalTs - e.ts;
-          const lateLabel = lateSec > 0 ? `${fmtDuration(lateSec)} late` : "on time";
-          leaveHtml = `<span class="leave-now">Leave now · arrive ${fmtTime(arrivalTs)} · ${lateLabel}</span>`;
-        } else {
-          leaveHtml = `<span class="leave-by">Leave by ${fmtTime(leaveTs)}</span>`;
-        }
-      }
+      const { restockEarliest } = predictedRestockBounds(e, averages, events, segments);
+      const leaveHtml = formatLeaveWindow(restockEarliest, e.depleted_ts, flightSec, nowTs);
       return `<li>
-        <span>${i === 0 ? "Next" : "Then"} restock ${fmtTime(e.ts)} · ~${fmtNum(e.qty)} items</span>
+        <span>${formatRestockLabel(e, i, averages, events, segments)}</span>
         ${leaveHtml}
       </li>`;
     })
@@ -609,7 +665,7 @@ function chartOptions(timeline) {
 
 function refreshChart(timeline) {
   state.predictedEvents = timeline.events ?? [];
-  renderPredictionPanel(state.predictedEvents);
+  renderPredictionPanel(state.predictedEvents, timeline.segments ?? []);
   const options = chartOptions(timeline);
 
   if (state.chart) {
@@ -661,8 +717,7 @@ async function drawChart() {
 
   el.itemEmpty.classList.toggle("hidden", history.points.length > 0);
   el.status.textContent = `${history.points.length} snapshots in range — auto-refreshes every minute`;
-  renderRestockPanel();
-  renderRatePanel();
+  renderCycleHistory();
 
   const timeline = buildTimeline(history.points, state.predictionHours);
   refreshChart(timeline);
@@ -695,7 +750,7 @@ function setupItemPage(item) {
 }
 
 function refreshRestockAdjustments() {
-  renderRestockPanel();
+  renderCycleHistory();
   if (!state.chartPoints.length) return;
   const timeline = buildTimeline(state.chartPoints, state.predictionHours);
   refreshChart(timeline);
@@ -724,7 +779,8 @@ el.rangeButtons.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-hours]");
   if (!btn || !state.item) return;
   state.rangeHours = Number(btn.dataset.hours);
-  el.rangeButtons.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+  savePrefs({ rangeHours: state.rangeHours });
+  syncHourButtons(el.rangeButtons, state.rangeHours);
   drawChart();
 });
 
@@ -732,18 +788,24 @@ el.predictionButtons.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-hours]");
   if (!btn || !state.item) return;
   state.predictionHours = Number(btn.dataset.hours);
-  el.predictionButtons.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
+  savePrefs({ predictionHours: state.predictionHours });
+  syncHourButtons(el.predictionButtons, state.predictionHours);
   redrawPrediction();
 });
 
+syncHourButtons(el.rangeButtons, state.rangeHours);
+syncHourButtons(el.predictionButtons, state.predictionHours);
+
 initAvgButtons(el.avgButtons, state.avgSamples, (n) => {
   state.avgSamples = n;
-  renderRestockPanel();
+  savePrefs({ avgSamples: n });
+  renderCycleHistory();
   redrawPrediction();
 });
 initAvgButtons(el.rateAvgButtons, state.avgRateSamples, (n) => {
   state.avgRateSamples = n;
-  renderRatePanel();
+  savePrefs({ avgRateSamples: n });
+  renderCycleHistory();
   redrawPrediction();
 });
 

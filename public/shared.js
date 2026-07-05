@@ -18,9 +18,57 @@ const state = {
   travelType: "Standard",
 };
 
+const PREFS_KEY = "plannerPrefs";
+const SAMPLE_OPTIONS = [1, 3, 5, 10, 20];
+const RANGE_HOURS_OPTIONS = [1, 6, 24, 168, 0];
+const PREDICTION_HOURS_OPTIONS = [0, 1, 2, 3, 6, 12, 24];
+
+function loadPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function savePrefs(updates) {
+  localStorage.setItem(PREFS_KEY, JSON.stringify({ ...loadPrefs(), ...updates }));
+}
+
+function pickOption(value, options, fallback) {
+  const n = Number(value);
+  return options.includes(n) ? n : fallback;
+}
+
+function applyStoredPrefs() {
+  const prefs = loadPrefs();
+  state.rangeHours = pickOption(prefs.rangeHours, RANGE_HOURS_OPTIONS, 24);
+  state.predictionHours = pickOption(prefs.predictionHours, PREDICTION_HOURS_OPTIONS, 0);
+  state.avgSamples = pickOption(prefs.avgSamples, SAMPLE_OPTIONS, 5);
+  state.avgRateSamples = pickOption(prefs.avgRateSamples, SAMPLE_OPTIONS, 5);
+  state.search = typeof prefs.search === "string" ? prefs.search : "";
+  state.countryFilter = typeof prefs.countryFilter === "string" ? prefs.countryFilter : "";
+  state.inStockOnly = prefs.inStockOnly === true;
+}
+
+function syncHourButtons(container, hours) {
+  if (!container) return;
+  container.querySelectorAll("button[data-hours]").forEach((b) => {
+    b.classList.toggle("active", Number(b.dataset.hours) === hours);
+  });
+}
+
+applyStoredPrefs();
+
 const fmtNum = (n) => n.toLocaleString("en-US");
 const fmtMoney = (n) => "$" + fmtNum(n);
 const fmtTime = (ts) => new Date(ts * 1000).toLocaleString();
+const fmtTimeShort = (ts) =>
+  new Date(ts * 1000).toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 
 async function fetchJson(url) {
   const res = await fetch(url);
