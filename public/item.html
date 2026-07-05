@@ -21,11 +21,6 @@
 					<a href="/" class="back-link">← Stock overview</a>
 					<h1 id="item-title"></h1>
 					<span id="item-subtitle" class="item-subtitle"></span>
-					<div id="current-stock" class="current-stock hidden">
-						<span class="current-stock-label">Current Stock:</span>
-						<span id="current-qty" class="current-qty"></span>
-						<span id="current-meta" class="current-meta"></span>
-					</div>
 				</div>
 				<div class="header-meta">
 					<div id="auth" class="auth">
@@ -46,22 +41,43 @@
 		</header>
 
 		<main class="item-page">
-			<div class="range-buttons" id="range-buttons">
-				<button data-hours="1">1h</button>
-				<button data-hours="6">6h</button>
-				<button data-hours="24" class="active">24h</button>
-				<button data-hours="168">7d</button>
-				<button data-hours="0">All</button>
-			</div>
-			<div class="range-buttons prediction-buttons" id="prediction-buttons">
-				<span class="range-label">Predict</span>
-				<button data-hours="0" class="active">Off</button>
-				<button data-hours="1">+1h</button>
-				<button data-hours="2">+2h</button>
-				<button data-hours="3">+3h</button>
-				<button data-hours="6">+6h</button>
-				<button data-hours="12">+12h</button>
-				<button data-hours="24">+24h</button>
+			<div class="control-groups">
+				<div id="current-stock" class="control-group current-stock hidden">
+					<span class="control-group-title">Current Stock</span>
+					<div class="current-stock-body">
+						<span id="current-qty" class="current-qty"></span>
+						<span id="current-meta" class="current-meta"></span>
+					</div>
+				</div>
+				<div class="control-group">
+					<span class="control-group-title">History Time Range</span>
+					<div class="range-buttons" id="range-buttons">
+						<button data-hours="1">1h</button>
+						<button data-hours="6">6h</button>
+						<button data-hours="24" class="active">24h</button>
+						<button data-hours="168">7d</button>
+						<button data-hours="0">All</button>
+					</div>
+				</div>
+				<div class="control-group">
+					<span class="control-group-title">Prediction Time Range</span>
+					<div class="range-buttons" id="prediction-buttons">
+						<button data-hours="0" class="active">Off</button>
+						<button data-hours="1">+1h</button>
+						<button data-hours="2">+2h</button>
+						<button data-hours="3">+3h</button>
+						<button data-hours="6">+6h</button>
+						<button data-hours="12">+12h</button>
+						<button data-hours="24">+24h</button>
+					</div>
+				</div>
+				<div class="control-group">
+					<span class="control-group-title">Time Format</span>
+					<div class="range-buttons time-format-buttons">
+						<button type="button" data-time-format="european">24h</button>
+						<button type="button" data-time-format="us">12h</button>
+					</div>
+				</div>
 			</div>
 			<div id="prediction-section" class="prediction-section hidden">
 				<div class="restock-controls">
@@ -114,8 +130,8 @@
 					</colgroup>
 					<thead>
 						<tr>
-							<th>Depleted</th>
 							<th>Restocked</th>
+							<th>Depleted</th>
 							<th>Rate</th>
 							<th>Empty for</th>
 						</tr>

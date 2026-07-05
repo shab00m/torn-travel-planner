@@ -132,6 +132,14 @@ h1 { margin: 0; font-size: 1.35rem; }
   user-select: none;
 }
 
+.time-format-setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
 .countries {
   padding: 20px 24px 60px;
   display: grid;
@@ -216,19 +224,13 @@ body.page-item {
 
 .item-subtitle { color: var(--text-dim); font-size: 0.85rem; }
 
-.current-stock {
+.current-stock.hidden { display: none; }
+
+.current-stock-body {
   display: flex;
   align-items: baseline;
   gap: 8px;
   flex-wrap: wrap;
-  margin-top: 8px;
-}
-
-.current-stock.hidden { display: none; }
-
-.current-stock-label {
-  color: var(--text-dim);
-  font-size: 0.85rem;
 }
 
 .current-qty {
@@ -242,7 +244,34 @@ body.page-item {
   font-size: 0.85rem;
 }
 
-.range-buttons { display: flex; gap: 8px; margin: 10px 0; flex-wrap: wrap; flex-shrink: 0; }
+.control-groups {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+  flex-shrink: 0;
+}
+
+.control-group {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 10px 12px 12px;
+}
+
+.control-group-title {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.control-group .range-buttons { margin: 0; }
+
+.range-buttons { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
 
 .range-buttons button {
   background: var(--surface-2);
@@ -261,13 +290,6 @@ body.page-item {
   color: #fff;
 }
 
-.prediction-buttons { margin-top: 8px; }
-.prediction-buttons .range-label {
-  color: var(--text-dim);
-  font-size: 0.82rem;
-  margin-right: 4px;
-}
-
 .prediction-section {
   margin: 8px 0 10px;
   padding: 10px 12px;
@@ -275,6 +297,7 @@ body.page-item {
   border-radius: 8px;
   background: var(--surface);
   flex-shrink: 0;
+  max-width: 643px;
 }
 .prediction-section.hidden { display: none; }
 .prediction-section h3 { margin: 0; font-size: 0.95rem; }

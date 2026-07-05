@@ -14,6 +14,7 @@ const state = {
   item: null, // { country, itemId, name } on the item detail page
   rangeHours: 24,
   predictionHours: 0,
+  timeFormat: "european",
   predictedEvents: [],
   travelType: "Standard",
 };
@@ -22,6 +23,7 @@ const PREFS_KEY = "plannerPrefs";
 const SAMPLE_OPTIONS = [1, 3, 5, 10, 20];
 const RANGE_HOURS_OPTIONS = [1, 6, 24, 168, 0];
 const PREDICTION_HOURS_OPTIONS = [0, 1, 2, 3, 6, 12, 24];
+const TIME_FORMATS = ["european", "us"];
 
 function loadPrefs() {
   try {
@@ -49,6 +51,7 @@ function applyStoredPrefs() {
   state.search = typeof prefs.search === "string" ? prefs.search : "";
   state.countryFilter = typeof prefs.countryFilter === "string" ? prefs.countryFilter : "";
   state.inStockOnly = prefs.inStockOnly === true;
+  state.timeFormat = TIME_FORMATS.includes(prefs.timeFormat) ? prefs.timeFormat : "european";
 }
 
 function syncHourButtons(container, hours) {
@@ -60,15 +63,76 @@ function syncHourButtons(container, hours) {
 
 applyStoredPrefs();
 
+function timeLocale() {
+  return state.timeFormat === "us" ? "en-US" : "en-GB";
+}
+
 const fmtNum = (n) => n.toLocaleString("en-US");
 const fmtMoney = (n) => "$" + fmtNum(n);
-const fmtTime = (ts) => new Date(ts * 1000).toLocaleString();
-const fmtTimeShort = (ts) =>
-  new Date(ts * 1000).toLocaleTimeString([], {
-    hour: "numeric",
+const fmtTime = (ts) =>
+  new Date(ts * 1000).toLocaleString(timeLocale(), {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
   });
+const fmtTimeShort = (ts) =>
+  new Date(ts * 1000).toLocaleTimeString(timeLocale(), {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: state.timeFormat === "us",
+  });
+
+function chartTimeDisplayFormats() {
+  if (state.timeFormat === "us") {
+    return {
+      minute: "h:mm a",
+      hour: "MMM d, h:mm a",
+      day: "MMM d",
+    };
+  }
+  return {
+    minute: "HH:mm",
+    hour: "MMM d HH:mm",
+    day: "MMM d",
+  };
+}
+
+function setTimeFormat(format) {
+  if (!TIME_FORMATS.includes(format) || state.timeFormat === format) return;
+  state.timeFormat = format;
+  savePrefs({ timeFormat: format });
+  syncTimeFormatButtons();
+  window.dispatchEvent(new CustomEvent("timeformatchange"));
+}
+
+function syncTimeFormatButtons() {
+  document.querySelectorAll(".time-format-buttons [data-time-format]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.timeFormat === state.timeFormat);
+  });
+}
+
+function initTimeFormatControls() {
+  syncTimeFormatButtons();
+  document.querySelectorAll(".time-format-buttons").forEach((container) => {
+    if (container.dataset.bound) return;
+    container.dataset.bound = "1";
+    container.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-time-format]");
+      if (!btn) return;
+      setTimeFormat(btn.dataset.timeFormat);
+    });
+  });
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initTimeFormatControls);
+} else {
+  initTimeFormatControls();
+}
 
 async function fetchJson(url) {
   const res = await fetch(url);

@@ -141,11 +141,12 @@ function simulatePredictions(nowTs, endTs, startQty, averages) {
   const { restockSec, rate, restockQty } = averages;
   const events = [];
   const segments = [];
-  const open = state.restocks.find((r) => r.restocked_ts == null);
+  const open =
+    startQty === 0 ? state.restocks.find((r) => r.restocked_ts == null) : null;
 
   let t = nowTs;
   let qty = startQty;
-  let outOfStock = qty === 0 || open != null;
+  let outOfStock = startQty === 0;
   let depletedTs = open?.depleted_ts ?? null;
 
   while (t < endTs) {
@@ -324,13 +325,14 @@ function buildAnnotations(restocks, rates, timeline) {
     if (tsMs(w.end_ts) < xMin || w.start_ts > nowTs) return;
     const slope = (w.end_qty - w.start_qty) / (w.end_ts - w.start_ts);
     const startTs = Math.max(w.start_ts, xMin / 1000);
-    const endTs = Math.min(w.end_ts, nowTs);
+    const endTs = Math.min(w.end_ts, nowTs, xMax / 1000);
+    if (startTs >= endTs) return;
     annotations[`rate${i}`] = {
       type: "line",
       xMin: tsMs(startTs),
       xMax: tsMs(endTs),
-      yMin: w.start_qty + slope * (startTs - w.start_ts),
-      yMax: w.start_qty + slope * (endTs - w.start_ts),
+      yMin: Math.max(0, w.start_qty + slope * (startTs - w.start_ts)),
+      yMax: Math.max(0, w.start_qty + slope * (endTs - w.start_ts)),
       borderColor: "rgba(62, 207, 142, 0.8)",
       borderWidth: 2,
       borderDash: [6, 4],
@@ -387,13 +389,14 @@ function buildAnnotations(restocks, rates, timeline) {
       if (w.end_ts <= nowTs) return;
       const slope = (w.end_qty - w.start_qty) / (w.end_ts - w.start_ts);
       const startTs = Math.max(w.start_ts, nowTs);
-      const endTs = w.end_ts;
+      const endTs = Math.min(w.end_ts, xMax / 1000);
+      if (startTs >= endTs) return;
       annotations[`predRate${i}`] = {
         type: "line",
         xMin: tsMs(startTs),
         xMax: tsMs(endTs),
-        yMin: w.start_qty + slope * (startTs - w.start_ts),
-        yMax: w.start_qty + slope * (endTs - w.start_ts),
+        yMin: Math.max(0, w.start_qty + slope * (startTs - w.start_ts)),
+        yMax: Math.max(0, w.start_qty + slope * (endTs - w.start_ts)),
         borderColor: "rgba(167, 139, 250, 0.85)",
         borderWidth: 2,
         borderDash: [6, 4],
@@ -485,8 +488,8 @@ function renderCycleHistory() {
     .slice(0, 10)
     .map(
       (r) => `<tr>
-        <td>${fmtTime(r.depleted_ts)}</td>
         <td>${fmtTime(r.restocked_ts)}</td>
+        <td>${fmtTime(r.depleted_ts)}</td>
         <td class="rate-cell">${r.rate != null ? `${fmtRate(r.rate)}/min` : "—"}</td>
         <td class="duration-cell">${fmtDuration(r.emptyForSec)}</td>
       </tr>`
@@ -520,14 +523,13 @@ function predictedRestockBounds(e, averages, events, segments) {
 
 function formatRestockLabel(e, i, averages, events, segments) {
   const { restockEarliest, restockLatest } = predictedRestockBounds(e, averages, events, segments);
-  const prefix = i === 0 ? "Next" : "Then";
-  return `${prefix} restock between ${fmtTimeShort(restockEarliest)} → ${fmtTimeShort(restockLatest)}`;
+  return `#${i + 1}: Window between ${fmtTimeShort(restockEarliest)} → ${fmtTimeShort(restockLatest)}`;
 }
 
-function formatLeaveWindow(restockEarliest, depletedTs, flightSec, nowTs) {
-  if (flightSec == null || depletedTs == null) return "";
-  const leaveEarliest = depletedTs - flightSec;
-  const leaveLatest = restockEarliest - flightSec;
+function formatLeaveWindow(restockEarliest, restockLatest, flightSec, nowTs) {
+  if (flightSec == null || restockEarliest == null || restockLatest == null) return "";
+  const leaveEarliest = restockEarliest - flightSec;
+  const leaveLatest = restockLatest - flightSec;
 
   if (leaveLatest <= nowTs) {
     const missedSec = nowTs - leaveLatest;
@@ -558,8 +560,13 @@ function renderPredictionPanel(events, segments) {
 
   el.predictionList.innerHTML = restocks
     .map((e, i) => {
-      const { restockEarliest } = predictedRestockBounds(e, averages, events, segments);
-      const leaveHtml = formatLeaveWindow(restockEarliest, e.depleted_ts, flightSec, nowTs);
+      const { restockEarliest, restockLatest } = predictedRestockBounds(
+        e,
+        averages,
+        events,
+        segments
+      );
+      const leaveHtml = formatLeaveWindow(restockEarliest, restockLatest, flightSec, nowTs);
       return `<li>
         <span>${formatRestockLabel(e, i, averages, events, segments)}</span>
         ${leaveHtml}
@@ -626,7 +633,7 @@ function chartOptions(timeline) {
         callbacks: {
           title: (items) => {
             if (!items.length) return "";
-            return new Date(items[0].parsed.x).toLocaleString();
+            return fmtTime(Math.floor(items[0].parsed.x / 1000));
           },
           afterLabel: (ctx) => {
             const raw = ctx.dataset.data[ctx.dataIndex];
@@ -645,16 +652,13 @@ function chartOptions(timeline) {
         time: {
           unit: timeUnit,
           stepSize: timeUnit === "minute" ? 1 : undefined,
-          displayFormats: {
-            minute: "HH:mm",
-            hour: "MMM d HH:mm",
-            day: "MMM d",
-          },
+          displayFormats: chartTimeDisplayFormats(),
         },
         ticks: { color: "#8b96a8", maxTicksLimit: 14, source: "auto" },
         grid: { color: "#2a3345" },
       },
       y: {
+        min: 0,
         beginAtZero: true,
         ticks: { color: "#8b96a8", precision: 0 },
         grid: { color: "#2a3345" },
@@ -807,6 +811,16 @@ initAvgButtons(el.rateAvgButtons, state.avgRateSamples, (n) => {
   savePrefs({ avgRateSamples: n });
   renderCycleHistory();
   redrawPrediction();
+});
+
+window.addEventListener("timeformatchange", () => {
+  if (!state.item) return;
+  renderCycleHistory();
+  loadCurrentStock();
+  if (state.chartPoints.length) {
+    const timeline = buildTimeline(state.chartPoints, state.predictionHours);
+    refreshChart(timeline);
+  }
 });
 
 (async () => {

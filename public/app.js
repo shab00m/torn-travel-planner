@@ -31,11 +31,13 @@ async function populateCountryFilter() {
 }
 
 let stocksRetryTimer = null;
+let lastStockTimestamp = null;
 
 async function loadStocks() {
   try {
     const data = await fetchJson("/api/stocks");
     state.stocks = data.stocks;
+    lastStockTimestamp = data.timestamp;
     el.status.textContent = `Last update: ${fmtTime(data.timestamp)} — auto-refreshes every minute`;
     el.status.classList.remove("error");
     render();
@@ -117,6 +119,13 @@ el.countryFilter.addEventListener("change", () => {
 el.inStockOnly.addEventListener("change", () => {
   state.inStockOnly = el.inStockOnly.checked;
   savePrefs({ inStockOnly: state.inStockOnly });
+  render();
+});
+
+window.addEventListener("timeformatchange", () => {
+  if (lastStockTimestamp != null) {
+    el.status.textContent = `Last update: ${fmtTime(lastStockTimestamp)} — auto-refreshes every minute`;
+  }
   render();
 });
 
