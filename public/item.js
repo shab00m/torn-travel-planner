@@ -16,6 +16,10 @@ const el = {
   predictionButtons: document.getElementById("prediction-buttons"),
   predictionList: document.getElementById("prediction-list"),
   predictionTravelNote: document.getElementById("prediction-travel-note"),
+  restockAmount: document.getElementById("restock-amount"),
+  currentStock: document.getElementById("current-stock"),
+  currentQty: document.getElementById("current-qty"),
+  currentMeta: document.getElementById("current-meta"),
 };
 
 function fmtDuration(seconds) {
@@ -44,16 +48,90 @@ function initAvgButtons(container, defaultN, onSelect) {
   });
 }
 
+function currentRestockAmount() {
+  const item = state.item;
+  if (!item) return null;
+  return getRestockAmount(item.country, item.itemId);
+}
+
+function lastZeroBeforeRestock(restockedTs, depletedTs) {
+  let lastZero = null;
+  for (const p of state.chartPoints) {
+    if (p.yata_ts < restockedTs && p.quantity === 0) lastZero = p.yata_ts;
+  }
+  return lastZero ?? depletedTs ?? null;
+}
+
+/** Shift restock time earlier when the first snapshot is below the known full restock size. */
+function adjustRestockTime(restockedTs, observedQty, ratePerMin, restockAmount, depletedTs) {
+  if (!restockAmount || !ratePerMin || ratePerMin <= 0 || !observedQty) return restockedTs;
+  if (observedQty >= restockAmount) return restockedTs;
+  const adjustSec = ((restockAmount - observedQty) / ratePerMin) * 60;
+  let adjusted = Math.round(restockedTs - adjustSec);
+  const lastZero = lastZeroBeforeRestock(restockedTs, depletedTs);
+  if (lastZero != null) adjusted = Math.max(adjusted, lastZero + 1);
+  return adjusted;
+}
+
+function rateWindowForRestock(restockedTs) {
+  return state.rates.find((w) => w.start_ts === restockedTs);
+}
+
+function adjustedRestockRecord(r) {
+  const amount = currentRestockAmount();
+  if (!amount || r.restocked_ts == null) {
+    return { ...r, adjusted_restocked_ts: r.restocked_ts, adjusted_duration: r.duration };
+  }
+  const window = rateWindowForRestock(r.restocked_ts);
+  if (!window) {
+    return { ...r, adjusted_restocked_ts: r.restocked_ts, adjusted_duration: r.duration };
+  }
+  const adjustedTs = adjustRestockTime(
+    r.restocked_ts,
+    window.start_qty,
+    window.rate,
+    amount,
+    r.depleted_ts
+  );
+  return {
+    ...r,
+    adjusted_restocked_ts: adjustedTs,
+    adjusted_duration: adjustedTs - r.depleted_ts,
+  };
+}
+
+function adjustedRateWindow(w) {
+  const amount = currentRestockAmount();
+  if (!amount || w.start_qty >= amount) return w;
+  const restock = state.restocks.find((r) => r.restocked_ts === w.start_ts);
+  const startTs = adjustRestockTime(
+    w.start_ts,
+    w.start_qty,
+    w.rate,
+    amount,
+    restock?.depleted_ts
+  );
+  return { ...w, start_ts: startTs, start_qty: amount };
+}
+
+function getAdjustedCompletedRestocks() {
+  return state.restocks.filter((r) => r.duration != null).map(adjustedRestockRecord);
+}
+
+function getAdjustedRates() {
+  return state.rates.map(adjustedRateWindow);
+}
+
 function getAverages() {
-  const completed = state.restocks.filter((r) => r.duration != null);
-  const restockSample = completed.slice(0, state.avgSamples);
-  const rateSample = state.rates.slice(0, state.avgRateSamples);
+  const restockSample = getAdjustedCompletedRestocks().slice(0, state.avgSamples);
+  const rateSample = getAdjustedRates().slice(0, state.avgRateSamples);
   if (!restockSample.length || !rateSample.length) return null;
+  const configuredQty = currentRestockAmount();
   return {
     restockSec:
-      restockSample.reduce((sum, r) => sum + r.duration, 0) / restockSample.length,
+      restockSample.reduce((sum, r) => sum + r.adjusted_duration, 0) / restockSample.length,
     rate: rateSample.reduce((sum, w) => sum + w.rate, 0) / rateSample.length,
-    restockQty: Math.round(
+    restockQty: configuredQty ?? Math.round(
       rateSample.reduce((sum, w) => sum + w.start_qty, 0) / rateSample.length
     ),
   };
@@ -219,7 +297,8 @@ function buildAnnotations(restocks, rates, timeline) {
   if (!xMax) return annotations;
 
   restocks.forEach((r, i) => {
-    const boxEnd = r.restocked_ts ?? nowTs;
+    const adjusted = adjustedRestockRecord(r);
+    const boxEnd = adjusted.adjusted_restocked_ts ?? nowTs;
     if (tsMs(boxEnd) < xMin || tsMs(r.depleted_ts) > xMax) return;
     annotations[`restock${i}`] = {
       type: "box",
@@ -230,7 +309,10 @@ function buildAnnotations(restocks, rates, timeline) {
       borderWidth: 1,
       label: {
         display: true,
-        content: r.duration != null ? fmtDuration(r.duration) : "out of stock",
+        content:
+          adjusted.adjusted_duration != null
+            ? fmtDuration(adjusted.adjusted_duration)
+            : "out of stock",
         position: { x: "center", y: "start" },
         color: "#f26a6a",
         font: { size: 11, weight: "600" },
@@ -238,7 +320,7 @@ function buildAnnotations(restocks, rates, timeline) {
     };
   });
 
-  rates.forEach((w, i) => {
+  getAdjustedRates().forEach((w, i) => {
     if (tsMs(w.end_ts) < xMin || w.start_ts > nowTs) return;
     const slope = (w.end_qty - w.start_qty) / (w.end_ts - w.start_ts);
     const startTs = Math.max(w.start_ts, xMin / 1000);
@@ -328,20 +410,21 @@ function buildAnnotations(restocks, rates, timeline) {
 
     events.forEach((ev, i) => {
       if (ev.type !== "restock" || ev.ts < nowTs) return;
+      if (tsMs(ev.ts) < xMin || tsMs(ev.ts) > xMax) return;
       annotations[`predRestock${i}`] = {
-        type: "point",
-        xValue: tsMs(ev.ts),
-        yValue: ev.qty,
-        backgroundColor: "#a78bfa",
-        borderColor: "#ffffff",
+        type: "line",
+        xMin: tsMs(ev.ts),
+        xMax: tsMs(ev.ts),
+        borderColor: "rgba(62, 207, 142, 0.85)",
         borderWidth: 2,
-        radius: 7,
+        borderDash: [4, 4],
         label: {
           display: true,
-          content: "Restock",
-          position: "top",
+          content: fmtTime(ev.ts),
+          position: "end",
+          yAdjust: -6,
           backgroundColor: "rgba(23, 28, 38, 0.9)",
-          color: "#a78bfa",
+          color: "#3ecf8e",
           font: { size: 10, weight: "600" },
         },
       };
@@ -352,7 +435,7 @@ function buildAnnotations(restocks, rates, timeline) {
 }
 
 function renderRestockPanel() {
-  const completed = state.restocks.filter((r) => r.duration != null);
+  const completed = getAdjustedCompletedRestocks();
   const open = state.restocks.find((r) => r.restocked_ts == null);
 
   const rows = [];
@@ -363,8 +446,8 @@ function renderRestockPanel() {
   }
   for (const r of completed.slice(0, 5)) {
     rows.push(
-      `<li>Depleted ${fmtTime(r.depleted_ts)} → restocked ${fmtTime(r.restocked_ts)}
-       <strong>${fmtDuration(r.duration)}</strong></li>`
+      `<li>Depleted ${fmtTime(r.depleted_ts)} → restocked ${fmtTime(r.adjusted_restocked_ts)}
+       <strong>${fmtDuration(r.adjusted_duration)}</strong></li>`
     );
   }
   el.restockList.innerHTML =
@@ -372,7 +455,7 @@ function renderRestockPanel() {
 
   const sample = completed.slice(0, state.avgSamples);
   if (sample.length) {
-    const avg = sample.reduce((sum, r) => sum + r.duration, 0) / sample.length;
+    const avg = sample.reduce((sum, r) => sum + r.adjusted_duration, 0) / sample.length;
     el.restockAvg.textContent = `${fmtDuration(avg)} (${sample.length} sample${sample.length === 1 ? "" : "s"})`;
   } else {
     el.restockAvg.textContent = "no samples yet";
@@ -412,9 +495,14 @@ function renderPredictionPanel(events) {
       const leaveTs = flightSec != null ? e.ts - flightSec : null;
       let leaveHtml = "";
       if (leaveTs != null) {
-        const cls = leaveTs <= nowTs ? "leave-now" : "leave-by";
-        const label = leaveTs <= nowTs ? "Leave now" : `Leave by ${fmtTime(leaveTs)}`;
-        leaveHtml = `<span class="${cls}">${label}</span>`;
+        if (leaveTs <= nowTs) {
+          const arrivalTs = nowTs + flightSec;
+          const lateSec = arrivalTs - e.ts;
+          const lateLabel = lateSec > 0 ? `${fmtDuration(lateSec)} late` : "on time";
+          leaveHtml = `<span class="leave-now">Leave now · arrive ${fmtTime(arrivalTs)} · ${lateLabel}</span>`;
+        } else {
+          leaveHtml = `<span class="leave-by">Leave by ${fmtTime(leaveTs)}</span>`;
+        }
       }
       return `<li>
         <span>${i === 0 ? "Next" : "Then"} restock ${fmtTime(e.ts)} · ~${fmtNum(e.qty)} items</span>
@@ -469,6 +557,9 @@ function chartOptions(timeline) {
   return {
     responsive: true,
     maintainAspectRatio: false,
+    layout: {
+      padding: { top: state.predictionHours > 0 ? 22 : 4 },
+    },
     interaction: { mode: "nearest", axis: "x", intersect: false },
     plugins: {
       legend: { labels: { color: "#8b96a8" } },
@@ -535,6 +626,29 @@ function refreshChart(timeline) {
   });
 }
 
+async function loadCurrentStock() {
+  if (!state.item) return;
+  try {
+    const data = await fetchJson("/api/stocks");
+    const item = data.stocks[state.item.country]?.stocks.find(
+      (i) => i.id === state.item.itemId
+    );
+    if (!item) {
+      el.currentStock.classList.add("hidden");
+      return;
+    }
+    el.currentStock.classList.remove("hidden");
+    el.currentQty.textContent = fmtNum(item.quantity);
+    el.currentQty.className = `current-qty ${item.quantity === 0 ? "qty-zero" : "qty-ok"}`;
+    el.currentMeta.textContent = `${fmtMoney(item.cost)} each · polled ${fmtTime(data.timestamp)}`;
+  } catch (err) {
+    el.currentStock.classList.remove("hidden");
+    el.currentQty.textContent = "—";
+    el.currentQty.className = "current-qty";
+    el.currentMeta.textContent = `Stock unavailable: ${err.message}`;
+  }
+}
+
 async function drawChart() {
   const { country, itemId } = state.item;
   const [history, restockData] = await Promise.all([
@@ -576,7 +690,35 @@ function setupItemPage(item) {
   el.itemTitle.textContent = item.name;
   el.itemSubtitle.textContent = `${meta.flag} ${meta.name}`;
   document.title = `${item.name} — Torn Travel Planner`;
+  const savedAmount = getRestockAmount(item.country, item.itemId);
+  el.restockAmount.value = savedAmount ?? "";
 }
+
+function refreshRestockAdjustments() {
+  renderRestockPanel();
+  if (!state.chartPoints.length) return;
+  const timeline = buildTimeline(state.chartPoints, state.predictionHours);
+  refreshChart(timeline);
+}
+
+el.restockAmount.addEventListener("change", () => {
+  const item = state.item;
+  if (!item) return;
+  const raw = el.restockAmount.value.trim();
+  if (raw === "") {
+    setRestockAmount(item.country, item.itemId, null);
+    refreshRestockAdjustments();
+    return;
+  }
+  const amount = Number.parseInt(raw, 10);
+  if (!Number.isInteger(amount) || amount <= 0) {
+    el.restockAmount.value = getRestockAmount(item.country, item.itemId) ?? "";
+    return;
+  }
+  setRestockAmount(item.country, item.itemId, amount);
+  el.restockAmount.value = amount;
+  refreshRestockAdjustments();
+});
 
 el.rangeButtons.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-hours]");
@@ -614,6 +756,9 @@ initAvgButtons(el.rateAvgButtons, state.avgRateSamples, (n) => {
     return;
   }
   setupItemPage(item);
-  await drawChart();
-  setInterval(drawChart, 60_000);
+  await Promise.all([drawChart(), loadCurrentStock()]);
+  setInterval(() => {
+    drawChart();
+    loadCurrentStock();
+  }, 60_000);
 })();

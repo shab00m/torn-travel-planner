@@ -21,6 +21,11 @@
 					<a href="/" class="back-link">← Stock overview</a>
 					<h1 id="item-title"></h1>
 					<span id="item-subtitle" class="item-subtitle"></span>
+					<div id="current-stock" class="current-stock hidden">
+						<span class="current-stock-label">Current Stock:</span>
+						<span id="current-qty" class="current-qty"></span>
+						<span id="current-meta" class="current-meta"></span>
+					</div>
 				</div>
 				<div class="header-meta">
 					<div id="auth" class="auth">
@@ -58,6 +63,13 @@
 				<button data-hours="12">+12h</button>
 				<button data-hours="24">+24h</button>
 			</div>
+			<div id="prediction-section" class="prediction-section hidden">
+				<div class="restock-controls">
+					<h3>Predicted restocks</h3>
+					<span id="prediction-travel-note" class="prediction-note"></span>
+				</div>
+				<ul id="prediction-list" class="restock-list prediction-list"></ul>
+			</div>
 			<div class="chart-wrap">
 				<canvas id="history-chart"></canvas>
 			</div>
@@ -69,6 +81,17 @@
 				<div class="restock-controls">
 					<h3>Restock times</h3>
 					<div class="avg-wrap">
+						<label class="restock-amount-wrap" for="restock-amount">
+							<span>Restock amount</span>
+							<input
+								id="restock-amount"
+								type="number"
+								min="1"
+								step="1"
+								placeholder="e.g. 2500"
+								title="Full quantity when an item restocks. Used to estimate the actual restock time before our first snapshot."
+							/>
+						</label>
 						<span>Average of last</span>
 						<div class="avg-buttons" id="avg-buttons"></div>
 						<span id="restock-avg" class="restock-avg"></span>
@@ -83,13 +106,6 @@
 					</div>
 				</div>
 				<ul id="restock-list" class="restock-list"></ul>
-				<div id="prediction-section" class="prediction-section hidden">
-					<div class="restock-controls">
-						<h3>Predicted restocks</h3>
-						<span id="prediction-travel-note" class="prediction-note"></span>
-					</div>
-					<ul id="prediction-list" class="restock-list prediction-list"></ul>
-				</div>
 			</div>
 		</main>
 

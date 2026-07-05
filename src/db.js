@@ -63,11 +63,30 @@ const openRestockStmt = db.prepare(
    ORDER BY depleted_ts DESC LIMIT 1`
 );
 
-// When we first see an item at qty 0, use that snapshot as the depletion time.
+// Earliest zero snapshot before a restock — used when tracking started mid
+// out-of-stock run with no prior in-stock snapshot.
 const firstZeroBeforeStmt = db.prepare(
   `SELECT yata_ts FROM snapshots
    WHERE country = ? AND item_id = ? AND yata_ts < ? AND quantity = 0
    ORDER BY yata_ts ASC LIMIT 1`
+);
+
+// Most recent >0→0 transition before a restock — the missed depletion for the
+// current out-of-stock run (not the first zero ever recorded).
+const missedDepletionBeforeStmt = db.prepare(
+  `SELECT s.yata_ts FROM snapshots s
+   WHERE s.country = ? AND s.item_id = ? AND s.yata_ts < ? AND s.quantity = 0
+     AND (
+       SELECT p.quantity FROM snapshots p
+       WHERE p.country = s.country AND p.item_id = s.item_id AND p.yata_ts < s.yata_ts
+       ORDER BY p.yata_ts DESC LIMIT 1
+     ) > 0
+   ORDER BY s.yata_ts DESC LIMIT 1`
+);
+
+const restockRowStmt = db.prepare(
+  `SELECT depleted_ts, restocked_ts FROM restocks
+   WHERE country = ? AND item_id = ? AND depleted_ts = ?`
 );
 
 const insertRestockStmt = db.prepare(
@@ -77,7 +96,7 @@ const insertRestockStmt = db.prepare(
 const closeRestockStmt = db.prepare(
   `UPDATE restocks
    SET restocked_ts = ?, duration = ? - depleted_ts
-   WHERE country = ? AND item_id = ? AND depleted_ts = ?`
+   WHERE country = ? AND item_id = ? AND depleted_ts = ? AND restocked_ts IS NULL`
 );
 
 // >0 -> 0 opens an out-of-stock period, 0 -> >0 closes the most recent
@@ -90,15 +109,21 @@ function applyTransition(country, itemId, ts, prevQuantity, quantity) {
   }
   if (prevQuantity === 0 && quantity > 0) {
     let depletedTs = openRestockStmt.get(country, itemId, ts)?.depleted_ts;
-    // No open period — item was already out of stock when tracking started.
-    // Infer depletion from the earliest zero-qty snapshot before this restock.
+    // No open period — infer the depletion for this out-of-stock run.
     if (depletedTs == null) {
-      depletedTs = firstZeroBeforeStmt.get(country, itemId, ts)?.yata_ts ?? null;
-      if (depletedTs != null) insertRestockStmt.run(country, itemId, depletedTs);
+      depletedTs =
+        missedDepletionBeforeStmt.get(country, itemId, ts)?.yata_ts ??
+        firstZeroBeforeStmt.get(country, itemId, ts)?.yata_ts ??
+        null;
+      if (depletedTs != null) {
+        const existing = restockRowStmt.get(country, itemId, depletedTs);
+        if (existing?.restocked_ts != null) return null;
+        insertRestockStmt.run(country, itemId, depletedTs);
+      }
     }
     if (depletedTs != null) {
-      closeRestockStmt.run(ts, ts, country, itemId, depletedTs);
-      return "restocked";
+      const res = closeRestockStmt.run(ts, ts, country, itemId, depletedTs);
+      return res.changes > 0 ? "restocked" : null;
     }
   }
   return null;

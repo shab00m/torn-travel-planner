@@ -37,3 +37,19 @@ async function loadCountries() {
 function itemUrl(country, itemId, name) {
   return `/item/${country}/${itemId}?name=${encodeURIComponent(name)}`;
 }
+
+const RESTOCK_AMOUNTS_KEY = "restockAmounts";
+
+function getRestockAmount(country, itemId) {
+  const all = JSON.parse(localStorage.getItem(RESTOCK_AMOUNTS_KEY) || "{}");
+  const v = all[`${country}:${itemId}`];
+  return typeof v === "number" && v > 0 ? v : null;
+}
+
+function setRestockAmount(country, itemId, amount) {
+  const all = JSON.parse(localStorage.getItem(RESTOCK_AMOUNTS_KEY) || "{}");
+  const key = `${country}:${itemId}`;
+  if (amount == null) delete all[key];
+  else all[key] = amount;
+  localStorage.setItem(RESTOCK_AMOUNTS_KEY, JSON.stringify(all));
+}
