@@ -39,7 +39,9 @@ function showLoggedOut() {
 
 function logout() {
   localStorage.removeItem(KEY_STORAGE);
+  state.travelType = "Standard";
   showLoggedOut();
+  if (typeof redrawPrediction === "function" && state.item) redrawPrediction();
 }
 
 async function login(apiKey) {
@@ -51,7 +53,9 @@ async function login(apiKey) {
   const body = await res.json();
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
   localStorage.setItem(KEY_STORAGE, apiKey);
+  state.travelType = body.travelType ?? "Standard";
   showLoggedIn(body);
+  if (typeof redrawPrediction === "function" && state.item) redrawPrediction();
 }
 
 authEl.form.addEventListener("submit", async (e) => {

@@ -63,6 +63,13 @@ const openRestockStmt = db.prepare(
    ORDER BY depleted_ts DESC LIMIT 1`
 );
 
+// When we first see an item at qty 0, use that snapshot as the depletion time.
+const firstZeroBeforeStmt = db.prepare(
+  `SELECT yata_ts FROM snapshots
+   WHERE country = ? AND item_id = ? AND yata_ts < ? AND quantity = 0
+   ORDER BY yata_ts ASC LIMIT 1`
+);
+
 const insertRestockStmt = db.prepare(
   `INSERT OR IGNORE INTO restocks (country, item_id, depleted_ts) VALUES (?, ?, ?)`
 );
@@ -82,11 +89,15 @@ function applyTransition(country, itemId, ts, prevQuantity, quantity) {
     return res.changes > 0 ? "depleted" : null;
   }
   if (prevQuantity === 0 && quantity > 0) {
-    const open = openRestockStmt.get(country, itemId, ts);
-    // No open period means the item was already depleted when tracking
-    // started, so the real depletion time is unknown - skip it.
-    if (open) {
-      closeRestockStmt.run(ts, ts, country, itemId, open.depleted_ts);
+    let depletedTs = openRestockStmt.get(country, itemId, ts)?.depleted_ts;
+    // No open period — item was already out of stock when tracking started.
+    // Infer depletion from the earliest zero-qty snapshot before this restock.
+    if (depletedTs == null) {
+      depletedTs = firstZeroBeforeStmt.get(country, itemId, ts)?.yata_ts ?? null;
+      if (depletedTs != null) insertRestockStmt.run(country, itemId, depletedTs);
+    }
+    if (depletedTs != null) {
+      closeRestockStmt.run(ts, ts, country, itemId, depletedTs);
       return "restocked";
     }
   }
@@ -105,11 +116,11 @@ const allSnapshotsStmt = db.prepare(
 );
 
 /**
- * Replay the whole snapshot history through the transition logic to pick up
- * depletion/restock events recorded before restock tracking existed.
- * Idempotent: existing restock rows are left untouched.
+ * Replay the whole snapshot history through the transition logic.
+ * Clears existing restock rows first so logic fixes take effect on rerun.
  */
 export function backfillRestocks() {
+  db.exec("DELETE FROM restocks");
   let opened = 0;
   let closed = 0;
   let key = null;
@@ -189,10 +200,16 @@ const latestSnapshotStmt = db.prepare(
    ORDER BY yata_ts DESC LIMIT 1`
 );
 
+const lastPositiveBeforeStmt = db.prepare(
+  `SELECT yata_ts, quantity FROM snapshots
+   WHERE country = ? AND item_id = ? AND yata_ts < ? AND quantity > 0
+   ORDER BY yata_ts DESC LIMIT 1`
+);
+
 /**
  * In-stock windows with their depletion rate, newest first.
- * A window runs from a restock event to the next depletion event, or to the
- * latest snapshot when the item is still in stock (open window).
+ * A window runs from a restock event to the last in-stock snapshot before
+ * the next depletion (qty > 0), since stock usually hits 0 between polls.
  * Rate is in items per minute.
  */
 export function getDepletionRates(country, itemId, limit) {
@@ -209,8 +226,14 @@ export function getDepletionRates(country, itemId, limit) {
     let open = false;
     const nextDepletion = events[i + 1]?.depleted_ts;
     if (nextDepletion != null) {
-      endTs = nextDepletion;
-      endQty = 0;
+      const lastPositive = lastPositiveBeforeStmt.get(country, itemId, nextDepletion);
+      if (lastPositive) {
+        endTs = lastPositive.yata_ts;
+        endQty = lastPositive.quantity;
+      } else {
+        endTs = nextDepletion;
+        endQty = 0;
+      }
     } else {
       const latest = latestSnapshotStmt.get(country, itemId);
       if (!latest || latest.quantity === 0) continue;

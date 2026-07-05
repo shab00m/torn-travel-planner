@@ -1,5 +1,5 @@
 // Replays all stored snapshots through the restock transition logic.
-// Safe to run repeatedly (existing restock rows are never modified).
+// Safe to run repeatedly — rebuilds restocks from snapshot history.
 // Usage: npm run backfill
 import { backfillRestocks } from "../src/db.js";
 

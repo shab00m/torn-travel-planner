@@ -1,43 +1,11 @@
-// Shared state and DOM refs; the modal/chart half lives in chart.js.
-const state = {
-  countries: {},   // code -> { name, flag }
-  stocks: null,    // code -> { update, stocks: [...] }
-  search: "",
-  countryFilter: "",
-  inStockOnly: false,
-  chart: null,
-  chartPoints: [], // history points backing the current chart (used by tooltips)
-  restocks: [],    // recent out-of-stock periods for the open modal item
-  rates: [],       // recent in-stock depletion-rate windows for the modal item
-  avgSamples: 5,   // sample count for the restock duration average
-  avgRateSamples: 5, // sample count for the depletion rate average
-  modalItem: null, // { country, itemId, name }
-  rangeHours: 24,
-};
-
 const el = {
   status: document.getElementById("status"),
   countries: document.getElementById("countries"),
   search: document.getElementById("item-search"),
   countryFilter: document.getElementById("country-filter"),
   inStockOnly: document.getElementById("in-stock-only"),
-  modal: document.getElementById("modal"),
-  modalTitle: document.getElementById("modal-title"),
-  modalSubtitle: document.getElementById("modal-subtitle"),
-  modalClose: document.getElementById("modal-close"),
-  modalEmpty: document.getElementById("modal-empty"),
-  rangeButtons: document.getElementById("range-buttons"),
-  chartCanvas: document.getElementById("history-chart"),
-  avgButtons: document.getElementById("avg-buttons"),
-  restockAvg: document.getElementById("restock-avg"),
-  restockList: document.getElementById("restock-list"),
-  rateAvgButtons: document.getElementById("rate-avg-buttons"),
-  rateAvg: document.getElementById("rate-avg"),
 };
 
-const fmtNum = (n) => n.toLocaleString("en-US");
-const fmtMoney = (n) => "$" + fmtNum(n);
-const fmtTime = (ts) => new Date(ts * 1000).toLocaleString();
 const escapeHtml = (s) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -53,15 +21,7 @@ function highlight(name, query) {
   );
 }
 
-async function fetchJson(url) {
-  const res = await fetch(url);
-  const body = await res.json();
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
-  return body;
-}
-
-async function loadCountries() {
-  state.countries = await fetchJson("/api/countries");
+async function populateCountryFilter() {
   for (const [code, meta] of Object.entries(state.countries)) {
     const opt = document.createElement("option");
     opt.value = code;
@@ -79,12 +39,9 @@ async function loadStocks() {
     el.status.textContent = `Last update: ${fmtTime(data.timestamp)} — auto-refreshes every minute`;
     el.status.classList.remove("error");
     render();
-    if (state.modalItem) await drawChart();
   } catch (err) {
     el.status.textContent = `Error: ${err.message}`;
     el.status.classList.add("error");
-    // Retry quickly instead of waiting for the next minute tick
-    // (e.g. right after a server restart before its first YATA poll).
     if (!stocksRetryTimer) {
       stocksRetryTimer = setTimeout(() => {
         stocksRetryTimer = null;
@@ -123,7 +80,7 @@ function render() {
       const rows = items
         .map(
           (it) => `
-        <tr data-country="${code}" data-item="${it.id}" data-name="${escapeHtml(it.name)}" title="Click for history">
+        <tr data-country="${code}" data-item="${it.id}" data-name="${escapeHtml(it.name)}" title="View item history">
           <td>${highlight(it.name, state.search.trim())}</td>
           <td class="${it.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(it.quantity)}</td>
           <td>${fmtMoney(it.cost)}</td>
@@ -147,7 +104,6 @@ function render() {
   }
 }
 
-// --- events ---
 el.search.addEventListener("input", () => {
   state.search = el.search.value;
   render();
@@ -164,12 +120,12 @@ el.inStockOnly.addEventListener("change", () => {
 el.countries.addEventListener("click", (e) => {
   const row = e.target.closest("tr[data-item]");
   if (!row) return;
-  openModal(row.dataset.country, Number(row.dataset.item), row.dataset.name);
+  window.location.href = itemUrl(row.dataset.country, row.dataset.item, row.dataset.name);
 });
 
-// --- init ---
 (async () => {
   await loadCountries();
+  await populateCountryFilter();
   await loadStocks();
   setInterval(loadStocks, 60_000);
 })();

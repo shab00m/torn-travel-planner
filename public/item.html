@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Item — Torn Travel Planner</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+			rel="stylesheet"
+		/>
+		<link rel="stylesheet" href="/style.css" />
+		<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+		<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+		<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.1.0/dist/chartjs-plugin-annotation.min.js"></script>
+	</head>
+	<body class="page-item">
+		<header>
+			<div class="header-inner">
+				<div class="item-heading">
+					<a href="/" class="back-link">← Stock overview</a>
+					<h1 id="item-title"></h1>
+					<span id="item-subtitle" class="item-subtitle"></span>
+				</div>
+				<div class="header-meta">
+					<div id="auth" class="auth">
+						<form id="login-form" class="login-form">
+							<input
+								id="api-key"
+								type="password"
+								placeholder="Torn API key"
+								autocomplete="off"
+							/>
+							<button type="submit">Log in</button>
+						</form>
+						<div id="player-info" class="player-info hidden"></div>
+					</div>
+					<span id="status" class="status">Loading…</span>
+				</div>
+			</div>
+		</header>
+
+		<main class="item-page">
+			<div class="range-buttons" id="range-buttons">
+				<button data-hours="1">1h</button>
+				<button data-hours="6">6h</button>
+				<button data-hours="24" class="active">24h</button>
+				<button data-hours="168">7d</button>
+				<button data-hours="0">All</button>
+			</div>
+			<div class="range-buttons prediction-buttons" id="prediction-buttons">
+				<span class="range-label">Predict</span>
+				<button data-hours="0" class="active">Off</button>
+				<button data-hours="1">+1h</button>
+				<button data-hours="2">+2h</button>
+				<button data-hours="3">+3h</button>
+				<button data-hours="6">+6h</button>
+				<button data-hours="12">+12h</button>
+				<button data-hours="24">+24h</button>
+			</div>
+			<div class="chart-wrap">
+				<canvas id="history-chart"></canvas>
+			</div>
+			<p id="item-empty" class="item-empty hidden">
+				No snapshots recorded for this range yet. History accumulates while
+				the server is running.
+			</p>
+			<div class="restock-panel">
+				<div class="restock-controls">
+					<h3>Restock times</h3>
+					<div class="avg-wrap">
+						<span>Average of last</span>
+						<div class="avg-buttons" id="avg-buttons"></div>
+						<span id="restock-avg" class="restock-avg"></span>
+					</div>
+				</div>
+				<div class="restock-controls rate-controls">
+					<h3>Depletion rate</h3>
+					<div class="avg-wrap">
+						<span>Average of last</span>
+						<div class="avg-buttons" id="rate-avg-buttons"></div>
+						<span id="rate-avg" class="restock-avg"></span>
+					</div>
+				</div>
+				<ul id="restock-list" class="restock-list"></ul>
+				<div id="prediction-section" class="prediction-section hidden">
+					<div class="restock-controls">
+						<h3>Predicted restocks</h3>
+						<span id="prediction-travel-note" class="prediction-note"></span>
+					</div>
+					<ul id="prediction-list" class="restock-list prediction-list"></ul>
+				</div>
+			</div>
+		</main>
+
+		<script src="/shared.js"></script>
+		<script src="/item.js"></script>
+		<script src="/auth.js"></script>
+	</body>
+</html>

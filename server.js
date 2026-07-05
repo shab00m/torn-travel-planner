@@ -2,6 +2,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COUNTRIES } from "./src/countries.js";
+import { getFlightMatrix } from "./src/flight-times.js";
 import { getHistory, getRestocks, getDepletionRates } from "./src/db.js";
 import { startPolling, getLatest } from "./src/yata.js";
 import { getPlayerInfo } from "./src/torn.js";
@@ -29,7 +30,12 @@ app.post("/api/login", async (req, res) => {
 });
 
 app.get("/api/countries", (_req, res) => {
-  res.json(COUNTRIES);
+  const flights = getFlightMatrix();
+  const enriched = {};
+  for (const [code, meta] of Object.entries(COUNTRIES)) {
+    enriched[code] = { ...meta, flightSec: flights[code] };
+  }
+  res.json(enriched);
 });
 
 // Latest stock levels for every country (from the most recent successful poll).
@@ -82,6 +88,10 @@ app.get("/api/restocks/:country/:itemId", (req, res) => {
     restocks: getRestocks(params.country, params.id, 21),
     rates: getDepletionRates(params.country, params.id, 21),
   });
+});
+
+app.get("/item/:country/:itemId(\\d+)", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "item.html"));
 });
 
 app.listen(PORT, () => {
