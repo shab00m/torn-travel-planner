@@ -252,7 +252,7 @@ export function getDepletionRates(country, itemId, limit) {
     const nextDepletion = events[i + 1]?.depleted_ts;
     if (nextDepletion != null) {
       const lastPositive = lastPositiveBeforeStmt.get(country, itemId, nextDepletion);
-      if (lastPositive) {
+      if (lastPositive && lastPositive.yata_ts > startTs) {
         endTs = lastPositive.yata_ts;
         endQty = lastPositive.quantity;
       } else {

@@ -35,6 +35,7 @@ function fmtDuration(seconds) {
 }
 
 const fmtRate = (r) => (Math.abs(r) >= 10 ? r.toFixed(0) : r.toFixed(1));
+const CYCLE_HISTORY_LIMIT = 10;
 const tsMs = (ts) => ts * 1000;
 
 function initAvgButtons(container, defaultN, onSelect) {
@@ -430,7 +431,7 @@ function buildAnnotations(restocks, rates, timeline) {
 function getCycleHistoryRows() {
   const completed = getAdjustedCompletedRestocks();
   const adjustedRates = getAdjustedRates();
-  return completed.map((r) => {
+  return completed.slice(0, CYCLE_HISTORY_LIMIT).map((r) => {
     const origIdx = state.rates.findIndex((w) => w.start_ts === r.restocked_ts);
     const rate = origIdx >= 0 ? adjustedRates[origIdx]?.rate : null;
     return {
@@ -475,7 +476,6 @@ function renderCycleHistory() {
   }
 
   el.cycleHistoryBody.innerHTML = rows
-    .slice(0, 10)
     .map(
       (r) => `<tr>
         <td>${fmtTime(r.restocked_ts)}</td>

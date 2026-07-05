@@ -79,14 +79,14 @@ app.get("/api/history/:country/:itemId", (req, res) => {
 });
 
 // Recent out-of-stock periods and in-stock depletion-rate windows for one
-// item (newest first). 21 = up to 20 completed samples for averages plus a
-// possible open one.
+// item (newest first). 50 = enough history for cycle table (10 rows) and
+// sample averages.
 app.get("/api/restocks/:country/:itemId", (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   res.json({
-    restocks: getRestocks(params.country, params.id, 21),
-    rates: getDepletionRates(params.country, params.id, 21),
+    restocks: getRestocks(params.country, params.id, 50),
+    rates: getDepletionRates(params.country, params.id, 50),
   });
 });
 
