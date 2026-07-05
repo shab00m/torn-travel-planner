@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Torn Travel Planner</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+			rel="stylesheet"
+		/>
+		<link rel="stylesheet" href="style.css" />
+		<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+		<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.1.0/dist/chartjs-plugin-annotation.min.js"></script>
+	</head>
+	<body>
+		<header>
+			<div class="header-inner">
+				<h1>✈️ Torn Travel Planner</h1>
+				<div class="header-meta">
+					<div id="auth" class="auth">
+						<form id="login-form" class="login-form">
+							<input
+								id="api-key"
+								type="password"
+								placeholder="Torn API key"
+								autocomplete="off"
+							/>
+							<button type="submit">Log in</button>
+						</form>
+						<div id="player-info" class="player-info hidden"></div>
+					</div>
+					<span id="status" class="status">Loading…</span>
+				</div>
+			</div>
+			<div class="filters">
+				<input
+					id="item-search"
+					type="search"
+					placeholder="Search items… (e.g. Xanax, Plushie)"
+					autocomplete="off"
+				/>
+				<select id="country-filter">
+					<option value="">All countries</option>
+				</select>
+				<label class="checkbox">
+					<input id="in-stock-only" type="checkbox" />
+					In stock only
+				</label>
+			</div>
+		</header>
+
+		<main id="countries" class="countries"></main>
+
+		<div id="modal" class="modal hidden">
+			<div class="modal-content">
+				<div class="modal-header">
+					<div>
+						<h2 id="modal-title"></h2>
+						<span id="modal-subtitle" class="modal-subtitle"></span>
+					</div>
+					<button
+						id="modal-close"
+						class="close-btn"
+						aria-label="Close"
+					>
+						×
+					</button>
+				</div>
+				<div class="range-buttons" id="range-buttons">
+					<button data-hours="1">1h</button>
+					<button data-hours="6">6h</button>
+					<button data-hours="24" class="active">24h</button>
+					<button data-hours="168">7d</button>
+					<button data-hours="0">All</button>
+				</div>
+				<div class="chart-wrap">
+					<canvas id="history-chart"></canvas>
+				</div>
+				<p id="modal-empty" class="modal-empty hidden">
+					No snapshots recorded for this range yet. History
+					accumulates while the server is running.
+				</p>
+				<div class="restock-panel">
+					<div class="restock-controls">
+						<h3>Restock times</h3>
+						<div class="avg-wrap">
+							<span>Average of last</span>
+							<div class="avg-buttons" id="avg-buttons"></div>
+							<span id="restock-avg" class="restock-avg"></span>
+						</div>
+					</div>
+					<ul id="restock-list" class="restock-list"></ul>
+					<div class="restock-controls rate-controls">
+						<h3>Depletion rate</h3>
+						<div class="avg-wrap">
+							<span>Average of last</span>
+							<div
+								class="avg-buttons"
+								id="rate-avg-buttons"
+							></div>
+							<span id="rate-avg" class="restock-avg"></span>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		<script src="app.js"></script>
+		<script src="chart.js"></script>
+		<script src="auth.js"></script>
+	</body>
+</html>

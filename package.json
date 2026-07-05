@@ -1,0 +1,17 @@
+{
+  "name": "torn-travel-planner",
+  "version": "1.0.0",
+  "description": "Torn travel stock viewer with snapshot history, powered by the YATA API",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "backfill": "node scripts/backfill-restocks.mjs"
+  },
+  "engines": {
+    "node": ">=23.4.0"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
