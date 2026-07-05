@@ -8,6 +8,7 @@ const el = {
   itemEmpty: document.getElementById("item-empty"),
   rangeButtons: document.getElementById("range-buttons"),
   chartCanvas: document.getElementById("history-chart"),
+  restockMarkers: document.getElementById("restock-markers"),
   avgButtons: document.getElementById("avg-buttons"),
   restockAvg: document.getElementById("restock-avg"),
   cycleOpenNote: document.getElementById("cycle-open-note"),
@@ -223,7 +224,7 @@ function buildPredictedMinuteSeries(nowTs, endTs, startQty, segments, events, co
     }
   }
 
-  return [...tsSet]
+  const points = [...tsSet]
     .filter((ts) => ts >= nowTs && ts <= endTs)
     .sort((a, b) => a - b)
     .map((ts) => ({
@@ -232,6 +233,20 @@ function buildPredictedMinuteSeries(nowTs, endTs, startQty, segments, events, co
       cost,
       predicted: true,
     }));
+
+  const restockTimes = new Set(
+    events.filter((e) => e.type === "restock" && e.ts >= nowTs).map((e) => e.ts)
+  );
+
+  const data = [];
+  for (const pt of points) {
+    const ts = Math.round(pt.x / 1000);
+    if (restockTimes.has(ts)) {
+      data.push({ x: pt.x, y: null, predicted: true });
+    }
+    data.push(pt);
+  }
+  return data;
 }
 
 function buildTimeline(historicalPoints, predictionHours) {
@@ -323,6 +338,7 @@ function buildAnnotations(restocks, rates, timeline) {
 
   getAdjustedRates().forEach((w, i) => {
     if (tsMs(w.end_ts) < xMin || w.start_ts > nowTs) return;
+    if (state.predictionHours > 0 && state.rates[i]?.open) return;
     const slope = (w.end_qty - w.start_qty) / (w.end_ts - w.start_ts);
     const startTs = Math.max(w.start_ts, xMin / 1000);
     const endTs = Math.min(w.end_ts, nowTs, xMax / 1000);
@@ -351,16 +367,17 @@ function buildAnnotations(restocks, rates, timeline) {
     type: "line",
     xMin: tsMs(nowTs),
     xMax: tsMs(nowTs),
-    borderColor: "rgba(255, 255, 255, 0.55)",
+    borderColor: "#ffea00",
     borderWidth: 2,
     borderDash: [4, 4],
     label: {
       display: true,
-      content: "Now",
-      position: "start",
+      content: [`NOW`, fmtTimeShort(nowTs)],
+      position: "end",
+      yAdjust: -6,
       backgroundColor: "rgba(23, 28, 38, 0.9)",
-      color: "#e6ebf2",
-      font: { size: 10, weight: "600" },
+      color: "#ffea00",
+      font: { size: 10, weight: "700" },
     },
   };
 
@@ -391,47 +408,20 @@ function buildAnnotations(restocks, rates, timeline) {
       const startTs = Math.max(w.start_ts, nowTs);
       const endTs = Math.min(w.end_ts, xMax / 1000);
       if (startTs >= endTs) return;
+      const midTs = (startTs + endTs) / 2;
+      const midQty = Math.max(0, w.start_qty + slope * (midTs - w.start_ts));
+      // Label only — the Predicted dataset already draws these slopes; lines would duplicate it.
       annotations[`predRate${i}`] = {
-        type: "line",
-        xMin: tsMs(startTs),
-        xMax: tsMs(endTs),
-        yMin: Math.max(0, w.start_qty + slope * (startTs - w.start_ts)),
-        yMax: Math.max(0, w.start_qty + slope * (endTs - w.start_ts)),
-        borderColor: "rgba(167, 139, 250, 0.85)",
-        borderWidth: 2,
-        borderDash: [6, 4],
-        label: {
-          display: true,
-          content: `${fmtRate(w.rate)}/min`,
-          position: "center",
-          backgroundColor: "rgba(23, 28, 38, 0.85)",
-          color: "#a78bfa",
-          font: { size: 10, weight: "600" },
-        },
+        type: "label",
+        xValue: tsMs(midTs),
+        yValue: midQty,
+        backgroundColor: "rgba(23, 28, 38, 0.85)",
+        color: "#a78bfa",
+        font: { size: 10, weight: "600" },
+        content: `${fmtRate(w.rate)}/min`,
       };
     });
 
-    events.forEach((ev, i) => {
-      if (ev.type !== "restock" || ev.ts < nowTs) return;
-      if (tsMs(ev.ts) < xMin || tsMs(ev.ts) > xMax) return;
-      annotations[`predRestock${i}`] = {
-        type: "line",
-        xMin: tsMs(ev.ts),
-        xMax: tsMs(ev.ts),
-        borderColor: "rgba(62, 207, 142, 0.85)",
-        borderWidth: 2,
-        borderDash: [4, 4],
-        label: {
-          display: true,
-          content: fmtTime(ev.ts),
-          position: "end",
-          yAdjust: -6,
-          backgroundColor: "rgba(23, 28, 38, 0.9)",
-          color: "#3ecf8e",
-          font: { size: 10, weight: "600" },
-        },
-      };
-    });
   }
 
   return annotations;
@@ -592,7 +582,7 @@ function chartDatasets(timeline) {
       backgroundColor: "rgba(79, 156, 249, 0.15)",
       fill: true,
       pointRadius: timeline.actualData.length > 200 ? 0 : 2,
-      tension: 0.15,
+      tension: 0,
       spanGaps: false,
     },
   ];
@@ -600,6 +590,7 @@ function chartDatasets(timeline) {
     ds.push({
       label: "Predicted",
       data: timeline.predictedData,
+      order: 1,
       borderColor: "#a78bfa",
       backgroundColor: "rgba(167, 139, 250, 0.08)",
       fill: false,
@@ -612,6 +603,67 @@ function chartDatasets(timeline) {
   return ds;
 }
 
+function chartTooltipEl(chart) {
+  const parent = chart.canvas.parentNode;
+  let el = parent.querySelector(".chart-tooltip");
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "chart-tooltip";
+    parent.appendChild(el);
+  }
+  return el;
+}
+
+function externalChartTooltip(context) {
+  const { chart, tooltip } = context;
+  const el = chartTooltipEl(chart);
+  if (tooltip.opacity === 0) {
+    el.style.opacity = "0";
+    return;
+  }
+
+  const items = tooltip.dataPoints ?? [];
+  if (!items.length) {
+    el.style.opacity = "0";
+    return;
+  }
+
+  const title = fmtTime(Math.floor(items[0].parsed.x / 1000));
+  const body = items
+    .map((item) => {
+      const raw = item.raw;
+      const predicted = raw?.predicted || item.datasetIndex === 1;
+      let line = `${item.dataset.label}: ${fmtNum(item.parsed.y)}`;
+      if (raw?.cost) {
+        line += `<br>Cost: $${fmtNum(raw.cost)}${predicted ? " (predicted)" : ""}`;
+      } else if (predicted) {
+        line += " (predicted)";
+      }
+      return `<div>${line}</div>`;
+    })
+    .join("");
+
+  el.innerHTML = `<div class="chart-tooltip-title">${title}</div>${body}`;
+
+  const parent = chart.canvas.parentNode;
+  const pad = 8;
+  const caretX = chart.canvas.offsetLeft + tooltip.caretX;
+  const caretY = chart.canvas.offsetTop + tooltip.caretY;
+
+  el.style.opacity = "1";
+  el.style.left = `${caretX}px`;
+  el.style.top = `${caretY}px`;
+  el.style.transform = "translate(-50%, calc(-100% - 8px))";
+
+  const tw = el.offsetWidth;
+  const th = el.offsetHeight;
+  const x = Math.max(pad + tw / 2, Math.min(parent.clientWidth - pad - tw / 2, caretX));
+  const flipBelow = caretY - th - 8 < pad;
+  el.style.left = `${x}px`;
+  el.style.top = `${caretY}px`;
+  el.style.transform = flipBelow ? "translate(-50%, 8px)" : "translate(-50%, calc(-100% - 8px))";
+}
+
 function chartOptions(timeline) {
   const spanMs = timeline.xMax - timeline.xMin;
   const spanHours = spanMs / 3_600_000;
@@ -620,8 +672,11 @@ function chartOptions(timeline) {
   return {
     responsive: true,
     maintainAspectRatio: false,
+    onResize(chart) {
+      updateRestockMarkers(chart);
+    },
     layout: {
-      padding: { top: state.predictionHours > 0 ? 22 : 4 },
+      padding: { top: 24 },
     },
     interaction: { mode: "nearest", axis: "x", intersect: false },
     plugins: {
@@ -630,18 +685,8 @@ function chartOptions(timeline) {
         annotations: buildAnnotations(state.restocks, state.rates, timeline),
       },
       tooltip: {
-        callbacks: {
-          title: (items) => {
-            if (!items.length) return "";
-            return fmtTime(Math.floor(items[0].parsed.x / 1000));
-          },
-          afterLabel: (ctx) => {
-            const raw = ctx.dataset.data[ctx.dataIndex];
-            if (!raw?.cost) return raw?.predicted || ctx.datasetIndex === 1 ? " (predicted)" : "";
-            const suffix = raw.predicted || ctx.datasetIndex === 1 ? " (predicted)" : "";
-            return `Cost: $${raw.cost.toLocaleString("en-US")}${suffix}`;
-          },
-        },
+        enabled: false,
+        external: externalChartTooltip,
       },
     },
     scales: {
@@ -667,6 +712,58 @@ function chartOptions(timeline) {
   };
 }
 
+function destroyChart() {
+  if (state.chart) {
+    state.chart.destroy();
+    state.chart = null;
+  }
+  const existing = Chart.getChart(el.chartCanvas);
+  if (existing) existing.destroy();
+  if (el.restockMarkers) el.restockMarkers.replaceChildren();
+  el.chartCanvas?.parentNode?.querySelector(".chart-tooltip")?.remove();
+}
+
+function updateRestockMarkers(chart) {
+  if (!el.restockMarkers) return;
+  el.restockMarkers.replaceChildren();
+  if (!chart?.chartArea || state.predictionHours <= 0 || !state.predictedEvents?.length) return;
+
+  const { chartArea, scales } = chart;
+  const xScale = scales.x;
+  if (!xScale) return;
+
+  const nowTs = Math.floor(Date.now() / 1000);
+  const xMin = chart.options.scales.x.min;
+  const xMax = chart.options.scales.x.max;
+
+  const restocks = state.predictedEvents.filter(
+    (e) => e.type === "restock" && e.ts >= nowTs
+  );
+
+  restocks.forEach((ev, i) => {
+    const xMs = tsMs(ev.ts);
+    if (xMs < xMin || xMs > xMax) return;
+
+    const x = xScale.getPixelForValue(xMs);
+    if (x < chartArea.left || x > chartArea.right) return;
+
+    const line = document.createElement("div");
+    line.className = "restock-marker";
+    line.style.left = `${x}px`;
+    line.style.top = `${chartArea.top}px`;
+    line.style.height = `${chartArea.bottom - chartArea.top}px`;
+
+    const label = document.createElement("span");
+    label.className = "restock-marker-label";
+    label.innerHTML = `#${i + 1}<br>${fmtTimeShort(ev.ts)}`;
+    label.style.left = `${x}px`;
+    label.style.top = `${chartArea.top + 2}px`;
+
+    el.restockMarkers.appendChild(line);
+    el.restockMarkers.appendChild(label);
+  });
+}
+
 function refreshChart(timeline) {
   state.predictedEvents = timeline.events ?? [];
   renderPredictionPanel(state.predictedEvents, timeline.segments ?? []);
@@ -675,15 +772,18 @@ function refreshChart(timeline) {
   if (state.chart) {
     state.chart.data.datasets = chartDatasets(timeline);
     state.chart.options = options;
-    state.chart.update();
+    state.chart.update("none");
+    updateRestockMarkers(state.chart);
     return;
   }
 
+  destroyChart();
   state.chart = new Chart(el.chartCanvas, {
     type: "line",
     data: { datasets: chartDatasets(timeline) },
     options,
   });
+  updateRestockMarkers(state.chart);
 }
 
 async function loadCurrentStock() {
