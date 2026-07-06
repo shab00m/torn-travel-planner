@@ -95,6 +95,21 @@
 					</div>
 				</div>
 				<div class="control-group">
+					<span class="control-group-title">Chart View</span>
+					<div class="chart-view-fields">
+						<label class="chart-view-field" title="Seconds from the start of the loaded history range">
+							<span class="chart-view-label">Offset</span>
+							<input id="chart-offset" type="number" min="0" step="1" value="0" />
+							<span class="chart-view-suffix">s</span>
+						</label>
+						<label class="chart-view-field" title="Zoom level — 1 is default, higher values zoom in">
+							<span class="chart-view-label">Scale</span>
+							<input id="chart-scale" type="number" min="0.1" step="0.1" value="1" />
+							<span class="chart-view-suffix">×</span>
+						</label>
+					</div>
+				</div>
+				<div class="control-group">
 					<span class="control-group-title">Data Inspector</span>
 					<button type="button" id="inspect-toggle" class="inspect-toggle">Inspect snapshots</button>
 				</div>

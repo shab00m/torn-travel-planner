@@ -378,6 +378,8 @@ body.page-item {
 }
 
 .chart-wrap { position: relative; height: 340px; overflow: hidden; }
+.chart-wrap.is-panning { cursor: grabbing; }
+
 .chart-markers {
   position: absolute;
   inset: 0;
@@ -445,6 +447,39 @@ body.page-item {
 .chart-tooltip-title {
   font-weight: 600;
   margin-bottom: 4px;
+}
+
+.chart-view-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+.chart-view-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chart-view-label {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+.chart-view-field input {
+  width: 5.5rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 0.85rem;
+}
+.chart-view-field input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.chart-view-suffix {
+  color: var(--text-dim);
+  font-size: 0.85rem;
 }
 
 .chart-inspect-layer {

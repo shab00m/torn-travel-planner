@@ -19,6 +19,9 @@ const state = {
   timeFormat: "european",
   predictedEvents: [],
   safeWindows: [],
+  chartOffsetSec: 0,
+  chartScale: 1,
+  lastTimeline: null,
   travelType: "Standard",
   travelCapacity: 5,
   activeTravel: null, // { flyingToCountry, arriveTs } when logged in and in flight

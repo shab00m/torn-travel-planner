@@ -33,12 +33,19 @@ const el = {
   snapshotInspectorBody: document.getElementById("snapshot-inspector-body"),
   snapshotClearBtn: document.getElementById("snapshot-clear-btn"),
   snapshotDeleteAllBtn: document.getElementById("snapshot-delete-all-btn"),
+  chartOffset: document.getElementById("chart-offset"),
+  chartScale: document.getElementById("chart-scale"),
+  chartWrap: document.querySelector(".chart-wrap"),
 };
 
 const snapshotInspector = {
   enabled: false,
   selected: new Set(),
   drag: null,
+};
+
+const chartPan = {
+  active: null,
 };
 
 function fmtDuration(seconds) {
@@ -54,9 +61,209 @@ function fmtDuration(seconds) {
 const fmtRate = (r) => (Math.abs(r) >= 10 ? r.toFixed(0) : r.toFixed(1));
 const CYCLE_HISTORY_LIMIT = 10;
 const CHART_TOP_PADDING = 48;
+const CHART_VIEWPORT_HOURS = 24;
+const CHART_MIN_VIEWPORT_SEC = 15 * 60;
+const CHART_PAN_DRAG_THRESHOLD_PX = 4;
+const CHART_SCALE_INPUT_DECIMALS = 2;
 const CHART_TIME_MARKER_LABEL_Y_ADJUST = -34;
 const CHART_PREDICTION_LABEL_Y_ADJUST = 8;
 const tsMs = (ts) => ts * 1000;
+
+function getTimelineSpanSec(timeline) {
+  return (timeline.xMax - timeline.xMin) / 1000;
+}
+
+function getBaseChartViewportSpanSec(timeline) {
+  return Math.min(getTimelineSpanSec(timeline), CHART_VIEWPORT_HOURS * 3600);
+}
+
+function getMinChartScale(timeline) {
+  const base = getBaseChartViewportSpanSec(timeline);
+  const full = getTimelineSpanSec(timeline);
+  if (!full) return 1;
+  return base / full;
+}
+
+function getMaxChartScale(timeline) {
+  const base = getBaseChartViewportSpanSec(timeline);
+  return base / CHART_MIN_VIEWPORT_SEC;
+}
+
+function clampChartScale(scale, timeline) {
+  if (!timeline?.xMax) return 1;
+  return Math.max(getMinChartScale(timeline), Math.min(scale, getMaxChartScale(timeline)));
+}
+
+function getChartViewportSpanSec(timeline, scale = state.chartScale) {
+  const base = getBaseChartViewportSpanSec(timeline);
+  const full = getTimelineSpanSec(timeline);
+  const span = base / scale;
+  return Math.max(CHART_MIN_VIEWPORT_SEC, Math.min(full, span));
+}
+
+function getMaxChartOffsetSec(timeline, scale = state.chartScale) {
+  return Math.max(0, getTimelineSpanSec(timeline) - getChartViewportSpanSec(timeline, scale));
+}
+
+function clampChartOffsetSec(offsetSec, timeline, scale = state.chartScale) {
+  if (!timeline?.xMax) return 0;
+  return Math.max(0, Math.min(offsetSec, getMaxChartOffsetSec(timeline, scale)));
+}
+
+function getVisibleChartRange(
+  timeline,
+  offsetSec = state.chartOffsetSec,
+  scale = state.chartScale
+) {
+  const clampedScale = clampChartScale(scale, timeline);
+  const clamped = clampChartOffsetSec(offsetSec, timeline, clampedScale);
+  const visMin = timeline.xMin + clamped * 1000;
+  const visMax = visMin + getChartViewportSpanSec(timeline, clampedScale) * 1000;
+  return { visMin, visMax, offsetSec: clamped, scale: clampedScale };
+}
+
+function canAdjustChartView(timeline) {
+  if (!timeline?.xMax) return false;
+  const canPan = getMaxChartOffsetSec(timeline) > 0;
+  const canScale = getMaxChartScale(timeline) > getMinChartScale(timeline) * 1.001;
+  return canPan || canScale;
+}
+
+function pixelDeltaToOffsetSec(deltaPx, spanSec, chart) {
+  if (!chart?.chartArea) return 0;
+  const { left, right } = chart.chartArea;
+  const width = right - left;
+  if (!width || !spanSec) return 0;
+  return -(deltaPx / width) * spanSec;
+}
+
+function scaleFromVerticalDrag(startScale, deltaPy, timeline, chart) {
+  const startSpan = getChartViewportSpanSec(timeline, startScale);
+  const full = getTimelineSpanSec(timeline);
+  const { top, bottom } = chart.chartArea;
+  const height = bottom - top;
+  if (!height) return startScale;
+  const deltaSpan = (deltaPy / height) * startSpan;
+  const newSpan = Math.max(CHART_MIN_VIEWPORT_SEC, Math.min(full, startSpan + deltaSpan));
+  const base = getBaseChartViewportSpanSec(timeline);
+  return clampChartScale(base / newSpan, timeline);
+}
+
+function chartAreaFraction(pixel, chart) {
+  const { left, right } = chart.chartArea;
+  const width = right - left;
+  if (!width) return 0.5;
+  return (pixel - left) / width;
+}
+
+function offsetSecForZoomPivot(timeline, scale, anchorTimeMs, anchorFraction) {
+  const spanSec = getChartViewportSpanSec(timeline, scale);
+  const visMin = anchorTimeMs - anchorFraction * spanSec * 1000;
+  return (visMin - timeline.xMin) / 1000;
+}
+
+function offsetSecForScaleAtViewCenter(timeline, scale) {
+  const { visMin, visMax } = getVisibleChartRange(timeline);
+  const anchorTimeMs = (visMin + visMax) / 2;
+  return offsetSecForZoomPivot(timeline, scale, anchorTimeMs, 0.5);
+}
+
+function dragChartView(timeline, pan, deltaX, deltaY, currentX, chart) {
+  const startSpanSec = getChartViewportSpanSec(timeline, pan.startScale);
+  const nextScale = scaleFromVerticalDrag(pan.startScale, deltaY, timeline, chart);
+
+  const pannedOffset = pan.startOffsetSec + pixelDeltaToOffsetSec(deltaX, startSpanSec, chart);
+  const cursorFraction = chartAreaFraction(currentX, chart);
+  const pannedVisMin =
+    timeline.xMin + clampChartOffsetSec(pannedOffset, timeline, pan.startScale) * 1000;
+  const cursorTimeMs = pannedVisMin + cursorFraction * startSpanSec * 1000;
+
+  const nextOffset = offsetSecForZoomPivot(timeline, nextScale, cursorTimeMs, cursorFraction);
+  return { offsetSec: nextOffset, scale: nextScale };
+}
+
+function chartTimeUnitForSpan(spanMs) {
+  const spanHours = spanMs / 3_600_000;
+  return spanHours <= 6 ? "minute" : spanHours <= 48 ? "hour" : "day";
+}
+
+function syncOffsetInput(timeline = state.lastTimeline) {
+  if (!el.chartOffset) return;
+  const maxOffset = timeline ? getMaxChartOffsetSec(timeline) : 0;
+  el.chartOffset.value = String(Math.round(state.chartOffsetSec));
+  el.chartOffset.disabled = maxOffset <= 0;
+  el.chartOffset.max = String(Math.round(maxOffset));
+}
+
+function syncScaleInput(timeline = state.lastTimeline) {
+  if (!el.chartScale) return;
+  const minScale = timeline ? getMinChartScale(timeline) : 1;
+  const maxScale = timeline ? getMaxChartScale(timeline) : 1;
+  el.chartScale.value = state.chartScale.toFixed(CHART_SCALE_INPUT_DECIMALS);
+  el.chartScale.disabled = maxScale <= minScale * 1.001;
+  el.chartScale.min = minScale.toFixed(CHART_SCALE_INPUT_DECIMALS);
+  el.chartScale.max = maxScale.toFixed(CHART_SCALE_INPUT_DECIMALS);
+}
+
+function syncChartViewInteraction(timeline = state.lastTimeline) {
+  if (!el.chartWrap) return;
+  const adjustable = timeline && canAdjustChartView(timeline) && !snapshotInspector.enabled;
+  el.chartWrap.classList.toggle("can-pan", adjustable);
+  if (!adjustable) endChartPan();
+}
+
+function endChartPan() {
+  chartPan.active = null;
+  el.chartWrap?.classList.remove("is-panning");
+}
+
+function endSnapshotDrag() {
+  if (!snapshotInspector.drag) return;
+  snapshotInspector.drag = null;
+  el.chartSelectionBox?.classList.add("hidden");
+}
+
+function isMouseButtonReleased(e) {
+  return e.buttons === 0;
+}
+
+function endActiveChartDrags() {
+  endChartPan();
+  endSnapshotDrag();
+}
+
+function applyChartView(
+  timeline,
+  { offsetSec = state.chartOffsetSec, scale = state.chartScale } = {}
+) {
+  const { visMin, visMax, offsetSec: clampedOffset, scale: clampedScale } = getVisibleChartRange(
+    timeline,
+    offsetSec,
+    scale
+  );
+  state.chartOffsetSec = clampedOffset;
+  state.chartScale = clampedScale;
+  syncOffsetInput(timeline);
+  syncScaleInput(timeline);
+  syncChartViewInteraction(timeline);
+
+  if (!state.chart) return { visMin, visMax };
+
+  const spanMs = visMax - visMin;
+  const timeUnit = chartTimeUnitForSpan(spanMs);
+  state.chart.options.scales.x.min = visMin;
+  state.chart.options.scales.x.max = visMax;
+  state.chart.options.scales.x.time.unit = timeUnit;
+  state.chart.options.scales.x.time.stepSize = timeUnit === "minute" ? 1 : undefined;
+  state.chart.options.plugins.annotation.annotations = buildAnnotations(
+    state.restocks,
+    state.rates,
+    { ...timeline, xMin: visMin, xMax: visMax }
+  );
+  state.chart.update("none");
+  updateChartMarkers(state.chart);
+  return { visMin, visMax };
+}
 
 function initSampleExtremaButtons(container, defaultN, timingKey, onSelect) {
   const timing = state[timingKey];
@@ -860,9 +1067,9 @@ function externalChartTooltip(context) {
 }
 
 function chartOptions(timeline) {
-  const spanMs = timeline.xMax - timeline.xMin;
-  const spanHours = spanMs / 3_600_000;
-  const timeUnit = spanHours <= 6 ? "minute" : spanHours <= 48 ? "hour" : "day";
+  const { visMin, visMax } = getVisibleChartRange(timeline);
+  const spanMs = visMax - visMin;
+  const timeUnit = chartTimeUnitForSpan(spanMs);
 
   return {
     responsive: true,
@@ -885,7 +1092,7 @@ function chartOptions(timeline) {
         labels: { color: "#8b96a8" },
       },
       annotation: {
-        annotations: buildAnnotations(state.restocks, state.rates, timeline),
+        annotations: buildAnnotations(state.restocks, state.rates, { ...timeline, xMin: visMin, xMax: visMax }),
       },
       tooltip: {
         enabled: false,
@@ -895,8 +1102,8 @@ function chartOptions(timeline) {
     scales: {
       x: {
         type: "time",
-        min: timeline.xMin,
-        max: timeline.xMax,
+        min: visMin,
+        max: visMax,
         time: {
           unit: timeUnit,
           stepSize: timeUnit === "minute" ? 1 : undefined,
@@ -1052,6 +1259,9 @@ function updateChartMarkers(chart) {
 }
 
 function refreshChart(timeline) {
+  state.lastTimeline = timeline;
+  state.chartScale = clampChartScale(state.chartScale, timeline);
+  state.chartOffsetSec = clampChartOffsetSec(state.chartOffsetSec, timeline);
   state.predictedEvents = timeline.events ?? [];
   const nowTs = Math.floor(Date.now() / 1000);
   state.safeWindows = state.predictedEvents
@@ -1060,6 +1270,9 @@ function refreshChart(timeline) {
     .filter(Boolean);
   renderPredictionPanel(state.predictedEvents, timeline.segments ?? []);
   const options = chartOptions(timeline);
+  syncOffsetInput(timeline);
+  syncScaleInput(timeline);
+  syncChartViewInteraction(timeline);
 
   if (state.chart) {
     state.chart.data.datasets = chartDatasets(timeline);
@@ -1106,6 +1319,13 @@ function chartEventX(e) {
   if (!chart) return null;
   const rect = chart.canvas.getBoundingClientRect();
   return e.clientX - rect.left;
+}
+
+function chartEventY(e) {
+  const chart = state.chart;
+  if (!chart) return null;
+  const rect = chart.canvas.getBoundingClientRect();
+  return e.clientY - rect.top;
 }
 
 function refreshSnapshotHighlight() {
@@ -1175,6 +1395,7 @@ function setInspectMode(enabled) {
   el.inspectToggle?.classList.toggle("active", enabled);
   el.snapshotInspector?.classList.toggle("hidden", !enabled);
   el.chartInspectLayer?.classList.toggle("hidden", !enabled);
+  syncChartViewInteraction();
   if (!enabled) {
     snapshotInspector.selected.clear();
     snapshotInspector.drag = null;
@@ -1304,6 +1525,103 @@ async function deleteSnapshotRows(yataTsList) {
   }
 }
 
+let resetChartView = true;
+
+function initChartViewControls() {
+  el.chartOffset?.addEventListener("change", () => {
+    const timeline = state.lastTimeline;
+    if (!timeline) return;
+    const raw = el.chartOffset.value.trim();
+    const offsetSec = raw === "" ? 0 : Number.parseInt(raw, 10);
+    if (!Number.isInteger(offsetSec) || offsetSec < 0) {
+      syncOffsetInput(timeline);
+      return;
+    }
+    applyChartView(timeline, { offsetSec });
+  });
+
+  el.chartScale?.addEventListener("change", () => {
+    const timeline = state.lastTimeline;
+    if (!timeline) return;
+    const raw = el.chartScale.value.trim();
+    const scale = raw === "" ? 1 : Number.parseFloat(raw);
+    if (!Number.isFinite(scale) || scale <= 0) {
+      syncScaleInput(timeline);
+      return;
+    }
+    applyChartView(timeline, {
+      scale,
+      offsetSec: offsetSecForScaleAtViewCenter(timeline, scale),
+    });
+  });
+
+  el.chartCanvas?.addEventListener("mousedown", (e) => {
+    const timeline = state.lastTimeline;
+    if (!timeline || !canAdjustChartView(timeline) || snapshotInspector.enabled || !state.chart?.chartArea) {
+      return;
+    }
+    const x = chartEventX(e);
+    const y = chartEventY(e);
+    if (x == null || y == null) return;
+    const { left, right, top, bottom } = state.chart.chartArea;
+    if (x < left || x > right || y < top || y > bottom) return;
+    chartPan.active = {
+      startX: x,
+      startY: y,
+      currentX: x,
+      currentY: y,
+      startOffsetSec: state.chartOffsetSec,
+      startScale: state.chartScale,
+      panning: false,
+    };
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (isMouseButtonReleased(e)) {
+      endActiveChartDrags();
+      return;
+    }
+    const pan = chartPan.active;
+    const timeline = state.lastTimeline;
+    const chart = state.chart;
+    if (!pan || !timeline || !chart?.chartArea) return;
+    const x = chartEventX(e);
+    const y = chartEventY(e);
+    if (x == null || y == null) return;
+    pan.currentX = x;
+    pan.currentY = y;
+    const deltaX = pan.currentX - pan.startX;
+    const deltaY = pan.currentY - pan.startY;
+    if (!pan.panning) {
+      if (
+        Math.abs(deltaX) <= CHART_PAN_DRAG_THRESHOLD_PX &&
+        Math.abs(deltaY) <= CHART_PAN_DRAG_THRESHOLD_PX
+      ) {
+        return;
+      }
+      pan.panning = true;
+      el.chartWrap?.classList.add("is-panning");
+    }
+    const { offsetSec: nextOffset, scale: nextScale } = dragChartView(
+      timeline,
+      pan,
+      deltaX,
+      deltaY,
+      pan.currentX,
+      chart
+    );
+    applyChartView(timeline, { offsetSec: nextOffset, scale: nextScale });
+  });
+
+  document.addEventListener("mouseup", endChartPan);
+  window.addEventListener("blur", endActiveChartDrags);
+  document.documentElement.addEventListener("mouseleave", (e) => {
+    if (!e.relatedTarget) endActiveChartDrags();
+  });
+}
+
+initChartViewControls();
+
 function initSnapshotInspector() {
   el.inspectToggle?.addEventListener("click", () => setInspectMode(!snapshotInspector.enabled));
   el.snapshotClearBtn?.addEventListener("click", clearSnapshotSelection);
@@ -1334,6 +1652,10 @@ function initSnapshotInspector() {
   });
 
   window.addEventListener("mousemove", (e) => {
+    if (isMouseButtonReleased(e)) {
+      endActiveChartDrags();
+      return;
+    }
     const drag = snapshotInspector.drag;
     if (!drag) return;
     const x = chartEventX(e);
@@ -1343,7 +1665,7 @@ function initSnapshotInspector() {
     updateChartSelectionBox(drag);
   });
 
-  window.addEventListener("mouseup", (e) => {
+  document.addEventListener("mouseup", (e) => {
     const drag = snapshotInspector.drag;
     if (!drag) return;
     snapshotInspector.drag = null;
@@ -1387,6 +1709,14 @@ async function drawChart() {
   renderCycleHistory();
 
   const timeline = buildTimeline(history.points, state.predictionHours);
+  if (resetChartView) {
+    state.chartScale = 1;
+    state.chartOffsetSec = getMaxChartOffsetSec(timeline, 1);
+    resetChartView = false;
+  } else {
+    state.chartScale = clampChartScale(state.chartScale, timeline);
+    state.chartOffsetSec = clampChartOffsetSec(state.chartOffsetSec, timeline);
+  }
   refreshChart(timeline);
   for (const ts of snapshotInspector.selected) {
     if (!snapshotByTs(ts)) snapshotInspector.selected.delete(ts);
@@ -1452,6 +1782,7 @@ el.rangeButtons.addEventListener("click", (e) => {
   state.rangeHours = Number(btn.dataset.hours);
   savePrefs({ rangeHours: state.rangeHours });
   syncHourButtons(el.rangeButtons, state.rangeHours);
+  resetChartView = true;
   drawChart();
 });
 
