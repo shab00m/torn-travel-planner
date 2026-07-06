@@ -3,9 +3,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COUNTRIES } from "./src/countries.js";
 import { getFlightMatrix } from "./src/flight-times.js";
-import { getHistory, getRestocks, getDepletionRates } from "./src/db.js";
+import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks } from "./src/db.js";
 import { startPolling, getLatest } from "./src/yata.js";
-import { getPlayerInfo } from "./src/torn.js";
+import { getPlayerInfo, getTravelStatus } from "./src/torn.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -24,6 +24,24 @@ app.post("/api/login", async (req, res) => {
   }
   try {
     res.json(await getPlayerInfo(apiKey.trim()));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post("/api/travel", async (req, res) => {
+  const apiKey = req.body?.apiKey;
+  const country = req.body?.country;
+  if (typeof apiKey !== "string" || !apiKey.trim()) {
+    res.status(400).json({ error: "apiKey is required" });
+    return;
+  }
+  if (typeof country !== "string" || !COUNTRIES[country]) {
+    res.status(400).json({ error: "country is required" });
+    return;
+  }
+  try {
+    res.json(await getTravelStatus(apiKey.trim(), country));
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -88,6 +106,95 @@ app.get("/api/restocks/:country/:itemId", (req, res) => {
     restocks: getRestocks(params.country, params.id, 50),
     rates: getDepletionRates(params.country, params.id, 50),
   });
+});
+
+function parseYataTs(req, res) {
+  const yataTs = Number.parseInt(req.params.yataTs, 10);
+  if (!Number.isInteger(yataTs) || yataTs <= 0) {
+    res.status(400).json({ error: "yataTs must be a positive integer" });
+    return null;
+  }
+  return yataTs;
+}
+
+function rerunRestocks(res) {
+  const stats = backfillRestocks();
+  return stats;
+}
+
+app.post("/api/snapshots/:country/:itemId/delete", (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  const list = req.body?.yata_ts;
+  if (!Array.isArray(list) || !list.length) {
+    res.status(400).json({ error: "yata_ts array is required" });
+    return;
+  }
+  if (!list.every((ts) => Number.isInteger(ts) && ts > 0)) {
+    res.status(400).json({ error: "yata_ts values must be positive integers" });
+    return;
+  }
+  try {
+    const deleted = deleteSnapshots(params.country, params.id, list);
+    const restocks = rerunRestocks(res);
+    res.json({ ok: true, deleted, restocks });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  const yataTs = parseYataTs(req, res);
+  if (yataTs == null) return;
+  const row = getSnapshot(params.country, params.id, yataTs);
+  if (!row) {
+    res.status(404).json({ error: "Snapshot not found" });
+    return;
+  }
+  res.json({ country: params.country, itemId: params.id, ...row });
+});
+
+app.patch("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  const yataTs = parseYataTs(req, res);
+  if (yataTs == null) return;
+  const body = req.body ?? {};
+  if (body.quantity != null && !Number.isInteger(body.quantity)) {
+    res.status(400).json({ error: "quantity must be an integer" });
+    return;
+  }
+  if (body.cost != null && !Number.isInteger(body.cost)) {
+    res.status(400).json({ error: "cost must be an integer" });
+    return;
+  }
+  if (body.yata_ts != null && !Number.isInteger(body.yata_ts)) {
+    res.status(400).json({ error: "yata_ts must be an integer" });
+    return;
+  }
+  try {
+    const updated = updateSnapshot(params.country, params.id, yataTs, body);
+    const restocks = rerunRestocks(res);
+    res.json({ ok: true, snapshot: updated, restocks });
+  } catch (err) {
+    res.status(err.message === "Snapshot not found" ? 404 : 400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  const yataTs = parseYataTs(req, res);
+  if (yataTs == null) return;
+  try {
+    deleteSnapshot(params.country, params.id, yataTs);
+    const restocks = rerunRestocks(res);
+    res.json({ ok: true, restocks });
+  } catch (err) {
+    res.status(err.message === "Snapshot not found" ? 404 : 400).json({ error: err.message });
+  }
 });
 
 app.get("/item/:country/:itemId(\\d+)", (_req, res) => {

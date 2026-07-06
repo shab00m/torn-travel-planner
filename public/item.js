@@ -10,6 +10,7 @@ const el = {
   chartCanvas: document.getElementById("history-chart"),
   timeMarkers: document.getElementById("time-markers"),
   restockMarkers: document.getElementById("restock-markers"),
+  safeWindowMarkers: document.getElementById("safe-window-markers"),
   avgButtons: document.getElementById("avg-buttons"),
   restockAvg: document.getElementById("restock-avg"),
   cycleOpenNote: document.getElementById("cycle-open-note"),
@@ -23,6 +24,21 @@ const el = {
   currentStock: document.getElementById("current-stock"),
   currentQty: document.getElementById("current-qty"),
   currentMeta: document.getElementById("current-meta"),
+  inspectToggle: document.getElementById("inspect-toggle"),
+  chartInspectLayer: document.getElementById("chart-inspect-layer"),
+  chartSelectionBox: document.getElementById("chart-selection-box"),
+  snapshotInspector: document.getElementById("snapshot-inspector"),
+  snapshotInspectorHint: document.getElementById("snapshot-inspector-hint"),
+  snapshotInspectorEmpty: document.getElementById("snapshot-inspector-empty"),
+  snapshotInspectorBody: document.getElementById("snapshot-inspector-body"),
+  snapshotClearBtn: document.getElementById("snapshot-clear-btn"),
+  snapshotDeleteAllBtn: document.getElementById("snapshot-delete-all-btn"),
+};
+
+const snapshotInspector = {
+  enabled: false,
+  selected: new Set(),
+  drag: null,
 };
 
 function fmtDuration(seconds) {
@@ -42,15 +58,25 @@ const CHART_TIME_MARKER_LABEL_Y_ADJUST = -34;
 const CHART_PREDICTION_LABEL_Y_ADJUST = 8;
 const tsMs = (ts) => ts * 1000;
 
-function initAvgButtons(container, defaultN, onSelect) {
-  container.innerHTML = SAMPLE_OPTIONS.map(
-    (n) => `<button data-n="${n}" class="${n === defaultN ? "active" : ""}">${n}</button>`
+function initSampleExtremaButtons(container, defaultN, timingKey, onSelect) {
+  const timing = state[timingKey];
+  const sampleHtml = SAMPLE_OPTIONS.map(
+    (n) =>
+      `<button data-n="${n}" class="${timing === "avg" && n === defaultN ? "active" : ""}">${n}</button>`
   ).join("");
+  const extremaHtml = `<button data-mode="min" class="${timing === "min" ? "active" : ""}">MIN</button><button data-mode="max" class="${timing === "max" ? "active" : ""}">MAX</button>`;
+  container.innerHTML = sampleHtml + extremaHtml;
   container.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-n]");
-    if (!btn) return;
-    container.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === btn));
-    onSelect(Number(btn.dataset.n));
+    const sampleBtn = e.target.closest("button[data-n]");
+    if (sampleBtn) {
+      container.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === sampleBtn));
+      onSelect({ mode: "avg", n: Number(sampleBtn.dataset.n) });
+      return;
+    }
+    const modeBtn = e.target.closest("button[data-mode]");
+    if (!modeBtn) return;
+    container.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b === modeBtn));
+    onSelect({ mode: modeBtn.dataset.mode });
   });
 }
 
@@ -128,17 +154,61 @@ function getAdjustedRates() {
   return state.rates.map(adjustedRateWindow);
 }
 
-function getAverages() {
-  const restockSample = getAdjustedCompletedRestocks().slice(0, state.avgSamples);
-  const rateSample = getAdjustedRates().slice(0, state.avgRateSamples);
-  if (!restockSample.length || !rateSample.length) return null;
-  const configuredQty = currentRestockAmount();
+function getHistoricalExtents() {
+  const restocks = getAdjustedCompletedRestocks();
+  const durations = restocks
+    .map((r) => r.adjusted_duration)
+    .filter((d) => d != null && d > 0);
+  const rates = getAdjustedRates()
+    .map((w) => w.rate)
+    .filter((r) => r != null && r > 0);
   return {
-    restockSec:
-      restockSample.reduce((sum, r) => sum + r.adjusted_duration, 0) / restockSample.length,
-    rate: rateSample.reduce((sum, w) => sum + w.rate, 0) / rateSample.length,
+    minEmptyFor: durations.length ? Math.min(...durations) : null,
+    maxEmptyFor: durations.length ? Math.max(...durations) : null,
+    minRate: rates.length ? Math.min(...rates) : null,
+    maxRate: rates.length ? Math.max(...rates) : null,
+  };
+}
+
+function stockoutSecFromHistory() {
+  const restocks = getAdjustedCompletedRestocks();
+  if (!restocks.length) return null;
+  if (state.stockoutTiming === "min") {
+    const durations = restocks.map((r) => r.adjusted_duration).filter((d) => d != null && d > 0);
+    return durations.length ? Math.min(...durations) : null;
+  }
+  if (state.stockoutTiming === "max") {
+    const durations = restocks.map((r) => r.adjusted_duration).filter((d) => d != null && d > 0);
+    return durations.length ? Math.max(...durations) : null;
+  }
+  const sample = restocks.slice(0, state.avgSamples);
+  if (!sample.length) return null;
+  return sample.reduce((sum, r) => sum + r.adjusted_duration, 0) / sample.length;
+}
+
+function rateFromHistory() {
+  const windows = getAdjustedRates();
+  const rates = windows.map((w) => w.rate).filter((r) => r != null && r > 0);
+  if (!rates.length) return null;
+  if (state.rateTiming === "min") return Math.min(...rates);
+  if (state.rateTiming === "max") return Math.max(...rates);
+  const sample = windows.slice(0, state.avgRateSamples);
+  if (!sample.length) return null;
+  return sample.reduce((sum, w) => sum + w.rate, 0) / sample.length;
+}
+
+function getAverages() {
+  const restockSec = stockoutSecFromHistory();
+  const rate = rateFromHistory();
+  if (restockSec == null || rate == null) return null;
+  const configuredQty = currentRestockAmount();
+  const qtySample = getAdjustedRates().slice(0, state.avgRateSamples);
+  const qtySource = qtySample.length ? qtySample : getAdjustedRates();
+  return {
+    restockSec,
+    rate,
     restockQty: configuredQty ?? Math.round(
-      rateSample.reduce((sum, w) => sum + w.start_qty, 0) / rateSample.length
+      qtySource.reduce((sum, w) => sum + w.start_qty, 0) / qtySource.length
     ),
   };
 }
@@ -267,6 +337,7 @@ function buildTimeline(historicalPoints, predictionHours) {
     x: tsMs(p.yata_ts),
     y: p.quantity,
     cost: p.cost,
+    yata_ts: p.yata_ts,
     predicted: false,
   }));
 
@@ -301,9 +372,9 @@ function buildTimeline(historicalPoints, predictionHours) {
     }
   }
 
-  const flightSec = state.item?.country ? getFlightSec(state.item.country) : null;
-  if (flightSec != null) {
-    endTs = Math.max(endTs, nowTs + flightSec);
+  const arriveTs = getArriveTs(nowTs, state.item?.country);
+  if (arriveTs != null) {
+    endTs = Math.max(endTs, arriveTs);
   }
 
   return {
@@ -382,9 +453,8 @@ function buildAnnotations(restocks, rates, timeline) {
     borderDash: [4, 4],
   };
 
-  const flightSec = state.item?.country ? getFlightSec(state.item.country) : null;
-  if (flightSec != null) {
-    const arriveTs = nowTs + flightSec;
+  const arriveTs = getArriveTs(nowTs, state.item?.country);
+  if (arriveTs != null) {
     annotations.arrive = {
       type: "line",
       xMin: tsMs(arriveTs),
@@ -466,7 +536,16 @@ function renderCycleHistory() {
   const rows = getCycleHistoryRows();
 
   const stockoutSample = rows.slice(0, state.avgSamples);
-  if (stockoutSample.length) {
+  if (state.stockoutTiming === "min" || state.stockoutTiming === "max") {
+    const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
+    const value = state.stockoutTiming === "min" ? minEmptyFor : maxEmptyFor;
+    const allRows = getCycleHistoryRows();
+    if (value != null && allRows.length) {
+      el.restockAvg.textContent = `${fmtDuration(value)} (${state.stockoutTiming.toUpperCase()} of ${allRows.length})`;
+    } else {
+      el.restockAvg.textContent = "no samples yet";
+    }
+  } else if (stockoutSample.length) {
     const avg =
       stockoutSample.reduce((sum, r) => sum + r.emptyForSec, 0) / stockoutSample.length;
     el.restockAvg.textContent = `${fmtDuration(avg)} (${stockoutSample.length} sample${stockoutSample.length === 1 ? "" : "s"})`;
@@ -475,7 +554,16 @@ function renderCycleHistory() {
   }
 
   const rateSample = rows.filter((r) => r.rate != null).slice(0, state.avgRateSamples);
-  if (rateSample.length) {
+  if (state.rateTiming === "min" || state.rateTiming === "max") {
+    const { minRate, maxRate } = getHistoricalExtents();
+    const value = state.rateTiming === "min" ? minRate : maxRate;
+    const allRateRows = rows.filter((r) => r.rate != null);
+    if (value != null && allRateRows.length) {
+      el.rateAvg.textContent = `${fmtRate(value)}/min (${state.rateTiming.toUpperCase()} of ${allRateRows.length})`;
+    } else {
+      el.rateAvg.textContent = "no samples yet";
+    }
+  } else if (rateSample.length) {
     const avg = rateSample.reduce((sum, r) => sum + r.rate, 0) / rateSample.length;
     el.rateAvg.textContent = `${fmtRate(avg)}/min (${rateSample.length} sample${rateSample.length === 1 ? "" : "s"})`;
   } else {
@@ -524,6 +612,26 @@ function predictedRestockBounds(e, averages, events, segments) {
   return { restockEarliest, restockLatest };
 }
 
+function safeWindowBounds(e) {
+  const { minEmptyFor, maxEmptyFor, maxRate } = getHistoricalExtents();
+  if (minEmptyFor == null || maxEmptyFor == null || maxRate == null) return null;
+
+  const depletedTs = e.depleted_ts;
+  if (depletedTs == null) return null;
+
+  const restockQty = currentRestockAmount() ?? e.qty;
+  const safeStart = Math.round(depletedTs + maxEmptyFor);
+  const safeEnd = Math.round(depletedTs + minEmptyFor + (restockQty / maxRate) * 60);
+
+  if (safeStart >= safeEnd) return null;
+  return { safeStart, safeEnd };
+}
+
+function formatSafeWindowLabel(bounds, i) {
+  if (!bounds) return "";
+  return `<span class="safe-window-label">#${i + 1} safe: ${fmtTimeShort(bounds.safeStart)} → ${fmtTimeShort(bounds.safeEnd)}</span>`;
+}
+
 function formatRestockLabel(e, i, averages, events, segments) {
   const { restockEarliest, restockLatest } = predictedRestockBounds(e, averages, events, segments);
   return `#${i + 1}: Window between ${fmtTimeShort(restockEarliest)} → ${fmtTimeShort(restockLatest)}`;
@@ -540,6 +648,14 @@ function formatLeaveWindow(restockEarliest, restockLatest, flightSec, nowTs) {
   }
 
   return `<span class="leave-by">Leave between ${fmtTimeShort(leaveEarliest)} and ${fmtTimeShort(leaveLatest)}</span>`;
+}
+
+function formatSafeLeaveWindow(bounds, flightSec, nowTs) {
+  if (!bounds || flightSec == null) return "";
+  return formatLeaveWindow(bounds.safeStart, bounds.safeEnd, flightSec, nowTs).replace(
+    "leave-by",
+    "safe-leave-by"
+  );
 }
 
 function renderPredictionPanel(events, segments) {
@@ -570,9 +686,16 @@ function renderPredictionPanel(events, segments) {
         segments
       );
       const leaveHtml = formatLeaveWindow(restockEarliest, restockLatest, flightSec, nowTs);
-      return `<li>
-        <span>${formatRestockLabel(e, i, averages, events, segments)}</span>
-        ${leaveHtml}
+      const safe = safeWindowBounds(e);
+      const safeHtml = safe
+        ? `<div class="safe-window-info">${formatSafeWindowLabel(safe, i)}${formatSafeLeaveWindow(safe, flightSec, nowTs)}</div>`
+        : "";
+      return `<li class="prediction-item">
+        <div class="prediction-main">
+          <span>${formatRestockLabel(e, i, averages, events, segments)}</span>
+          ${leaveHtml}
+        </div>
+        ${safeHtml}
       </li>`;
     })
     .join("");
@@ -586,11 +709,62 @@ function getFlightSec(country) {
   );
 }
 
+function isFlyingToItem() {
+  return state.activeTravel?.flyingToCountry === true;
+}
+
+function getArriveTs(nowTs, country) {
+  if (!country) return null;
+  if (state.activeTravel?.flyingToCountry && state.activeTravel.arriveTs != null) {
+    return state.activeTravel.arriveTs;
+  }
+  const flightSec = getFlightSec(country);
+  return flightSec != null ? nowTs + flightSec : null;
+}
+
+async function refreshTravelStatus() {
+  if (!state.item) return;
+  const apiKey = typeof getStoredApiKey === "function" ? getStoredApiKey() : null;
+  if (!apiKey) {
+    state.activeTravel = null;
+    if (state.chartPoints.length) redrawPrediction();
+    return;
+  }
+  try {
+    const res = await fetch("/api/travel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ apiKey, country: state.item.country }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error);
+    state.activeTravel = body;
+  } catch {
+    state.activeTravel = null;
+  }
+  if (state.chartPoints.length) redrawPrediction();
+}
+
 function chartMarkerTop(chart, chartArea, yAdjust) {
   return chart.canvas.offsetTop + chartArea.top + yAdjust;
 }
 
+function isSnapshotSelected(yataTs) {
+  return yataTs != null && snapshotInspector.selected.has(yataTs);
+}
+
+function snapshotPointRadius(ctx, defaultRadius) {
+  const raw = ctx.raw;
+  if (raw?.nowAnchor) return 0;
+  if (snapshotInspector.enabled && raw?.yata_ts != null) {
+    if (isSnapshotSelected(raw.yata_ts)) return 7;
+    return defaultRadius > 0 ? Math.max(defaultRadius, 4) : 4;
+  }
+  return defaultRadius;
+}
+
 function chartDatasets(timeline) {
+  const defaultRadius = timeline.actualData.length > 200 ? 0 : 2;
   const ds = [
     {
       label: "Stock quantity",
@@ -598,7 +772,11 @@ function chartDatasets(timeline) {
       borderColor: "#4f9cf9",
       backgroundColor: "rgba(79, 156, 249, 0.15)",
       fill: true,
-      pointRadius: timeline.actualData.length > 200 ? 0 : 2,
+      pointRadius: (ctx) => snapshotPointRadius(ctx, defaultRadius),
+      pointBackgroundColor: (ctx) =>
+        isSnapshotSelected(ctx.raw?.yata_ts) ? "#ff6b6b" : "#4f9cf9",
+      pointBorderColor: (ctx) =>
+        isSnapshotSelected(ctx.raw?.yata_ts) ? "#ff6b6b" : "#4f9cf9",
       tension: 0,
       spanGaps: false,
     },
@@ -695,7 +873,11 @@ function chartOptions(timeline) {
     layout: {
       padding: { top: CHART_TOP_PADDING },
     },
-    interaction: { mode: "nearest", axis: "x", intersect: false },
+    interaction: {
+      mode: "nearest",
+      axis: "x",
+      intersect: snapshotInspector.enabled,
+    },
     plugins: {
       legend: {
         position: "top",
@@ -742,6 +924,7 @@ function destroyChart() {
   const existing = Chart.getChart(el.chartCanvas);
   if (existing) existing.destroy();
   if (el.restockMarkers) el.restockMarkers.replaceChildren();
+  if (el.safeWindowMarkers) el.safeWindowMarkers.replaceChildren();
   if (el.timeMarkers) el.timeMarkers.replaceChildren();
   el.chartCanvas?.parentNode?.querySelector(".chart-tooltip")?.remove();
 }
@@ -758,10 +941,11 @@ function updateTimeMarkers(chart) {
   const nowTs = Math.floor(Date.now() / 1000);
   const xMin = chart.options.scales.x.min;
   const xMax = chart.options.scales.x.max;
-  const markers = [{ ts: nowTs, label: "NOW", color: "#ffea00" }];
-  const flightSec = state.item?.country ? getFlightSec(state.item.country) : null;
-  if (flightSec != null) {
-    markers.push({ ts: nowTs + flightSec, label: "ARRIVE", color: "#ff9800" });
+  const nowLabel = isFlyingToItem() ? "✈️ NOW" : "NOW";
+  const markers = [{ ts: nowTs, label: nowLabel, color: "#ffea00" }];
+  const arriveTs = getArriveTs(nowTs, state.item?.country);
+  if (arriveTs != null) {
+    markers.push({ ts: arriveTs, label: "ARRIVE", color: "#ff9800" });
   }
 
   markers.forEach(({ ts, label, color }) => {
@@ -823,13 +1007,57 @@ function updateRestockMarkers(chart) {
   });
 }
 
+function updateSafeWindowMarkers(chart) {
+  if (!el.safeWindowMarkers) return;
+  el.safeWindowMarkers.replaceChildren();
+  if (!chart?.chartArea || state.predictionHours <= 0 || !state.safeWindows?.length) return;
+
+  const { chartArea, scales } = chart;
+  const xScale = scales.x;
+  if (!xScale) return;
+
+  const xMin = chart.options.scales.x.min;
+  const xMax = chart.options.scales.x.max;
+  const canvasTop = chart.canvas.offsetTop;
+
+  state.safeWindows.forEach(({ safeStart, safeEnd }, i) => {
+    const startMs = tsMs(safeStart);
+    const endMs = tsMs(safeEnd);
+    if (endMs < xMin || startMs > xMax) return;
+
+    const x1 = xScale.getPixelForValue(Math.max(startMs, xMin));
+    const x2 = xScale.getPixelForValue(Math.min(endMs, xMax));
+    if (x2 <= chartArea.left || x1 >= chartArea.right) return;
+
+    const left = Math.max(x1, chartArea.left);
+    const right = Math.min(x2, chartArea.right);
+    const width = right - left;
+    if (width <= 0) return;
+
+    const box = document.createElement("div");
+    box.className = "safe-window-overlay";
+    box.style.left = `${left}px`;
+    box.style.top = `${canvasTop + chartArea.top}px`;
+    box.style.width = `${width}px`;
+    box.style.height = `${chartArea.bottom - chartArea.top}px`;
+    box.title = `Safe window #${i + 1}: ${fmtTimeShort(safeStart)} → ${fmtTimeShort(safeEnd)}`;
+    el.safeWindowMarkers.appendChild(box);
+  });
+}
+
 function updateChartMarkers(chart) {
   updateTimeMarkers(chart);
+  updateSafeWindowMarkers(chart);
   updateRestockMarkers(chart);
 }
 
 function refreshChart(timeline) {
   state.predictedEvents = timeline.events ?? [];
+  const nowTs = Math.floor(Date.now() / 1000);
+  state.safeWindows = state.predictedEvents
+    .filter((e) => e.type === "restock" && e.ts >= nowTs)
+    .map((e) => safeWindowBounds(e))
+    .filter(Boolean);
   renderPredictionPanel(state.predictedEvents, timeline.segments ?? []);
   const options = chartOptions(timeline);
 
@@ -873,6 +1101,277 @@ async function loadCurrentStock() {
   }
 }
 
+function chartEventX(e) {
+  const chart = state.chart;
+  if (!chart) return null;
+  const rect = chart.canvas.getBoundingClientRect();
+  return e.clientX - rect.left;
+}
+
+function refreshSnapshotHighlight() {
+  if (state.chart) state.chart.update("none");
+  renderSnapshotInspector();
+}
+
+function clearSnapshotSelection() {
+  snapshotInspector.selected.clear();
+  refreshSnapshotHighlight();
+}
+
+function selectSnapshot(yataTs, { additive = false, toggle = false } = {}) {
+  if (yataTs == null) return;
+  if (!additive) snapshotInspector.selected.clear();
+  if (toggle && snapshotInspector.selected.has(yataTs)) {
+    snapshotInspector.selected.delete(yataTs);
+  } else {
+    snapshotInspector.selected.add(yataTs);
+  }
+  refreshSnapshotHighlight();
+}
+
+function selectSnapshotsInRange(minTs, maxTs, { additive = false } = {}) {
+  const lo = Math.min(minTs, maxTs);
+  const hi = Math.max(minTs, maxTs);
+  if (!additive) snapshotInspector.selected.clear();
+  for (const p of state.chartPoints) {
+    if (p.yata_ts >= lo && p.yata_ts <= hi) snapshotInspector.selected.add(p.yata_ts);
+  }
+  refreshSnapshotHighlight();
+}
+
+function selectNearestSnapshot(pixelX, opts) {
+  const chart = state.chart;
+  if (!chart?.scales?.x) return;
+  const xScale = chart.scales.x;
+  let nearest = null;
+  let minDist = Infinity;
+  for (const p of state.chartPoints) {
+    const px = xScale.getPixelForValue(tsMs(p.yata_ts));
+    const dist = Math.abs(px - pixelX);
+    if (dist < minDist) {
+      minDist = dist;
+      nearest = p;
+    }
+  }
+  if (!nearest || minDist > 14) return;
+  selectSnapshot(nearest.yata_ts, opts);
+}
+
+function updateChartSelectionBox(drag) {
+  if (!el.chartSelectionBox || !state.chart?.chartArea) return;
+  const chart = state.chart;
+  const { top, bottom } = chart.chartArea;
+  const canvasTop = chart.canvas.offsetTop;
+  const left = Math.min(drag.startX, drag.currentX);
+  const width = Math.abs(drag.currentX - drag.startX);
+  el.chartSelectionBox.style.left = `${left}px`;
+  el.chartSelectionBox.style.top = `${canvasTop + top}px`;
+  el.chartSelectionBox.style.width = `${width}px`;
+  el.chartSelectionBox.style.height = `${bottom - top}px`;
+}
+
+function setInspectMode(enabled) {
+  snapshotInspector.enabled = enabled;
+  el.inspectToggle?.classList.toggle("active", enabled);
+  el.snapshotInspector?.classList.toggle("hidden", !enabled);
+  el.chartInspectLayer?.classList.toggle("hidden", !enabled);
+  if (!enabled) {
+    snapshotInspector.selected.clear();
+    snapshotInspector.drag = null;
+    el.chartSelectionBox?.classList.add("hidden");
+  }
+  if (state.chart) {
+    state.chart.options.interaction.intersect = enabled;
+    state.chart.update("none");
+  }
+  renderSnapshotInspector();
+}
+
+function snapshotByTs(yataTs) {
+  return state.chartPoints.find((p) => p.yata_ts === yataTs) ?? null;
+}
+
+function renderSnapshotInspector() {
+  if (!el.snapshotInspectorBody) return;
+
+  const selected = [...snapshotInspector.selected].sort((a, b) => a - b);
+  el.snapshotInspectorHint.textContent = snapshotInspector.enabled
+    ? `${selected.length} selected · click a point or drag on the chart · Shift+click to toggle`
+    : "";
+  el.snapshotInspectorEmpty.classList.toggle(
+    "hidden",
+    !snapshotInspector.enabled || selected.length > 0
+  );
+  el.snapshotDeleteAllBtn.disabled = selected.length === 0;
+
+  if (!selected.length) {
+    el.snapshotInspectorBody.innerHTML = "";
+    return;
+  }
+
+  el.snapshotInspectorBody.innerHTML = selected
+    .map((yataTs) => {
+      const row = snapshotByTs(yataTs);
+      if (!row) return "";
+      return `<tr data-yata-ts="${yataTs}">
+        <td>
+          <input data-field="yata_ts" type="number" min="1" step="1" value="${yataTs}" title="${fmtTime(yataTs)}" />
+          <span class="snapshot-ts-label">${fmtTime(yataTs)}</span>
+        </td>
+        <td><input data-field="quantity" type="number" min="0" step="1" value="${row.quantity}" /></td>
+        <td><input data-field="cost" type="number" min="0" step="1" value="${row.cost}" /></td>
+        <td class="snapshot-row-actions">
+          <button type="button" class="snapshot-save-btn" data-action="save">Save</button>
+          <button type="button" class="snapshot-delete-btn" data-action="delete">Delete</button>
+        </td>
+      </tr>`;
+    })
+    .join("");
+}
+
+async function saveSnapshotRow(originalTs) {
+  const item = state.item;
+  if (!item) return;
+  const tr = el.snapshotInspectorBody.querySelector(`tr[data-yata-ts="${originalTs}"]`);
+  if (!tr) return;
+
+  const yata_ts = Number.parseInt(tr.querySelector('[data-field="yata_ts"]').value, 10);
+  const quantity = Number.parseInt(tr.querySelector('[data-field="quantity"]').value, 10);
+  const cost = Number.parseInt(tr.querySelector('[data-field="cost"]').value, 10);
+  if (!Number.isInteger(yata_ts) || yata_ts <= 0) {
+    alert("Timestamp must be a positive integer (unix seconds).");
+    return;
+  }
+  if (!Number.isInteger(quantity) || quantity < 0) {
+    alert("Quantity must be a non-negative integer.");
+    return;
+  }
+  if (!Number.isInteger(cost) || cost < 0) {
+    alert("Cost must be a non-negative integer.");
+    return;
+  }
+
+  const btn = tr.querySelector('[data-action="save"]');
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    const body = await fetchJsonWithBody(
+      `/api/snapshots/${item.country}/${item.itemId}/${originalTs}`,
+      { method: "PATCH", body: { yata_ts, quantity, cost } }
+    );
+    snapshotInspector.selected.delete(originalTs);
+    snapshotInspector.selected.add(body.snapshot.yata_ts);
+    await drawChart();
+  } catch (err) {
+    alert(`Save failed: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Save";
+  }
+}
+
+async function deleteSnapshotRows(yataTsList) {
+  const item = state.item;
+  if (!item || !yataTsList.length) return;
+  if (
+    !confirm(
+      `Delete ${yataTsList.length} snapshot${yataTsList.length === 1 ? "" : "s"}? Restock history will be rebuilt.`
+    )
+  ) {
+    return;
+  }
+
+  el.snapshotDeleteAllBtn.disabled = true;
+  try {
+    if (yataTsList.length === 1) {
+      const ts = yataTsList[0];
+      const res = await fetch(`/api/snapshots/${item.country}/${item.itemId}/${ts}`, {
+        method: "DELETE",
+      });
+      await parseFetchResponse(res);
+    } else {
+      await fetchJsonWithBody(`/api/snapshots/${item.country}/${item.itemId}/delete`, {
+        method: "POST",
+        body: { yata_ts: yataTsList },
+      });
+    }
+    for (const ts of yataTsList) snapshotInspector.selected.delete(ts);
+    await drawChart();
+  } catch (err) {
+    alert(`Delete failed: ${err.message}`);
+  } finally {
+    renderSnapshotInspector();
+  }
+}
+
+function initSnapshotInspector() {
+  el.inspectToggle?.addEventListener("click", () => setInspectMode(!snapshotInspector.enabled));
+  el.snapshotClearBtn?.addEventListener("click", clearSnapshotSelection);
+  el.snapshotDeleteAllBtn?.addEventListener("click", () => {
+    deleteSnapshotRows([...snapshotInspector.selected]);
+  });
+
+  el.snapshotInspectorBody?.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const tr = btn.closest("tr[data-yata-ts]");
+    if (!tr) return;
+    const originalTs = Number.parseInt(tr.dataset.yataTs, 10);
+    if (btn.dataset.action === "save") saveSnapshotRow(originalTs);
+    else if (btn.dataset.action === "delete") deleteSnapshotRows([originalTs]);
+  });
+
+  el.chartInspectLayer?.addEventListener("mousedown", (e) => {
+    if (!snapshotInspector.enabled || !state.chart?.chartArea) return;
+    const x = chartEventX(e);
+    if (x == null) return;
+    const { left, right } = state.chart.chartArea;
+    if (x < left || x > right) return;
+    e.preventDefault();
+    snapshotInspector.drag = { startX: x, currentX: x, moved: false, shiftKey: e.shiftKey };
+    el.chartSelectionBox.classList.remove("hidden");
+    updateChartSelectionBox(snapshotInspector.drag);
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    const drag = snapshotInspector.drag;
+    if (!drag) return;
+    const x = chartEventX(e);
+    if (x == null) return;
+    drag.currentX = x;
+    if (Math.abs(drag.currentX - drag.startX) > 4) drag.moved = true;
+    updateChartSelectionBox(drag);
+  });
+
+  window.addEventListener("mouseup", (e) => {
+    const drag = snapshotInspector.drag;
+    if (!drag) return;
+    snapshotInspector.drag = null;
+    el.chartSelectionBox.classList.add("hidden");
+
+    const chart = state.chart;
+    if (!chart?.scales?.x) return;
+
+    if (drag.moved) {
+      const xScale = chart.scales.x;
+      const minTs = Math.floor(xScale.getValueForPixel(Math.min(drag.startX, drag.currentX)) / 1000);
+      const maxTs = Math.floor(xScale.getValueForPixel(Math.max(drag.startX, drag.currentX)) / 1000);
+      selectSnapshotsInRange(minTs, maxTs, { additive: drag.shiftKey });
+    } else {
+      selectNearestSnapshot(drag.startX, { additive: drag.shiftKey, toggle: drag.shiftKey });
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && snapshotInspector.enabled) {
+      if (snapshotInspector.selected.size) clearSnapshotSelection();
+      else setInspectMode(false);
+    }
+  });
+}
+
+initSnapshotInspector();
+
 async function drawChart() {
   const { country, itemId } = state.item;
   const [history, restockData] = await Promise.all([
@@ -889,6 +1388,10 @@ async function drawChart() {
 
   const timeline = buildTimeline(history.points, state.predictionHours);
   refreshChart(timeline);
+  for (const ts of snapshotInspector.selected) {
+    if (!snapshotByTs(ts)) snapshotInspector.selected.delete(ts);
+  }
+  renderSnapshotInspector();
 }
 
 function redrawPrediction() {
@@ -964,15 +1467,27 @@ el.predictionButtons.addEventListener("click", (e) => {
 syncHourButtons(el.rangeButtons, state.rangeHours);
 syncHourButtons(el.predictionButtons, state.predictionHours);
 
-initAvgButtons(el.avgButtons, state.avgSamples, (n) => {
-  state.avgSamples = n;
-  savePrefs({ avgSamples: n });
+initSampleExtremaButtons(el.avgButtons, state.avgSamples, "stockoutTiming", ({ mode, n }) => {
+  if (mode === "avg") {
+    state.stockoutTiming = "avg";
+    state.avgSamples = n;
+    savePrefs({ stockoutTiming: "avg", avgSamples: n });
+  } else {
+    state.stockoutTiming = mode;
+    savePrefs({ stockoutTiming: mode });
+  }
   renderCycleHistory();
   redrawPrediction();
 });
-initAvgButtons(el.rateAvgButtons, state.avgRateSamples, (n) => {
-  state.avgRateSamples = n;
-  savePrefs({ avgRateSamples: n });
+initSampleExtremaButtons(el.rateAvgButtons, state.avgRateSamples, "rateTiming", ({ mode, n }) => {
+  if (mode === "avg") {
+    state.rateTiming = "avg";
+    state.avgRateSamples = n;
+    savePrefs({ rateTiming: "avg", avgRateSamples: n });
+  } else {
+    state.rateTiming = mode;
+    savePrefs({ rateTiming: mode });
+  }
   renderCycleHistory();
   redrawPrediction();
 });
@@ -996,9 +1511,10 @@ window.addEventListener("timeformatchange", () => {
     return;
   }
   setupItemPage(item);
-  await Promise.all([drawChart(), loadCurrentStock()]);
+  await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);
   setInterval(() => {
     drawChart();
     loadCurrentStock();
+    refreshTravelStatus();
   }, 60_000);
 })();

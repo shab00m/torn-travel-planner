@@ -1,3 +1,5 @@
+import { countryCodeFromTornDestination } from "./countries.js";
+
 const TORN_URL = "https://api.torn.com/user/";
 
 // Base travel capacities (see https://www.torntravel.com/handbook/capacity):
@@ -55,12 +57,8 @@ function parseTravelPerks(data) {
   };
 }
 
-/**
- * Validate an API key against the Torn API and return player info.
- * Throws with a user-presentable message on failure.
- */
-export async function getPlayerInfo(apiKey) {
-  const url = `${TORN_URL}?selections=basic,perks&key=${encodeURIComponent(apiKey)}`;
+async function fetchTornUser(apiKey, selections) {
+  const url = `${TORN_URL}?selections=${selections}&key=${encodeURIComponent(apiKey)}&timestamp=${Date.now()}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   if (!res.ok) {
     throw new Error(`Torn API responded with HTTP ${res.status}`);
@@ -69,11 +67,41 @@ export async function getPlayerInfo(apiKey) {
   if (data.error) {
     throw new Error(`Torn API error ${data.error.code}: ${data.error.error}`);
   }
+  return data;
+}
 
+/**
+ * Validate an API key against the Torn API and return player info.
+ * Throws with a user-presentable message on failure.
+ */
+export async function getPlayerInfo(apiKey) {
+  const data = await fetchTornUser(apiKey, "basic,perks");
   return {
     name: data.name,
     playerId: data.player_id,
     level: data.level,
     ...parseTravelPerks(data),
+  };
+}
+
+/**
+ * Return in-flight travel to a specific country, if any.
+ * travel.timestamp is the landing time while en route.
+ */
+export function parseTravelToCountry(travel, countryCode) {
+  if (!travel?.destination || travel.timestamp == null) return null;
+  if (countryCodeFromTornDestination(travel.destination) !== countryCode) return null;
+  const nowTs = Math.floor(Date.now() / 1000);
+  if (travel.timestamp <= nowTs) return null;
+  return { arriveTs: travel.timestamp };
+}
+
+/** Check whether the key owner is currently flying to countryCode. */
+export async function getTravelStatus(apiKey, countryCode) {
+  const data = await fetchTornUser(apiKey, "travel");
+  const active = parseTravelToCountry(data.travel, countryCode);
+  return {
+    flyingToCountry: active != null,
+    arriveTs: active?.arriveTs ?? null,
   };
 }

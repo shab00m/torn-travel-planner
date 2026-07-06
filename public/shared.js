@@ -11,15 +11,22 @@ const state = {
   rates: [],
   avgSamples: 5,
   avgRateSamples: 5,
+  stockoutTiming: "avg", // "avg" | "min" | "max"
+  rateTiming: "avg", // "avg" | "min" | "max"
   item: null, // { country, itemId, name } on the item detail page
   rangeHours: 24,
   predictionHours: 0,
   timeFormat: "european",
   predictedEvents: [],
+  safeWindows: [],
   travelType: "Standard",
+  travelCapacity: 5,
+  activeTravel: null, // { flyingToCountry, arriveTs } when logged in and in flight
 };
 
 const PREFS_KEY = "plannerPrefs";
+const TRAVEL_TYPES = ["Standard", "Airstrip", "Private", "Business"];
+const BASE_TRAVEL_CAPACITY = { Standard: 5, Airstrip: 15, Private: 15, Business: 15 };
 const SAMPLE_OPTIONS = [1, 3, 5, 10, 20];
 const RANGE_HOURS_OPTIONS = [1, 6, 24, 168, 0];
 const PREDICTION_HOURS_OPTIONS = [0, 1, 2, 3, 6, 12, 24];
@@ -42,12 +49,24 @@ function pickOption(value, options, fallback) {
   return options.includes(n) ? n : fallback;
 }
 
+function applyTravelSettings(prefs) {
+  state.travelType = TRAVEL_TYPES.includes(prefs.travelType) ? prefs.travelType : "Standard";
+  const cap = Number.parseInt(prefs.travelCapacity, 10);
+  state.travelCapacity =
+    Number.isInteger(cap) && cap > 0 ? cap : BASE_TRAVEL_CAPACITY[state.travelType];
+}
+
 function applyStoredPrefs() {
   const prefs = loadPrefs();
+  applyTravelSettings(prefs);
   state.rangeHours = pickOption(prefs.rangeHours, RANGE_HOURS_OPTIONS, 24);
   state.predictionHours = pickOption(prefs.predictionHours, PREDICTION_HOURS_OPTIONS, 0);
   state.avgSamples = pickOption(prefs.avgSamples, SAMPLE_OPTIONS, 5);
   state.avgRateSamples = pickOption(prefs.avgRateSamples, SAMPLE_OPTIONS, 5);
+  state.stockoutTiming = ["avg", "min", "max"].includes(prefs.stockoutTiming)
+    ? prefs.stockoutTiming
+    : "avg";
+  state.rateTiming = ["avg", "min", "max"].includes(prefs.rateTiming) ? prefs.rateTiming : "avg";
   state.search = typeof prefs.search === "string" ? prefs.search : "";
   state.countryFilter = typeof prefs.countryFilter === "string" ? prefs.countryFilter : "";
   state.inStockOnly = prefs.inStockOnly === true;
@@ -136,9 +155,33 @@ if (document.readyState === "loading") {
 
 async function fetchJson(url) {
   const res = await fetch(url);
-  const body = await res.json();
+  return parseFetchResponse(res);
+}
+
+async function parseFetchResponse(res) {
+  const text = await res.text();
+  if (text.startsWith("<!DOCTYPE") || text.startsWith("<!")) {
+    throw new Error(
+      `API not available (HTTP ${res.status}). Restart the server after updating the app.`
+    );
+  }
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error(`Invalid API response (HTTP ${res.status})`);
+  }
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
   return body;
+}
+
+async function fetchJsonWithBody(url, { method, body }) {
+  const res = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return parseFetchResponse(res);
 }
 
 async function loadCountries() {

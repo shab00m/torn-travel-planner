@@ -33,6 +33,22 @@
 							/>
 							<button type="submit">Log in</button>
 						</form>
+						<div id="guest-travel" class="guest-travel">
+							<label class="guest-travel-field" title="Flight travel type">
+								<span class="guest-travel-label">Flight</span>
+								<select id="guest-travel-type">
+									<option value="Standard">🎫 Standard</option>
+									<option value="Airstrip">🛩️ Airstrip</option>
+									<option value="Private">✈️ Private</option>
+									<option value="Business">💼 Business</option>
+								</select>
+							</label>
+							<label class="guest-travel-field" title="Travel item inventory slots">
+								<span class="guest-travel-label">🧳</span>
+								<input id="guest-capacity" type="number" min="1" max="50" step="1" />
+								<span class="guest-travel-suffix">slots</span>
+							</label>
+						</div>
 						<div id="player-info" class="player-info hidden"></div>
 					</div>
 					<span id="status" class="status">Loading…</span>
@@ -78,6 +94,10 @@
 						<button type="button" data-time-format="us">12h</button>
 					</div>
 				</div>
+				<div class="control-group">
+					<span class="control-group-title">Data Inspector</span>
+					<button type="button" id="inspect-toggle" class="inspect-toggle">Inspect snapshots</button>
+				</div>
 			</div>
 			<div id="prediction-section" class="prediction-section hidden">
 				<div class="restock-controls">
@@ -88,8 +108,38 @@
 			</div>
 			<div class="chart-wrap">
 				<canvas id="history-chart"></canvas>
+				<div id="safe-window-markers" class="chart-markers chart-safe-window-markers" aria-hidden="true"></div>
 				<div id="time-markers" class="chart-markers chart-time-markers" aria-hidden="true"></div>
 				<div id="restock-markers" class="chart-markers chart-restock-markers" aria-hidden="true"></div>
+				<div id="chart-inspect-layer" class="chart-inspect-layer hidden" aria-hidden="true">
+					<div id="chart-selection-box" class="chart-selection-box hidden"></div>
+				</div>
+			</div>
+			<div id="snapshot-inspector" class="snapshot-inspector hidden">
+				<div class="snapshot-inspector-header">
+					<h3>Selected snapshots</h3>
+					<span id="snapshot-inspector-hint" class="snapshot-inspector-hint"></span>
+					<div class="snapshot-inspector-actions">
+						<button type="button" id="snapshot-clear-btn" class="snapshot-btn">Clear selection</button>
+						<button type="button" id="snapshot-delete-all-btn" class="snapshot-btn snapshot-btn-danger">Delete selected</button>
+					</div>
+				</div>
+				<p id="snapshot-inspector-empty" class="snapshot-inspector-empty hidden">
+					Click a point on the chart or drag to select a time range.
+				</p>
+				<div class="snapshot-inspector-table-wrap">
+					<table class="snapshot-inspector-table">
+						<thead>
+							<tr>
+								<th>Timestamp</th>
+								<th>Quantity</th>
+								<th>Cost</th>
+								<th></th>
+							</tr>
+						</thead>
+						<tbody id="snapshot-inspector-body"></tbody>
+					</table>
+				</div>
 			</div>
 			<p id="item-empty" class="item-empty hidden">
 				No snapshots recorded for this range yet. History accumulates while

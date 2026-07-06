@@ -219,6 +219,89 @@ const quantityAtStmt = db.prepare(
   `SELECT quantity FROM snapshots WHERE country = ? AND item_id = ? AND yata_ts = ?`
 );
 
+const snapshotStmt = db.prepare(
+  `SELECT yata_ts, quantity, cost FROM snapshots
+   WHERE country = ? AND item_id = ? AND yata_ts = ?`
+);
+
+const updateSnapshotStmt = db.prepare(
+  `UPDATE snapshots SET quantity = ?, cost = ?
+   WHERE country = ? AND item_id = ? AND yata_ts = ?`
+);
+
+const deleteSnapshotStmt = db.prepare(
+  `DELETE FROM snapshots WHERE country = ? AND item_id = ? AND yata_ts = ?`
+);
+
+const upsertSnapshotStmt = db.prepare(
+  `INSERT OR REPLACE INTO snapshots (country, item_id, yata_ts, quantity, cost)
+   VALUES (?, ?, ?, ?, ?)`
+);
+
+export function getSnapshot(country, itemId, yataTs) {
+  return snapshotStmt.get(country, itemId, yataTs) ?? null;
+}
+
+/**
+ * Update quantity, cost, and/or timestamp for one snapshot row.
+ * Changing yata_ts replaces the primary-key row.
+ */
+export function updateSnapshot(country, itemId, yataTs, fields) {
+  const row = snapshotStmt.get(country, itemId, yataTs);
+  if (!row) throw new Error("Snapshot not found");
+
+  const quantity = fields.quantity ?? row.quantity;
+  const cost = fields.cost ?? row.cost;
+  const newYataTs = fields.yata_ts;
+
+  if (!Number.isInteger(quantity) || quantity < 0) {
+    throw new Error("quantity must be a non-negative integer");
+  }
+  if (!Number.isInteger(cost) || cost < 0) {
+    throw new Error("cost must be a non-negative integer");
+  }
+
+  if (newYataTs != null && newYataTs !== yataTs) {
+    if (!Number.isInteger(newYataTs) || newYataTs <= 0) {
+      throw new Error("yata_ts must be a positive integer");
+    }
+    db.exec("BEGIN");
+    try {
+      deleteSnapshotStmt.run(country, itemId, yataTs);
+      upsertSnapshotStmt.run(country, itemId, newYataTs, quantity, cost);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+    return { yata_ts: newYataTs, quantity, cost };
+  }
+
+  updateSnapshotStmt.run(quantity, cost, country, itemId, yataTs);
+  return { yata_ts: yataTs, quantity, cost };
+}
+
+export function deleteSnapshot(country, itemId, yataTs) {
+  const res = deleteSnapshotStmt.run(country, itemId, yataTs);
+  if (res.changes === 0) throw new Error("Snapshot not found");
+}
+
+/** Delete many snapshots for one item. Returns the number of rows removed. */
+export function deleteSnapshots(country, itemId, yataTsList) {
+  let deleted = 0;
+  db.exec("BEGIN");
+  try {
+    for (const ts of yataTsList) {
+      deleted += deleteSnapshotStmt.run(country, itemId, ts).changes;
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
+  return deleted;
+}
+
 const latestSnapshotStmt = db.prepare(
   `SELECT yata_ts, quantity FROM snapshots
    WHERE country = ? AND item_id = ?

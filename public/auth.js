@@ -8,12 +8,55 @@ const authEl = {
   playerInfo: document.getElementById("player-info"),
 };
 
+const guestEl = {
+  wrap: document.getElementById("guest-travel"),
+  travelType: document.getElementById("guest-travel-type"),
+  capacity: document.getElementById("guest-capacity"),
+};
+
 const TRAVEL_TYPE_ICONS = {
   Standard: "🎫",
   Airstrip: "🛩️",
   Private: "✈️",
   Business: "💼",
 };
+
+function getStoredApiKey() {
+  return localStorage.getItem(KEY_STORAGE);
+}
+
+function setGuestTravelVisible(visible) {
+  if (guestEl.wrap) guestEl.wrap.classList.toggle("hidden", !visible);
+}
+
+function syncGuestTravelControls() {
+  if (!guestEl.travelType || !guestEl.capacity) return;
+  guestEl.travelType.value = state.travelType;
+  guestEl.capacity.value = String(state.travelCapacity);
+}
+
+function onGuestTravelChange() {
+  const type = guestEl.travelType.value;
+  if (!TRAVEL_TYPES.includes(type)) return;
+
+  const cap = Number.parseInt(guestEl.capacity.value, 10);
+  if (!Number.isInteger(cap) || cap < 1) {
+    guestEl.capacity.value = String(state.travelCapacity);
+    return;
+  }
+
+  state.travelType = type;
+  state.travelCapacity = cap;
+  savePrefs({ travelType: type, travelCapacity: cap });
+  if (typeof refreshTravelStatus === "function" && state.item) refreshTravelStatus();
+}
+
+function initGuestTravelControls() {
+  if (!guestEl.travelType || guestEl.travelType.dataset.bound) return;
+  guestEl.travelType.dataset.bound = "1";
+  guestEl.travelType.addEventListener("change", onGuestTravelChange);
+  guestEl.capacity.addEventListener("change", onGuestTravelChange);
+}
 
 function showLoggedIn(player) {
   const icon = TRAVEL_TYPE_ICONS[player.travelType] ?? "🎫";
@@ -28,6 +71,7 @@ function showLoggedIn(player) {
   `;
   authEl.playerInfo.classList.remove("hidden");
   authEl.form.classList.add("hidden");
+  setGuestTravelVisible(false);
   document.getElementById("logout-btn").addEventListener("click", logout);
 }
 
@@ -35,13 +79,15 @@ function showLoggedOut() {
   authEl.playerInfo.classList.add("hidden");
   authEl.playerInfo.innerHTML = "";
   authEl.form.classList.remove("hidden");
+  setGuestTravelVisible(true);
+  syncGuestTravelControls();
 }
 
 function logout() {
   localStorage.removeItem(KEY_STORAGE);
-  state.travelType = "Standard";
+  applyTravelSettings(loadPrefs());
   showLoggedOut();
-  if (typeof redrawPrediction === "function" && state.item) redrawPrediction();
+  if (typeof refreshTravelStatus === "function" && state.item) refreshTravelStatus();
 }
 
 async function login(apiKey) {
@@ -54,8 +100,9 @@ async function login(apiKey) {
   if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
   localStorage.setItem(KEY_STORAGE, apiKey);
   state.travelType = body.travelType ?? "Standard";
+  state.travelCapacity = body.capacity ?? BASE_TRAVEL_CAPACITY[state.travelType];
   showLoggedIn(body);
-  if (typeof redrawPrediction === "function" && state.item) redrawPrediction();
+  if (typeof refreshTravelStatus === "function" && state.item) refreshTravelStatus();
 }
 
 authEl.form.addEventListener("submit", async (e) => {
@@ -75,6 +122,9 @@ authEl.form.addEventListener("submit", async (e) => {
     button.textContent = "Log in";
   }
 });
+
+initGuestTravelControls();
+syncGuestTravelControls();
 
 // Auto-login with a previously saved key.
 (async () => {

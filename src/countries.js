@@ -13,3 +13,14 @@ export const COUNTRIES = {
   uae: { name: "UAE", flag: "🇦🇪" },
   sou: { name: "South Africa", flag: "🇿🇦" },
 };
+
+// Torn API travel.destination values -> YATA country codes.
+export const TORN_DESTINATION_TO_CODE = Object.fromEntries(
+  Object.entries(COUNTRIES).map(([code, meta]) => [meta.name, code])
+);
+TORN_DESTINATION_TO_CODE["United Arab Emirates"] = "uae";
+
+export function countryCodeFromTornDestination(destination) {
+  if (typeof destination !== "string" || !destination) return null;
+  return TORN_DESTINATION_TO_CODE[destination] ?? null;
+}
