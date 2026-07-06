@@ -8,6 +8,7 @@ const el = {
   itemEmpty: document.getElementById("item-empty"),
   rangeButtons: document.getElementById("range-buttons"),
   chartCanvas: document.getElementById("history-chart"),
+  timeMarkers: document.getElementById("time-markers"),
   restockMarkers: document.getElementById("restock-markers"),
   avgButtons: document.getElementById("avg-buttons"),
   restockAvg: document.getElementById("restock-avg"),
@@ -36,6 +37,9 @@ function fmtDuration(seconds) {
 
 const fmtRate = (r) => (Math.abs(r) >= 10 ? r.toFixed(0) : r.toFixed(1));
 const CYCLE_HISTORY_LIMIT = 10;
+const CHART_TOP_PADDING = 48;
+const CHART_TIME_MARKER_LABEL_Y_ADJUST = -34;
+const CHART_PREDICTION_LABEL_Y_ADJUST = 8;
 const tsMs = (ts) => ts * 1000;
 
 function initAvgButtons(container, defaultN, onSelect) {
@@ -297,6 +301,11 @@ function buildTimeline(historicalPoints, predictionHours) {
     }
   }
 
+  const flightSec = state.item?.country ? getFlightSec(state.item.country) : null;
+  if (flightSec != null) {
+    endTs = Math.max(endTs, nowTs + flightSec);
+  }
+
   return {
     actualData,
     predictedData,
@@ -371,16 +380,20 @@ function buildAnnotations(restocks, rates, timeline) {
     borderColor: "#ffea00",
     borderWidth: 2,
     borderDash: [4, 4],
-    label: {
-      display: true,
-      content: [`NOW`, fmtTimeShort(nowTs)],
-      position: "end",
-      yAdjust: -6,
-      backgroundColor: "rgba(23, 28, 38, 0.9)",
-      color: "#ffea00",
-      font: { size: 10, weight: "700" },
-    },
   };
+
+  const flightSec = state.item?.country ? getFlightSec(state.item.country) : null;
+  if (flightSec != null) {
+    const arriveTs = nowTs + flightSec;
+    annotations.arrive = {
+      type: "line",
+      xMin: tsMs(arriveTs),
+      xMax: tsMs(arriveTs),
+      borderColor: "#ff9800",
+      borderWidth: 2,
+      borderDash: [4, 4],
+    };
+  }
 
   if (state.predictionHours > 0) {
     events.forEach((ev, i) => {
@@ -573,6 +586,10 @@ function getFlightSec(country) {
   );
 }
 
+function chartMarkerTop(chart, chartArea, yAdjust) {
+  return chart.canvas.offsetTop + chartArea.top + yAdjust;
+}
+
 function chartDatasets(timeline) {
   const ds = [
     {
@@ -673,14 +690,18 @@ function chartOptions(timeline) {
     responsive: true,
     maintainAspectRatio: false,
     onResize(chart) {
-      updateRestockMarkers(chart);
+      updateChartMarkers(chart);
     },
     layout: {
-      padding: { top: 24 },
+      padding: { top: CHART_TOP_PADDING },
     },
     interaction: { mode: "nearest", axis: "x", intersect: false },
     plugins: {
-      legend: { labels: { color: "#8b96a8" } },
+      legend: {
+        position: "top",
+        align: "start",
+        labels: { color: "#8b96a8" },
+      },
       annotation: {
         annotations: buildAnnotations(state.restocks, state.rates, timeline),
       },
@@ -705,6 +726,7 @@ function chartOptions(timeline) {
       y: {
         min: 0,
         beginAtZero: true,
+        grace: "10%",
         ticks: { color: "#8b96a8", precision: 0 },
         grid: { color: "#2a3345" },
       },
@@ -720,7 +742,43 @@ function destroyChart() {
   const existing = Chart.getChart(el.chartCanvas);
   if (existing) existing.destroy();
   if (el.restockMarkers) el.restockMarkers.replaceChildren();
+  if (el.timeMarkers) el.timeMarkers.replaceChildren();
   el.chartCanvas?.parentNode?.querySelector(".chart-tooltip")?.remove();
+}
+
+function updateTimeMarkers(chart) {
+  if (!el.timeMarkers) return;
+  el.timeMarkers.replaceChildren();
+  if (!chart?.chartArea) return;
+
+  const { chartArea, scales } = chart;
+  const xScale = scales.x;
+  if (!xScale) return;
+
+  const nowTs = Math.floor(Date.now() / 1000);
+  const xMin = chart.options.scales.x.min;
+  const xMax = chart.options.scales.x.max;
+  const markers = [{ ts: nowTs, label: "NOW", color: "#ffea00" }];
+  const flightSec = state.item?.country ? getFlightSec(state.item.country) : null;
+  if (flightSec != null) {
+    markers.push({ ts: nowTs + flightSec, label: "ARRIVE", color: "#ff9800" });
+  }
+
+  markers.forEach(({ ts, label, color }) => {
+    const xMs = tsMs(ts);
+    if (xMs < xMin || xMs > xMax) return;
+
+    const x = xScale.getPixelForValue(xMs);
+    if (x < chartArea.left || x > chartArea.right) return;
+
+    const markerLabel = document.createElement("span");
+    markerLabel.className = "chart-time-marker-label";
+    markerLabel.style.left = `${x}px`;
+    markerLabel.style.top = `${chartMarkerTop(chart, chartArea, CHART_TIME_MARKER_LABEL_Y_ADJUST)}px`;
+    markerLabel.style.color = color;
+    markerLabel.innerHTML = `${label}<br>${fmtTimeShort(ts)}`;
+    el.timeMarkers.appendChild(markerLabel);
+  });
 }
 
 function updateRestockMarkers(chart) {
@@ -749,19 +807,25 @@ function updateRestockMarkers(chart) {
 
     const line = document.createElement("div");
     line.className = "restock-marker";
+    const canvasTop = chart.canvas.offsetTop;
     line.style.left = `${x}px`;
-    line.style.top = `${chartArea.top}px`;
+    line.style.top = `${canvasTop + chartArea.top}px`;
     line.style.height = `${chartArea.bottom - chartArea.top}px`;
 
     const label = document.createElement("span");
     label.className = "restock-marker-label";
     label.innerHTML = `#${i + 1}<br>${fmtTimeShort(ev.ts)}`;
     label.style.left = `${x}px`;
-    label.style.top = `${chartArea.top + 2}px`;
+    label.style.top = `${chartMarkerTop(chart, chartArea, CHART_PREDICTION_LABEL_Y_ADJUST)}px`;
 
     el.restockMarkers.appendChild(line);
     el.restockMarkers.appendChild(label);
   });
+}
+
+function updateChartMarkers(chart) {
+  updateTimeMarkers(chart);
+  updateRestockMarkers(chart);
 }
 
 function refreshChart(timeline) {
@@ -773,7 +837,7 @@ function refreshChart(timeline) {
     state.chart.data.datasets = chartDatasets(timeline);
     state.chart.options = options;
     state.chart.update("none");
-    updateRestockMarkers(state.chart);
+    updateChartMarkers(state.chart);
     return;
   }
 
@@ -783,7 +847,7 @@ function refreshChart(timeline) {
     data: { datasets: chartDatasets(timeline) },
     options,
   });
-  updateRestockMarkers(state.chart);
+  updateChartMarkers(state.chart);
 }
 
 async function loadCurrentStock() {
