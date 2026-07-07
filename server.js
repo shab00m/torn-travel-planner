@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COUNTRIES } from "./src/countries.js";
 import { getFlightMatrix } from "./src/flight-times.js";
-import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks } from "./src/db.js";
+import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks, setRestockIgnored } from "./src/db.js";
 import { startPolling, getLatest } from "./src/yata.js";
 import { getPlayerInfo, getTravelStatus } from "./src/torn.js";
 
@@ -108,6 +108,37 @@ app.get("/api/restocks/:country/:itemId", (req, res) => {
   });
 });
 
+function parseDepletedTs(req, res) {
+  const depletedTs = Number.parseInt(req.params.depletedTs, 10);
+  if (!Number.isInteger(depletedTs) || depletedTs <= 0) {
+    res.status(400).json({ error: "depletedTs must be a positive integer" });
+    return null;
+  }
+  return depletedTs;
+}
+
+app.patch("/api/restocks/:country/:itemId/:depletedTs", (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  const depletedTs = parseDepletedTs(req, res);
+  if (depletedTs == null) return;
+  const ignored = req.body?.ignored;
+  if (typeof ignored !== "boolean") {
+    res.status(400).json({ error: "ignored must be a boolean" });
+    return;
+  }
+  try {
+    setRestockIgnored(params.country, params.id, depletedTs, ignored);
+    res.json({
+      ok: true,
+      restocks: getRestocks(params.country, params.id, 50),
+      rates: getDepletionRates(params.country, params.id, 50),
+    });
+  } catch (err) {
+    res.status(err.message === "Restock cycle not found" ? 404 : 400).json({ error: err.message });
+  }
+});
+
 function parseYataTs(req, res) {
   const yataTs = Number.parseInt(req.params.yataTs, 10);
   if (!Number.isInteger(yataTs) || yataTs <= 0) {
@@ -117,9 +148,12 @@ function parseYataTs(req, res) {
   return yataTs;
 }
 
-function rerunRestocks(res) {
-  const stats = backfillRestocks();
-  return stats;
+function rerunRestocks(country, itemId) {
+  backfillRestocks();
+  return {
+    restocks: getRestocks(country, itemId, 50),
+    rates: getDepletionRates(country, itemId, 50),
+  };
 }
 
 app.post("/api/snapshots/:country/:itemId/delete", (req, res) => {
@@ -136,8 +170,8 @@ app.post("/api/snapshots/:country/:itemId/delete", (req, res) => {
   }
   try {
     const deleted = deleteSnapshots(params.country, params.id, list);
-    const restocks = rerunRestocks(res);
-    res.json({ ok: true, deleted, restocks });
+    const { restocks, rates } = rerunRestocks(params.country, params.id);
+    res.json({ ok: true, deleted, restocks, rates });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -176,8 +210,8 @@ app.patch("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
   }
   try {
     const updated = updateSnapshot(params.country, params.id, yataTs, body);
-    const restocks = rerunRestocks(res);
-    res.json({ ok: true, snapshot: updated, restocks });
+    const { restocks, rates } = rerunRestocks(params.country, params.id);
+    res.json({ ok: true, snapshot: updated, restocks, rates });
   } catch (err) {
     res.status(err.message === "Snapshot not found" ? 404 : 400).json({ error: err.message });
   }
@@ -190,8 +224,8 @@ app.delete("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
   if (yataTs == null) return;
   try {
     deleteSnapshot(params.country, params.id, yataTs);
-    const restocks = rerunRestocks(res);
-    res.json({ ok: true, restocks });
+    const { restocks, rates } = rerunRestocks(params.country, params.id);
+    res.json({ ok: true, restocks, rates });
   } catch (err) {
     res.status(err.message === "Snapshot not found" ? 404 : 400).json({ error: err.message });
   }

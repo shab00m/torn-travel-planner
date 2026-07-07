@@ -36,9 +36,16 @@ db.exec(`
     depleted_ts  INTEGER NOT NULL,
     restocked_ts INTEGER,
     duration     INTEGER,
+    ignored      INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (country, item_id, depleted_ts)
   ) WITHOUT ROWID;
 `);
+
+try {
+  db.exec(`ALTER TABLE restocks ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0`);
+} catch {
+  // column already exists
+}
 
 const upsertItem = db.prepare(
   `INSERT INTO items (item_id, name) VALUES (?, ?)
@@ -145,6 +152,16 @@ const allSnapshotsStmt = db.prepare(
  * Clears existing restock rows first so logic fixes take effect on rerun.
  */
 export function backfillRestocks() {
+  const ignoredRows = db
+    .prepare(
+      `SELECT country, item_id, depleted_ts FROM restocks WHERE ignored = 1`
+    )
+    .all();
+  const restoreIgnoredStmt = db.prepare(
+    `UPDATE restocks SET ignored = 1
+     WHERE country = ? AND item_id = ? AND depleted_ts = ?`
+  );
+
   db.exec("DELETE FROM restocks");
   let opened = 0;
   let closed = 0;
@@ -160,6 +177,11 @@ export function backfillRestocks() {
     key = rowKey;
     prevQuantity = row.quantity;
   }
+
+  for (const row of ignoredRows) {
+    restoreIgnoredStmt.run(row.country, row.item_id, row.depleted_ts);
+  }
+
   return { opened, closed };
 }
 
@@ -197,7 +219,7 @@ export function getHistory(country, itemId, sinceTs) {
 }
 
 const restocksStmt = db.prepare(
-  `SELECT depleted_ts, restocked_ts, duration
+  `SELECT depleted_ts, restocked_ts, duration, ignored
    FROM restocks
    WHERE country = ? AND item_id = ?
    ORDER BY depleted_ts DESC
@@ -206,14 +228,28 @@ const restocksStmt = db.prepare(
 
 /** Most recent out-of-stock periods, newest first (open period included). */
 export function getRestocks(country, itemId, limit) {
-  return restocksStmt.all(country, itemId, limit);
+  return restocksStmt.all(country, itemId, limit).map((row) => ({
+    ...row,
+    ignored: Boolean(row.ignored),
+  }));
 }
 
 const restockEventsAscStmt = db.prepare(
-  `SELECT depleted_ts, restocked_ts FROM restocks
+  `SELECT depleted_ts, restocked_ts, ignored FROM restocks
    WHERE country = ? AND item_id = ?
    ORDER BY depleted_ts ASC`
 );
+
+const setRestockIgnoredStmt = db.prepare(
+  `UPDATE restocks SET ignored = ?
+   WHERE country = ? AND item_id = ? AND depleted_ts = ?`
+);
+
+/** Mark a completed restock cycle as ignored (excluded from averages). */
+export function setRestockIgnored(country, itemId, depletedTs, ignored) {
+  const res = setRestockIgnoredStmt.run(ignored ? 1 : 0, country, itemId, depletedTs);
+  if (res.changes === 0) throw new Error("Restock cycle not found");
+}
 
 const quantityAtStmt = db.prepare(
   `SELECT quantity FROM snapshots WHERE country = ? AND item_id = ? AND yata_ts = ?`
@@ -324,6 +360,7 @@ export function getDepletionRates(country, itemId, limit) {
   const events = restockEventsAscStmt.all(country, itemId);
   const windows = [];
   for (let i = 0; i < events.length; i++) {
+    if (events[i].ignored) continue;
     const startTs = events[i].restocked_ts;
     if (startTs == null) continue;
     const startQty = quantityAtStmt.get(country, itemId, startTs)?.quantity;

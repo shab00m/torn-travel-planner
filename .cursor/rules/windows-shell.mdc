@@ -1,0 +1,20 @@
+---
+description: Windows PowerShell shell command constraints for this project
+alwaysApply: true
+---
+
+# Windows Shell Commands
+
+The user runs Windows PowerShell. Do not use Unix-style `curl | node` pipes to test APIs — they hang and abort with exit code -1 because PowerShell's `curl` is an alias for `Invoke-WebRequest`, not real curl.
+
+Use one of these instead:
+
+```powershell
+node --input-type=module -e "const j = await (await fetch('http://localhost:3000/api/...')).json(); console.log(j);"
+```
+
+```powershell
+curl.exe -s "http://localhost:3000/api/..."
+```
+
+Never blame the user for failures caused by shell commands the agent chose to run.

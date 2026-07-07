@@ -757,16 +757,23 @@ body.page-item {
 }
 
 .cycle-history th:nth-child(1),
-.cycle-history td:nth-child(1),
+.cycle-history td:nth-child(1) {
+  text-align: center;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
 .cycle-history th:nth-child(2),
-.cycle-history td:nth-child(2) {
+.cycle-history td:nth-child(2),
+.cycle-history th:nth-child(3),
+.cycle-history td:nth-child(3) {
   text-align: left;
 }
 
-.cycle-history th:nth-child(3),
 .cycle-history th:nth-child(4),
-.cycle-history td:nth-child(3),
-.cycle-history td:nth-child(4) {
+.cycle-history th:nth-child(5),
+.cycle-history td:nth-child(4),
+.cycle-history td:nth-child(5) {
   text-align: right;
 }
 
@@ -777,6 +784,16 @@ body.page-item {
 .cycle-history .rate-cell { color: var(--green); font-weight: 600; }
 .cycle-history .duration-cell { color: var(--text); font-weight: 500; }
 .cycle-history .empty-note { text-align: center; color: var(--text-dim); }
+.cycle-history tr.cycle-ignored td:not(.cycle-count-cell) {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+.cycle-history .cycle-count {
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+  accent-color: var(--green);
+}
 
 .restock-list {
   list-style: none;

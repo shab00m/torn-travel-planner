@@ -357,16 +357,29 @@ function getAdjustedCompletedRestocks() {
   return state.restocks.filter((r) => r.duration != null).map(adjustedRestockRecord);
 }
 
+function getUsableCompletedRestocks() {
+  return getAdjustedCompletedRestocks().filter((r) => !r.ignored);
+}
+
+function isRateWindowIgnored(startTs) {
+  const restock = state.restocks.find((r) => r.restocked_ts === startTs);
+  return Boolean(restock?.ignored);
+}
+
+function getUsableRates() {
+  return getAdjustedRates().filter((w) => !isRateWindowIgnored(w.start_ts));
+}
+
 function getAdjustedRates() {
   return state.rates.map(adjustedRateWindow);
 }
 
 function getHistoricalExtents() {
-  const restocks = getAdjustedCompletedRestocks();
+  const restocks = getUsableCompletedRestocks();
   const durations = restocks
     .map((r) => r.adjusted_duration)
     .filter((d) => d != null && d > 0);
-  const rates = getAdjustedRates()
+  const rates = getUsableRates()
     .map((w) => w.rate)
     .filter((r) => r != null && r > 0);
   return {
@@ -378,7 +391,7 @@ function getHistoricalExtents() {
 }
 
 function stockoutSecFromHistory() {
-  const restocks = getAdjustedCompletedRestocks();
+  const restocks = getUsableCompletedRestocks();
   if (!restocks.length) return null;
   if (state.stockoutTiming === "min") {
     const durations = restocks.map((r) => r.adjusted_duration).filter((d) => d != null && d > 0);
@@ -394,7 +407,7 @@ function stockoutSecFromHistory() {
 }
 
 function rateFromHistory() {
-  const windows = getAdjustedRates();
+  const windows = getUsableRates();
   const rates = windows.map((w) => w.rate).filter((r) => r != null && r > 0);
   if (!rates.length) return null;
   if (state.rateTiming === "min") return Math.min(...rates);
@@ -409,8 +422,8 @@ function getAverages() {
   const rate = rateFromHistory();
   if (restockSec == null || rate == null) return null;
   const configuredQty = currentRestockAmount();
-  const qtySample = getAdjustedRates().slice(0, state.avgRateSamples);
-  const qtySource = qtySample.length ? qtySample : getAdjustedRates();
+  const qtySample = getUsableRates().slice(0, state.avgRateSamples);
+  const qtySource = qtySample.length ? qtySample : getUsableRates();
   return {
     restockSec,
     rate,
@@ -600,7 +613,7 @@ function buildAnnotations(restocks, rates, timeline) {
   const { nowTs, segments = [], events = [], xMin, xMax } = timeline;
   if (!xMax) return annotations;
 
-  restocks.forEach((r, i) => {
+  restocks.filter((r) => !r.ignored).forEach((r, i) => {
     const adjusted = adjustedRestockRecord(r);
     const boxEnd = adjusted.adjusted_restocked_ts ?? nowTs;
     if (tsMs(boxEnd) < xMin || tsMs(r.depleted_ts) > xMax) return;
@@ -624,9 +637,9 @@ function buildAnnotations(restocks, rates, timeline) {
     };
   });
 
-  getAdjustedRates().forEach((w, i) => {
+  getUsableRates().forEach((w, i) => {
     if (tsMs(w.end_ts) < xMin || w.start_ts > nowTs) return;
-    if (state.predictionHours > 0 && state.rates[i]?.open) return;
+    if (state.predictionHours > 0 && state.rates.find((r) => r.start_ts === w.start_ts)?.open) return;
     const slope = (w.end_qty - w.start_qty) / (w.end_ts - w.start_ts);
     const startTs = Math.max(w.start_ts, xMin / 1000);
     const endTs = Math.min(w.end_ts, nowTs, xMax / 1000);
@@ -729,8 +742,13 @@ function getCycleHistoryRows() {
       restocked_ts: r.adjusted_restocked_ts,
       rate,
       emptyForSec: r.adjusted_duration,
+      ignored: Boolean(r.ignored),
     };
   });
+}
+
+function getUsableCycleHistoryRows() {
+  return getCycleHistoryRows().filter((r) => !r.ignored);
 }
 
 function renderCycleHistory() {
@@ -741,14 +759,14 @@ function renderCycleHistory() {
   }
 
   const rows = getCycleHistoryRows();
+  const usableRows = getUsableCycleHistoryRows();
 
-  const stockoutSample = rows.slice(0, state.avgSamples);
+  const stockoutSample = usableRows.slice(0, state.avgSamples);
   if (state.stockoutTiming === "min" || state.stockoutTiming === "max") {
     const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
     const value = state.stockoutTiming === "min" ? minEmptyFor : maxEmptyFor;
-    const allRows = getCycleHistoryRows();
-    if (value != null && allRows.length) {
-      el.restockAvg.textContent = `${fmtDuration(value)} (${state.stockoutTiming.toUpperCase()} of ${allRows.length})`;
+    if (value != null && usableRows.length) {
+      el.restockAvg.textContent = `${fmtDuration(value)} (${state.stockoutTiming.toUpperCase()} of ${usableRows.length})`;
     } else {
       el.restockAvg.textContent = "no samples yet";
     }
@@ -760,11 +778,11 @@ function renderCycleHistory() {
     el.restockAvg.textContent = "no samples yet";
   }
 
-  const rateSample = rows.filter((r) => r.rate != null).slice(0, state.avgRateSamples);
+  const rateSample = usableRows.filter((r) => r.rate != null).slice(0, state.avgRateSamples);
   if (state.rateTiming === "min" || state.rateTiming === "max") {
     const { minRate, maxRate } = getHistoricalExtents();
     const value = state.rateTiming === "min" ? minRate : maxRate;
-    const allRateRows = rows.filter((r) => r.rate != null);
+    const allRateRows = usableRows.filter((r) => r.rate != null);
     if (value != null && allRateRows.length) {
       el.rateAvg.textContent = `${fmtRate(value)}/min (${state.rateTiming.toUpperCase()} of ${allRateRows.length})`;
     } else {
@@ -779,13 +797,22 @@ function renderCycleHistory() {
 
   if (!rows.length) {
     el.cycleHistoryBody.innerHTML =
-      `<tr><td colspan="4" class="empty-note">No depletion/restock cycles observed yet.</td></tr>`;
+      `<tr><td colspan="5" class="empty-note">No depletion/restock cycles observed yet.</td></tr>`;
     return;
   }
 
   el.cycleHistoryBody.innerHTML = rows
     .map(
-      (r) => `<tr>
+      (r) => `<tr class="${r.ignored ? "cycle-ignored" : ""}" data-depleted-ts="${r.depleted_ts}">
+        <td class="cycle-count-cell">
+          <input
+            type="checkbox"
+            class="cycle-count"
+            data-depleted-ts="${r.depleted_ts}"
+            ${r.ignored ? "" : "checked"}
+            title="${r.ignored ? "Excluded from averages — click to include" : "Included in averages — click to exclude"}"
+          />
+        </td>
         <td>${fmtTime(r.restocked_ts)}</td>
         <td>${fmtTime(r.depleted_ts)}</td>
         <td class="rate-cell">${r.rate != null ? `${fmtRate(r.rate)}/min` : "—"}</td>
@@ -1701,8 +1728,7 @@ async function drawChart() {
     fetchJson(`/api/restocks/${country}/${itemId}`),
   ]);
   state.chartPoints = history.points;
-  state.restocks = restockData.restocks;
-  state.rates = restockData.rates;
+  loadRestockData(restockData);
 
   el.itemEmpty.classList.toggle("hidden", history.points.length > 0);
   el.status.textContent = `${history.points.length} snapshots in range — auto-refreshes every minute`;
@@ -1756,6 +1782,57 @@ function refreshRestockAdjustments() {
   const timeline = buildTimeline(state.chartPoints, state.predictionHours);
   refreshChart(timeline);
 }
+
+function loadRestockData({ restocks, rates } = {}) {
+  if (restocks) state.restocks = restocks;
+  if (rates) state.rates = rates;
+}
+
+function refreshRestockViews() {
+  renderCycleHistory();
+  if (state.chartPoints.length) {
+    const timeline = buildTimeline(state.chartPoints, state.predictionHours);
+    refreshChart(timeline);
+  }
+}
+
+async function setCycleIgnored(depletedTs, ignored) {
+  const { country, itemId } = state.item;
+  const row = state.restocks.find((r) => r.depleted_ts === depletedTs);
+  if (!row) return;
+  const prevIgnored = row.ignored;
+  row.ignored = ignored;
+  refreshRestockViews();
+
+  try {
+    const data = await fetchJsonWithBody(
+      `/api/restocks/${country}/${itemId}/${depletedTs}`,
+      { method: "PATCH", body: { ignored } }
+    );
+    loadRestockData(data);
+    refreshRestockViews();
+  } catch (err) {
+    row.ignored = prevIgnored;
+    refreshRestockViews();
+    throw err;
+  }
+}
+
+el.cycleHistoryBody.addEventListener("change", async (e) => {
+  const input = e.target.closest("input.cycle-count");
+  if (!input || !state.item) return;
+  const depletedTs = Number.parseInt(input.dataset.depletedTs, 10);
+  if (!Number.isInteger(depletedTs)) return;
+  const ignored = !input.checked;
+  input.disabled = true;
+  try {
+    await setCycleIgnored(depletedTs, ignored);
+  } catch (err) {
+    alert(err.message || "Failed to save — restart the server if you just updated the app.");
+  } finally {
+    input.disabled = false;
+  }
+});
 
 el.restockAmount.addEventListener("change", () => {
   const item = state.item;
