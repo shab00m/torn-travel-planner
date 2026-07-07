@@ -6,6 +6,7 @@ import { getFlightMatrix } from "./src/flight-times.js";
 import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks, setRestockIgnored } from "./src/db.js";
 import { startPolling, getLatest } from "./src/yata.js";
 import { getPlayerInfo, getTravelStatus } from "./src/torn.js";
+import { getMarketPrice } from "./src/market.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -26,6 +27,23 @@ app.post("/api/login", async (req, res) => {
     res.json(await getPlayerInfo(apiKey.trim()));
   } catch (err) {
     res.status(502).json({ error: err.message });
+  }
+});
+
+app.post("/api/market", async (req, res) => {
+  const itemId = Number.parseInt(req.body?.itemId, 10);
+  if (!Number.isInteger(itemId) || itemId <= 0) {
+    res.status(400).json({ error: "itemId must be a positive integer" });
+    return;
+  }
+  const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey : undefined;
+  try {
+    const marketPrice = await getMarketPrice(itemId, apiKey);
+    res.json({ itemId, marketPrice });
+  } catch (err) {
+    res.status(err.message === "API key required for market prices" ? 401 : 502).json({
+      error: err.message,
+    });
   }
 });
 
@@ -233,6 +251,10 @@ app.delete("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
 
 app.get("/item/:country/:itemId(\\d+)", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "item.html"));
+});
+
+app.get("/item/:country/:itemId(\\d+)/price", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "item-price.html"));
 });
 
 app.listen(PORT, () => {

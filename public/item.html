@@ -21,6 +21,7 @@
 					<a href="/" class="back-link">← Stock overview</a>
 					<h1 id="item-title"></h1>
 					<span id="item-subtitle" class="item-subtitle"></span>
+					<nav id="item-view-nav" class="item-view-nav" aria-label="Item views"></nav>
 				</div>
 				<div class="header-meta">
 					<div id="auth" class="auth">
@@ -61,9 +62,52 @@
 				<div id="current-stock" class="control-group current-stock hidden">
 					<span class="control-group-title">Current Stock</span>
 					<div class="current-stock-body">
-						<span id="current-qty" class="current-qty"></span>
-						<span id="current-meta" class="current-meta"></span>
+						<div class="current-stock-primary">
+							<span id="current-qty" class="current-qty"></span>
+							<span id="current-meta" class="current-meta"></span>
+						</div>
+						<div class="current-stock-depletion">
+							<span class="current-depletion-label">Time to depletion</span>
+							<span id="current-depletion" class="current-depletion-value">—</span>
+						</div>
 					</div>
+				</div>
+				<div id="profit-estimate" class="control-group profit-estimate hidden">
+					<span class="control-group-title">Estimated Profit</span>
+					<div class="profit-stats profit-stats-prices">
+						<div class="profit-stat">
+							<span class="profit-stat-label">Buy price</span>
+							<span id="profit-buy" class="profit-stat-value">—</span>
+						</div>
+						<div class="profit-stat">
+							<span class="profit-stat-label">Avg market price</span>
+							<span id="profit-market" class="profit-stat-value">—</span>
+						</div>
+						<div class="profit-stat profit-stat-sell">
+							<span class="profit-stat-label">Sell price</span>
+							<div class="profit-sell-controls">
+								<input id="profit-sell" type="number" min="0" step="1" disabled />
+								<button type="button" id="profit-sell-reset" class="profit-sell-reset" disabled title="Reset sell price to average market price">
+									↺ Market
+								</button>
+							</div>
+						</div>
+					</div>
+					<div class="profit-stats profit-stats-derived">
+						<div class="profit-stat">
+							<span class="profit-stat-label">Profit / item</span>
+							<span id="profit-per-item" class="profit-stat-value">—</span>
+						</div>
+						<div class="profit-stat">
+							<span class="profit-stat-label">Total profit</span>
+							<span id="profit-total" class="profit-stat-value">—</span>
+						</div>
+						<div class="profit-stat profit-stat-highlight">
+							<span class="profit-stat-label">Profit / hour</span>
+							<span id="profit-per-hour" class="profit-stat-value">—</span>
+						</div>
+					</div>
+					<p id="profit-note" class="profit-note hidden"></p>
 				</div>
 				<div class="control-group">
 					<span class="control-group-title">History Time Range</span>

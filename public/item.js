@@ -24,6 +24,16 @@ const el = {
   currentStock: document.getElementById("current-stock"),
   currentQty: document.getElementById("current-qty"),
   currentMeta: document.getElementById("current-meta"),
+  currentDepletion: document.getElementById("current-depletion"),
+  profitEstimate: document.getElementById("profit-estimate"),
+  profitBuy: document.getElementById("profit-buy"),
+  profitMarket: document.getElementById("profit-market"),
+  profitSell: document.getElementById("profit-sell"),
+  profitSellReset: document.getElementById("profit-sell-reset"),
+  profitPerItem: document.getElementById("profit-per-item"),
+  profitTotal: document.getElementById("profit-total"),
+  profitPerHour: document.getElementById("profit-per-hour"),
+  profitNote: document.getElementById("profit-note"),
   inspectToggle: document.getElementById("inspect-toggle"),
   chartInspectLayer: document.getElementById("chart-inspect-layer"),
   chartSelectionBox: document.getElementById("chart-selection-box"),
@@ -48,6 +58,83 @@ const chartPan = {
   active: null,
 };
 
+const profitSell = {
+  marketPrice: null,
+  item: null,
+};
+
+function setProfitSellEnabled(enabled) {
+  if (el.profitSell) el.profitSell.disabled = !enabled;
+  if (el.profitSellReset) el.profitSellReset.disabled = !enabled;
+}
+
+function parseSellPriceInput() {
+  if (!el.profitSell || el.profitSell.disabled) return null;
+  const raw = el.profitSell.value.trim();
+  if (raw === "") return null;
+  const price = Number.parseInt(raw, 10);
+  return Number.isInteger(price) && price >= 0 ? price : null;
+}
+
+function syncSellPriceInput(marketPrice) {
+  if (!el.profitSell || marketPrice == null || !state.item) return;
+  const stored = getSellPrice(state.item.country, state.item.itemId);
+  el.profitSell.value = String(stored ?? marketPrice);
+}
+
+function updateProfitCalcs() {
+  const item = profitSell.item;
+  if (!item || profitSell.marketPrice == null) return;
+
+  const sellPrice = parseSellPriceInput();
+  if (sellPrice == null) return;
+
+  const metrics = computeProfitMetrics({
+    buyPrice: item.cost,
+    sellPrice,
+    country: state.item.country,
+  });
+  if (!metrics) return;
+
+  setProfitStat(el.profitPerItem, fmtSignedMoney(metrics.profitPerItem), profitValueClass(metrics.profitPerItem));
+  setProfitStat(el.profitTotal, fmtSignedMoney(metrics.totalProfit), profitValueClass(metrics.totalProfit));
+  setProfitStat(
+    el.profitPerHour,
+    fmtProfitPerHour(metrics.profitPerHour),
+    profitValueClass(metrics.profitPerHour)
+  );
+
+  if (el.profitNote) {
+    el.profitNote.textContent =
+      `${fmtNum(metrics.itemsPerTrip)} item${metrics.itemsPerTrip === 1 ? "" : "s"} per trip · ${state.travelCapacity} slots · ${fmtDuration(metrics.roundTripSec)} round trip (${state.travelType})`;
+    el.profitNote.classList.remove("hidden");
+  }
+}
+
+function initProfitSellControls() {
+  el.profitSell?.addEventListener("change", () => {
+    if (!state.item) return;
+    const price = parseSellPriceInput();
+    if (price == null) {
+      syncSellPriceInput(profitSell.marketPrice);
+      updateProfitCalcs();
+      return;
+    }
+    setSellPrice(state.item.country, state.item.itemId, price);
+    el.profitSell.value = String(price);
+    updateProfitCalcs();
+  });
+
+  el.profitSellReset?.addEventListener("click", () => {
+    if (!state.item || profitSell.marketPrice == null) return;
+    setSellPrice(state.item.country, state.item.itemId, null);
+    syncSellPriceInput(profitSell.marketPrice);
+    updateProfitCalcs();
+  });
+}
+
+initProfitSellControls();
+
 function fmtDuration(seconds) {
   const s = Math.round(seconds);
   const d = Math.floor(s / 86400);
@@ -56,6 +143,83 @@ function fmtDuration(seconds) {
   if (d > 0) return `${d}d ${h}h`;
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m ${s % 60}s`;
+}
+
+const currentStockSnapshot = {
+  pollTs: null,
+  quantity: null,
+};
+
+function getOpenRateWindow() {
+  const raw = state.rates.find((w) => w.open);
+  if (!raw || isRateWindowIgnored(raw.start_ts)) return null;
+  return adjustedRateWindow(raw);
+}
+
+function getCurrentRestockRate(
+  qty = currentStockSnapshot.quantity,
+  refTs = currentStockSnapshot.pollTs
+) {
+  const w = getOpenRateWindow();
+  if (!w) return null;
+
+  if (qty == null || refTs == null || qty <= 0) return null;
+
+  const elapsedMin = (refTs - w.start_ts) / 60;
+  if (elapsedMin > 0) {
+    const depleted = w.start_qty - qty;
+    if (depleted > 0) return depleted / elapsedMin;
+  }
+
+  return w.rate > 0 ? w.rate : null;
+}
+
+function depletionRateForCycle(t, nowTs, startQty, avgRate) {
+  if (startQty > 0 && t === nowTs) {
+    return getCurrentRestockRate(startQty, nowTs) ?? avgRate;
+  }
+  return avgRate;
+}
+
+function getCurrentDepletionTs() {
+  if (currentStockSnapshot.quantity == null || currentStockSnapshot.quantity <= 0) return null;
+  const rate = getCurrentRestockRate();
+  if (!rate || rate <= 0) return null;
+  return currentStockSnapshot.pollTs + (currentStockSnapshot.quantity / rate) * 60;
+}
+
+function updateCurrentDepletionCountdown() {
+  if (!el.currentDepletion) return;
+  if (currentStockSnapshot.quantity === 0) {
+    el.currentDepletion.textContent = "Out of stock";
+    el.currentDepletion.className = "current-depletion-value qty-zero";
+    return;
+  }
+  if (currentStockSnapshot.quantity == null) {
+    el.currentDepletion.textContent = "—";
+    el.currentDepletion.className = "current-depletion-value";
+    return;
+  }
+  const depletionTs = getCurrentDepletionTs();
+  if (depletionTs == null) {
+    el.currentDepletion.textContent = "Unknown";
+    el.currentDepletion.className = "current-depletion-value";
+    return;
+  }
+  const remaining = depletionTs - Math.floor(Date.now() / 1000);
+  if (remaining <= 0) {
+    el.currentDepletion.textContent = "Depleted";
+    el.currentDepletion.className = "current-depletion-value qty-zero";
+    return;
+  }
+  el.currentDepletion.textContent = fmtDuration(remaining);
+  el.currentDepletion.className = "current-depletion-value qty-ok";
+}
+
+function syncCurrentStockDepletion(quantity, pollTs) {
+  currentStockSnapshot.quantity = quantity;
+  currentStockSnapshot.pollTs = pollTs;
+  updateCurrentDepletionCountdown();
 }
 
 const fmtRate = (r) => (Math.abs(r) >= 10 ? r.toFixed(0) : r.toFixed(1));
@@ -434,7 +598,7 @@ function getAverages() {
 }
 
 function simulatePredictions(nowTs, endTs, startQty, averages) {
-  const { restockSec, rate, restockQty } = averages;
+  const { restockSec, rate: avgRate, restockQty } = averages;
   const events = [];
   const segments = [];
   const open =
@@ -459,6 +623,7 @@ function simulatePredictions(nowTs, endTs, startQty, averages) {
       continue;
     }
 
+    const rate = depletionRateForCycle(t, nowTs, startQty, avgRate);
     const depleteSec = (qty / rate) * 60;
     const depleteTs = Math.round(t + depleteSec);
     if (depleteTs >= endTs) {
@@ -752,6 +917,8 @@ function getUsableCycleHistoryRows() {
 }
 
 function renderCycleHistory() {
+  updateCurrentDepletionCountdown();
+
   const open = state.restocks.find((r) => r.restocked_ts == null);
   el.cycleOpenNote.classList.toggle("hidden", !open);
   if (open) {
@@ -829,14 +996,23 @@ function depletionAfterRestock(restockTs, events, segments) {
   return seg?.end_ts ?? null;
 }
 
-function predictedRestockBounds(e, averages, events, segments) {
+function predictedRestockBounds(e, averages, events, segments, { nowTs, startQty } = {}) {
   let restockEarliest = e.ts;
   const amount = currentRestockAmount();
-  if (amount && averages?.rate) {
+  const isFirstFromCurrentCycle =
+    startQty > 0 &&
+    nowTs != null &&
+    e.ts >= nowTs &&
+    e === events.find((ev) => ev.type === "restock" && ev.ts >= nowTs);
+  const rate =
+    isFirstFromCurrentCycle && nowTs != null
+      ? getCurrentRestockRate(startQty, nowTs) ?? averages?.rate
+      : averages?.rate;
+  if (amount && rate) {
     restockEarliest = adjustRestockTime(
       e.ts,
       e.qty,
-      averages.rate,
+      rate,
       amount,
       e.depleted_ts
     );
@@ -866,8 +1042,19 @@ function formatSafeWindowLabel(bounds, i) {
   return `<span class="safe-window-label">#${i + 1} safe: ${fmtTimeShort(bounds.safeStart)} → ${fmtTimeShort(bounds.safeEnd)}</span>`;
 }
 
-function formatRestockLabel(e, i, averages, events, segments) {
-  const { restockEarliest, restockLatest } = predictedRestockBounds(e, averages, events, segments);
+function predictionStartQty() {
+  const last = state.chartPoints[state.chartPoints.length - 1];
+  return last?.quantity ?? null;
+}
+
+function formatRestockLabel(e, i, averages, events, segments, predictionCtx) {
+  const { restockEarliest, restockLatest } = predictedRestockBounds(
+    e,
+    averages,
+    events,
+    segments,
+    predictionCtx
+  );
   return `#${i + 1}: Window between ${fmtTimeShort(restockEarliest)} → ${fmtTimeShort(restockLatest)}`;
 }
 
@@ -905,6 +1092,7 @@ function renderPredictionPanel(events, segments) {
 
   const nowTs = Math.floor(Date.now() / 1000);
   const averages = getAverages();
+  const predictionCtx = { nowTs, startQty: predictionStartQty() };
   const restocks = events.filter((e) => e.type === "restock" && e.ts >= nowTs);
   if (!restocks.length) {
     el.predictionList.innerHTML = `<li class="ongoing">Not enough data to predict restocks.</li>`;
@@ -917,7 +1105,8 @@ function renderPredictionPanel(events, segments) {
         e,
         averages,
         events,
-        segments
+        segments,
+        predictionCtx
       );
       const leaveHtml = formatLeaveWindow(restockEarliest, restockLatest, flightSec, nowTs);
       const safe = safeWindowBounds(e);
@@ -926,7 +1115,7 @@ function renderPredictionPanel(events, segments) {
         : "";
       return `<li class="prediction-item">
         <div class="prediction-main">
-          <span>${formatRestockLabel(e, i, averages, events, segments)}</span>
+          <span>${formatRestockLabel(e, i, averages, events, segments, predictionCtx)}</span>
           ${leaveHtml}
         </div>
         ${safeHtml}
@@ -941,6 +1130,109 @@ function getFlightSec(country) {
     state.countries[country]?.flightSec?.Standard ??
     null
   );
+}
+
+function fmtSignedMoney(amount) {
+  const rounded = Math.round(amount);
+  const sign = rounded < 0 ? "-" : "";
+  return `${sign}${fmtMoney(Math.abs(rounded))}`;
+}
+
+function fmtProfitPerHour(profitPerHour) {
+  if (profitPerHour == null) return null;
+  return `${fmtSignedMoney(profitPerHour)}/hr`;
+}
+
+function profitValueClass(value) {
+  if (value > 0) return "positive";
+  if (value < 0) return "negative";
+  return "neutral";
+}
+
+function setProfitStat(node, text, valueClass = null) {
+  if (!node) return;
+  node.textContent = text;
+  node.classList.remove("positive", "negative", "neutral");
+  if (valueClass) node.classList.add(valueClass);
+}
+
+function computeProfitMetrics({ buyPrice, sellPrice, country }) {
+  const flightSec = getFlightSec(country);
+  if (flightSec == null || sellPrice == null) return null;
+  const roundTripSec = flightSec * 2;
+  if (roundTripSec <= 0) return null;
+  const itemsPerTrip = state.travelCapacity;
+  const profitPerItem = sellPrice - buyPrice;
+  const totalProfit = profitPerItem * itemsPerTrip;
+  const profitPerHour = itemsPerTrip <= 0 ? 0 : totalProfit / (roundTripSec / 3600);
+  return {
+    buyPrice,
+    sellPrice,
+    profitPerItem,
+    totalProfit,
+    profitPerHour,
+    itemsPerTrip,
+    roundTripSec,
+  };
+}
+
+async function fetchMarketPrice(itemId) {
+  const apiKey = typeof getStoredApiKey === "function" ? getStoredApiKey() : null;
+  const body = { itemId };
+  if (apiKey) body.apiKey = apiKey;
+  try {
+    const data = await fetchJsonWithBody("/api/market", { method: "POST", body });
+    return data.marketPrice ?? { error: "Average market price unavailable" };
+  } catch (err) {
+    if (err.message === "API key required for market prices") return "no-key";
+    return { error: err.message };
+  }
+}
+
+function renderProfitEstimate(item, marketPrice) {
+  if (!el.profitEstimate) return;
+
+  const resetValues = () => {
+    for (const node of [el.profitBuy, el.profitMarket, el.profitPerItem, el.profitTotal, el.profitPerHour]) {
+      setProfitStat(node, "—");
+    }
+  };
+
+  const showNote = (text) => {
+    if (!el.profitNote) return;
+    el.profitNote.textContent = text;
+    el.profitNote.classList.toggle("hidden", !text);
+  };
+
+  el.profitEstimate.classList.remove("hidden");
+  resetValues();
+  showNote("");
+  setProfitSellEnabled(false);
+  if (el.profitSell) el.profitSell.value = "";
+
+  if (marketPrice === "no-key") {
+    showNote("Log in for market prices (Torn API key with market access).");
+    return;
+  }
+
+  if (typeof marketPrice === "object" && marketPrice?.error) {
+    showNote(marketPrice.error);
+    return;
+  }
+
+  if (marketPrice == null) {
+    showNote("Market price unavailable.");
+    return;
+  }
+
+  profitSell.item = item;
+  profitSell.marketPrice = marketPrice;
+
+  setProfitStat(el.profitBuy, fmtMoney(item.cost));
+  setProfitStat(el.profitMarket, fmtMoney(marketPrice));
+  setProfitSellEnabled(true);
+  syncSellPriceInput(marketPrice);
+  updateProfitCalcs();
 }
 
 function isFlyingToItem() {
@@ -1321,23 +1613,32 @@ function refreshChart(timeline) {
 async function loadCurrentStock() {
   if (!state.item) return;
   try {
-    const data = await fetchJson("/api/stocks");
+    const [data, marketPrice] = await Promise.all([
+      fetchJson("/api/stocks"),
+      fetchMarketPrice(state.item.itemId),
+    ]);
     const item = data.stocks[state.item.country]?.stocks.find(
       (i) => i.id === state.item.itemId
     );
     if (!item) {
       el.currentStock.classList.add("hidden");
+      el.profitEstimate?.classList.add("hidden");
+      syncCurrentStockDepletion(null, null);
       return;
     }
     el.currentStock.classList.remove("hidden");
     el.currentQty.textContent = fmtNum(item.quantity);
     el.currentQty.className = `current-qty ${item.quantity === 0 ? "qty-zero" : "qty-ok"}`;
     el.currentMeta.textContent = `${fmtMoney(item.cost)} each · polled ${fmtTime(data.timestamp)}`;
+    syncCurrentStockDepletion(item.quantity, data.timestamp);
+    renderProfitEstimate(item, marketPrice);
   } catch (err) {
     el.currentStock.classList.remove("hidden");
     el.currentQty.textContent = "—";
     el.currentQty.className = "current-qty";
     el.currentMeta.textContent = `Stock unavailable: ${err.message}`;
+    syncCurrentStockDepletion(null, null);
+    el.profitEstimate?.classList.add("hidden");
   }
 }
 
@@ -1757,21 +2058,14 @@ function redrawPrediction() {
 }
 
 function parseItemFromUrl() {
-  const m = window.location.pathname.match(/^\/item\/([^/]+)\/(\d+)\/?$/);
-  if (!m) return null;
-  const country = m[1];
-  const itemId = Number.parseInt(m[2], 10);
-  const name = new URLSearchParams(window.location.search).get("name") || "Item";
-  if (!state.countries[country] || !Number.isInteger(itemId)) return null;
-  return { country, itemId, name };
+  const parsed = parseItemFromPath();
+  if (!parsed || parsed.view !== "stock") return null;
+  if (!state.countries[parsed.country] || !Number.isInteger(parsed.itemId)) return null;
+  return { country: parsed.country, itemId: parsed.itemId, name: parsed.name };
 }
 
 function setupItemPage(item) {
-  state.item = item;
-  const meta = state.countries[item.country];
-  el.itemTitle.textContent = item.name;
-  el.itemSubtitle.textContent = `${meta.flag} ${meta.name}`;
-  document.title = `${item.name} — Torn Travel Planner`;
+  setupItemHeader(item, "stock");
   const savedAmount = getRestockAmount(item.country, item.itemId);
   el.restockAmount.value = savedAmount ?? "";
 }
@@ -1920,6 +2214,7 @@ window.addEventListener("timeformatchange", () => {
   }
   setupItemPage(item);
   await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);
+  setInterval(updateCurrentDepletionCountdown, 1000);
   setInterval(() => {
     drawChart();
     loadCurrentStock();

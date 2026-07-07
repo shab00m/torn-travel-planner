@@ -49,6 +49,7 @@ function onGuestTravelChange() {
   state.travelCapacity = cap;
   savePrefs({ travelType: type, travelCapacity: cap });
   if (typeof refreshTravelStatus === "function" && state.item) refreshTravelStatus();
+  if (typeof loadCurrentStock === "function" && state.item) loadCurrentStock();
 }
 
 function initGuestTravelControls() {
@@ -88,6 +89,7 @@ function logout() {
   applyTravelSettings(loadPrefs());
   showLoggedOut();
   if (typeof refreshTravelStatus === "function" && state.item) refreshTravelStatus();
+  if (typeof loadCurrentStock === "function" && state.item) loadCurrentStock();
 }
 
 async function login(apiKey) {
@@ -103,6 +105,7 @@ async function login(apiKey) {
   state.travelCapacity = body.capacity ?? BASE_TRAVEL_CAPACITY[state.travelType];
   showLoggedIn(body);
   if (typeof refreshTravelStatus === "function" && state.item) refreshTravelStatus();
+  if (typeof loadCurrentStock === "function" && state.item) loadCurrentStock();
 }
 
 authEl.form.addEventListener("submit", async (e) => {

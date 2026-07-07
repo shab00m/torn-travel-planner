@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Item — Torn Travel Planner</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+			rel="stylesheet"
+		/>
+		<link rel="stylesheet" href="/style.css" />
+		<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+		<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+	</head>
+	<body class="page-item">
+		<header>
+			<div class="header-inner">
+				<div class="item-heading">
+					<a href="/" class="back-link">← Stock overview</a>
+					<h1 id="item-title"></h1>
+					<span id="item-subtitle" class="item-subtitle"></span>
+					<nav id="item-view-nav" class="item-view-nav" aria-label="Item views"></nav>
+				</div>
+				<div class="header-meta">
+					<div id="auth" class="auth">
+						<form id="login-form" class="login-form">
+							<input
+								id="api-key"
+								type="password"
+								placeholder="Torn API key"
+								autocomplete="off"
+							/>
+							<button type="submit">Log in</button>
+						</form>
+						<div id="guest-travel" class="guest-travel">
+							<label class="guest-travel-field" title="Flight travel type">
+								<span class="guest-travel-label">Flight</span>
+								<select id="guest-travel-type">
+									<option value="Standard">🎫 Standard</option>
+									<option value="Airstrip">🛩️ Airstrip</option>
+									<option value="Private">✈️ Private</option>
+									<option value="Business">💼 Business</option>
+								</select>
+							</label>
+							<label class="guest-travel-field" title="Travel item inventory slots">
+								<span class="guest-travel-label">🧳</span>
+								<input id="guest-capacity" type="number" min="1" max="50" step="1" />
+								<span class="guest-travel-suffix">slots</span>
+							</label>
+						</div>
+						<div id="player-info" class="player-info hidden"></div>
+					</div>
+					<span id="status" class="status">Loading…</span>
+				</div>
+			</div>
+		</header>
+
+		<main class="item-page">
+			<div class="control-groups">
+				<div class="control-group">
+					<span class="control-group-title">History Time Range</span>
+					<div class="range-buttons" id="range-buttons">
+						<button data-hours="1">1h</button>
+						<button data-hours="6">6h</button>
+						<button data-hours="24" class="active">24h</button>
+						<button data-hours="168">7d</button>
+						<button data-hours="0">All</button>
+					</div>
+				</div>
+				<div class="control-group">
+					<span class="control-group-title">Time Format</span>
+					<div class="range-buttons time-format-buttons">
+						<button type="button" data-time-format="european">24h</button>
+						<button type="button" data-time-format="us">12h</button>
+					</div>
+				</div>
+			</div>
+			<div class="chart-wrap">
+				<canvas id="price-chart"></canvas>
+			</div>
+			<p id="item-empty" class="item-empty hidden">
+				No snapshots recorded for this range yet. History accumulates while
+				the server is running.
+			</p>
+		</main>
+
+		<script src="/shared.js"></script>
+		<script src="/item-price.js"></script>
+		<script src="/auth.js"></script>
+	</body>
+</html>

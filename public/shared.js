@@ -193,7 +193,47 @@ async function loadCountries() {
 }
 
 function itemUrl(country, itemId, name) {
+  return itemStockUrl(country, itemId, name);
+}
+
+function itemStockUrl(country, itemId, name) {
   return `/item/${country}/${itemId}?name=${encodeURIComponent(name)}`;
+}
+
+function itemPriceUrl(country, itemId, name) {
+  return `/item/${country}/${itemId}/price?name=${encodeURIComponent(name)}`;
+}
+
+function parseItemFromPath(pathname = window.location.pathname) {
+  const m = pathname.match(/^\/item\/([^/]+)\/(\d+)(?:\/price)?\/?$/);
+  if (!m) return null;
+  return {
+    country: m[1],
+    itemId: Number.parseInt(m[2], 10),
+    name: new URLSearchParams(window.location.search).get("name") || "Item",
+    view: pathname.includes("/price") ? "price" : "stock",
+  };
+}
+
+function renderItemViewNav(activeView) {
+  const nav = document.getElementById("item-view-nav");
+  if (!nav || !state.item) return;
+  const { country, itemId, name } = state.item;
+  nav.innerHTML = `
+    <a href="${itemStockUrl(country, itemId, name)}" class="${activeView === "stock" ? "active" : ""}">Stock</a>
+    <a href="${itemPriceUrl(country, itemId, name)}" class="${activeView === "price" ? "active" : ""}">Buy price</a>
+  `;
+}
+
+function setupItemHeader(item, activeView) {
+  state.item = item;
+  const meta = state.countries[item.country];
+  const titleEl = document.getElementById("item-title");
+  const subtitleEl = document.getElementById("item-subtitle");
+  if (titleEl) titleEl.textContent = item.name;
+  if (subtitleEl) subtitleEl.textContent = `${meta.flag} ${meta.name}`;
+  document.title = `${item.name} — Torn Travel Planner`;
+  renderItemViewNav(activeView);
 }
 
 const RESTOCK_AMOUNTS_KEY = "restockAmounts";
@@ -210,4 +250,20 @@ function setRestockAmount(country, itemId, amount) {
   if (amount == null) delete all[key];
   else all[key] = amount;
   localStorage.setItem(RESTOCK_AMOUNTS_KEY, JSON.stringify(all));
+}
+
+const SELL_PRICES_KEY = "sellPrices";
+
+function getSellPrice(country, itemId) {
+  const all = JSON.parse(localStorage.getItem(SELL_PRICES_KEY) || "{}");
+  const v = all[`${country}:${itemId}`];
+  return typeof v === "number" && v >= 0 ? v : null;
+}
+
+function setSellPrice(country, itemId, price) {
+  const all = JSON.parse(localStorage.getItem(SELL_PRICES_KEY) || "{}");
+  const key = `${country}:${itemId}`;
+  if (price == null) delete all[key];
+  else all[key] = price;
+  localStorage.setItem(SELL_PRICES_KEY, JSON.stringify(all));
 }

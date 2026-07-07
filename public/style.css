@@ -267,13 +267,64 @@ body.page-item {
 
 .item-subtitle { color: var(--text-dim); font-size: 0.85rem; }
 
+.item-view-nav {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.item-view-nav a {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  text-decoration: none;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.item-view-nav a:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.item-view-nav a.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(79, 156, 249, 0.12);
+}
+
 .current-stock.hidden { display: none; }
 
 .current-stock-body {
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.current-stock-primary {
+  display: flex;
   align-items: baseline;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.current-stock-depletion {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.current-depletion-label {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.current-depletion-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .current-qty {
@@ -285,6 +336,135 @@ body.page-item {
 .current-meta {
   color: var(--text-dim);
   font-size: 0.85rem;
+}
+
+.profit-estimate.hidden { display: none; }
+
+.profit-estimate {
+  min-width: 24rem;
+}
+
+.profit-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+  gap: 10px 14px;
+}
+
+.profit-stats-prices {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.profit-stats-prices .profit-stat {
+  flex: 0 0 auto;
+}
+
+.profit-stats-prices .profit-stat-sell {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.profit-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.profit-stat-label {
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.profit-stats-prices .profit-stat-label {
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.profit-stat-value {
+  font-size: 0.92rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.profit-stat-highlight .profit-stat-value {
+  font-size: 1.05rem;
+}
+
+.profit-stat-value.positive { color: var(--green); }
+.profit-stat-value.negative { color: var(--red); }
+.profit-stat-value.neutral { color: var(--text-dim); }
+
+.profit-note {
+  margin: 8px 0 0;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.profit-note.hidden { display: none; }
+
+.profit-stat-sell {
+  min-width: 10.5rem;
+}
+
+.profit-sell-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+}
+
+.profit-sell-controls input {
+  width: 6.5rem;
+  min-width: 0;
+  flex: 0 1 auto;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.profit-sell-controls input:focus { outline: 1px solid var(--accent); }
+
+.profit-sell-controls input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.profit-sell-reset {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.profit-sell-reset:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.profit-sell-reset:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.profit-stats-derived {
+  margin-top: 10px;
 }
 
 .control-groups {
