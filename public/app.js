@@ -21,6 +21,35 @@ function highlight(name, query) {
   );
 }
 
+function marketPriceTitle(country, item) {
+  const parts = [];
+  const fetchedAt = state.marketPricesFetchedAt?.[item.id];
+  if (fetchedAt != null) {
+    parts.push(`Market price from ${fmtTime(fetchedAt)}`);
+    const ageSec = Math.floor(Date.now() / 1000) - fetchedAt;
+    if (ageSec > state.marketCacheTtlSec) {
+      parts.push("(refreshing…)");
+    }
+  } else if (getSellPrice(country, item.id) == null) {
+    parts.push("Market price not cached yet");
+  }
+  return parts.join(" · ");
+}
+
+function profitHrCell(country, item) {
+  const profitPerHour = getItemProfitPerHour(country, item);
+  if (profitPerHour != null) {
+    const cls = profitValueClass(profitPerHour);
+    const title = marketPriceTitle(country, item);
+    return `<td class="profit-hr ${cls}"${title ? ` title="${escapeHtml(title)}"` : ""}>${fmtProfitPerHour(profitPerHour)}</td>`;
+  }
+  const title =
+    getSellPrice(country, item.id) == null && state.marketPricesStatus === "empty"
+      ? "Market prices not cached yet — set TORN_API_KEY on the server or log in on an item page"
+      : marketPriceTitle(country, item);
+  return `<td class="profit-hr profit-unavailable"${title ? ` title="${escapeHtml(title)}"` : ""}>—</td>`;
+}
+
 async function populateCountryFilter() {
   for (const [code, meta] of Object.entries(state.countries)) {
     const opt = document.createElement("option");
@@ -33,12 +62,29 @@ async function populateCountryFilter() {
 let stocksRetryTimer = null;
 let lastStockTimestamp = null;
 
+async function loadMarketPrices() {
+  try {
+    const data = await fetchJson("/api/markets");
+    state.marketPrices = data.prices ?? {};
+    state.marketPricesFetchedAt = data.fetchedAt ?? {};
+    state.marketCacheTtlSec = Number(data.cacheTtlSec) || 300;
+    state.marketPricesStatus = Object.keys(state.marketPrices).length ? "ready" : "empty";
+  } catch (err) {
+    state.marketPrices = null;
+    state.marketPricesFetchedAt = null;
+    state.marketPricesStatus = "error";
+    state.marketPricesError = err.message;
+  }
+  if (state.stocks) render();
+}
+
 async function loadStocks() {
   try {
     const data = await fetchJson("/api/stocks");
     state.stocks = data.stocks;
     lastStockTimestamp = data.timestamp;
-    el.status.textContent = `Last update: ${fmtTime(data.timestamp)} — auto-refreshes every minute`;
+    noteStockTimestamp(data.timestamp);
+    el.status.textContent = `Last update: ${fmtTime(data.timestamp)} — updates when YATA polls (~every minute)`;
     el.status.classList.remove("error");
     render();
   } catch (err) {
@@ -86,13 +132,14 @@ function render() {
           <td>${highlight(it.name, state.search.trim())}</td>
           <td class="${it.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(it.quantity)}</td>
           <td>${fmtMoney(it.cost)}</td>
+          ${profitHrCell(code, it)}
         </tr>`
         )
         .join("");
       card.insertAdjacentHTML(
         "beforeend",
         `<table>
-          <thead><tr><th>Item</th><th>Stock</th><th>Cost</th></tr></thead>
+          <thead><tr><th>Item</th><th>Stock</th><th>Cost</th><th>Profit / hr</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`
       );
@@ -124,10 +171,12 @@ el.inStockOnly.addEventListener("change", () => {
 
 window.addEventListener("timeformatchange", () => {
   if (lastStockTimestamp != null) {
-    el.status.textContent = `Last update: ${fmtTime(lastStockTimestamp)} — auto-refreshes every minute`;
+    el.status.textContent = `Last update: ${fmtTime(lastStockTimestamp)} — updates when YATA polls (~every minute)`;
   }
   render();
 });
+
+window.addEventListener("travelsettingschange", () => render());
 
 el.countries.addEventListener("click", (e) => {
   const row = e.target.closest("tr[data-item]");
@@ -141,6 +190,7 @@ el.countries.addEventListener("click", (e) => {
   el.search.value = state.search;
   el.countryFilter.value = state.countryFilter;
   el.inStockOnly.checked = state.inStockOnly;
-  await loadStocks();
-  setInterval(loadStocks, 60_000);
+  await Promise.all([loadMarketPrices(), loadStocks()]);
+  startStockUpdateWatcher(loadStocks);
+  setInterval(loadMarketPrices, 60_000);
 })();

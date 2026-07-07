@@ -25,6 +25,10 @@ const state = {
   travelType: "Standard",
   travelCapacity: 5,
   activeTravel: null, // { flyingToCountry, arriveTs } when logged in and in flight
+  marketPrices: null, // { [itemId]: number | null } from /api/markets
+  marketPricesFetchedAt: null, // { [itemId]: unix ts }
+  marketPricesStatus: null, // null | "empty" | "ready" | "error"
+  marketCacheTtlSec: 300,
 };
 
 const PREFS_KEY = "plannerPrefs";
@@ -192,6 +196,42 @@ async function loadCountries() {
   return state.countries;
 }
 
+let lastKnownStockTimestamp = null;
+
+function noteStockTimestamp(timestamp) {
+  if (Number.isInteger(timestamp) && timestamp > 0) {
+    lastKnownStockTimestamp = timestamp;
+  }
+}
+
+// Poll for new YATA snapshots and run onUpdate when the server timestamp changes.
+// Much faster than a blind 60s refresh because it tracks actual poll times.
+function startStockUpdateWatcher(onUpdate, { intervalMs = 5000 } = {}) {
+  let busy = false;
+
+  async function check() {
+    if (busy) return;
+    busy = true;
+    try {
+      const data = await fetchJson("/api/stocks/status");
+      if (lastKnownStockTimestamp === null) {
+        noteStockTimestamp(data.timestamp);
+        return;
+      }
+      if (lastKnownStockTimestamp === data.timestamp) return;
+      lastKnownStockTimestamp = data.timestamp;
+      await onUpdate(data.timestamp);
+    } catch {
+      // Keep polling through transient errors.
+    } finally {
+      busy = false;
+    }
+  }
+
+  check();
+  return setInterval(check, intervalMs);
+}
+
 function itemUrl(country, itemId, name) {
   return itemStockUrl(country, itemId, name);
 }
@@ -266,4 +306,62 @@ function setSellPrice(country, itemId, price) {
   if (price == null) delete all[key];
   else all[key] = price;
   localStorage.setItem(SELL_PRICES_KEY, JSON.stringify(all));
+}
+
+function getFlightSec(country) {
+  return (
+    state.countries[country]?.flightSec?.[state.travelType] ??
+    state.countries[country]?.flightSec?.Standard ??
+    null
+  );
+}
+
+function fmtSignedMoney(amount) {
+  const rounded = Math.round(amount);
+  const sign = rounded < 0 ? "-" : "";
+  return `${sign}${fmtMoney(Math.abs(rounded))}`;
+}
+
+function fmtProfitPerHour(profitPerHour) {
+  if (profitPerHour == null) return null;
+  return `${fmtSignedMoney(profitPerHour)}/hr`;
+}
+
+function profitValueClass(value) {
+  if (value > 0) return "positive";
+  if (value < 0) return "negative";
+  return "neutral";
+}
+
+function computeProfitMetrics({ buyPrice, sellPrice, country }) {
+  const flightSec = getFlightSec(country);
+  if (flightSec == null || sellPrice == null) return null;
+  const roundTripSec = flightSec * 2;
+  if (roundTripSec <= 0) return null;
+  const itemsPerTrip = state.travelCapacity;
+  const profitPerItem = sellPrice - buyPrice;
+  const totalProfit = profitPerItem * itemsPerTrip;
+  const profitPerHour = itemsPerTrip <= 0 ? 0 : totalProfit / (roundTripSec / 3600);
+  return {
+    buyPrice,
+    sellPrice,
+    profitPerItem,
+    totalProfit,
+    profitPerHour,
+    itemsPerTrip,
+    roundTripSec,
+  };
+}
+
+function getItemSellPrice(country, itemId, marketPrice) {
+  const stored = getSellPrice(country, itemId);
+  if (stored != null) return stored;
+  return marketPrice ?? null;
+}
+
+function getItemProfitPerHour(country, item) {
+  const marketPrice = state.marketPrices?.[item.id] ?? null;
+  const sellPrice = getItemSellPrice(country, item.id, marketPrice);
+  if (sellPrice == null) return null;
+  return computeProfitMetrics({ buyPrice: item.cost, sellPrice, country })?.profitPerHour ?? null;
 }

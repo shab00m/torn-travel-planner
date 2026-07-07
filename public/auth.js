@@ -48,6 +48,7 @@ function onGuestTravelChange() {
   state.travelType = type;
   state.travelCapacity = cap;
   savePrefs({ travelType: type, travelCapacity: cap });
+  window.dispatchEvent(new CustomEvent("travelsettingschange"));
   if (typeof refreshTravelStatus === "function" && state.item) refreshTravelStatus();
   if (typeof loadCurrentStock === "function" && state.item) loadCurrentStock();
 }
@@ -88,6 +89,7 @@ function logout() {
   localStorage.removeItem(KEY_STORAGE);
   applyTravelSettings(loadPrefs());
   showLoggedOut();
+  window.dispatchEvent(new CustomEvent("travelsettingschange"));
   if (typeof refreshTravelStatus === "function" && state.item) refreshTravelStatus();
   if (typeof loadCurrentStock === "function" && state.item) loadCurrentStock();
 }
@@ -104,6 +106,7 @@ async function login(apiKey) {
   state.travelType = body.travelType ?? "Standard";
   state.travelCapacity = body.capacity ?? BASE_TRAVEL_CAPACITY[state.travelType];
   showLoggedIn(body);
+  window.dispatchEvent(new CustomEvent("travelsettingschange"));
   if (typeof refreshTravelStatus === "function" && state.item) refreshTravelStatus();
   if (typeof loadCurrentStock === "function" && state.item) loadCurrentStock();
 }

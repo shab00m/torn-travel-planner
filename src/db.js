@@ -39,6 +39,12 @@ db.exec(`
     ignored      INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (country, item_id, depleted_ts)
   ) WITHOUT ROWID;
+
+  CREATE TABLE IF NOT EXISTS market_prices (
+    item_id      INTEGER PRIMARY KEY,
+    market_price INTEGER,
+    fetched_at   INTEGER NOT NULL
+  );
 `);
 
 try {
@@ -399,6 +405,47 @@ export function getDepletionRates(country, itemId, limit) {
     });
   }
   return windows.reverse().slice(0, limit);
+}
+
+const getMarketPriceRowStmt = db.prepare(
+  `SELECT market_price, fetched_at FROM market_prices WHERE item_id = ?`
+);
+
+const getAllMarketPriceRowsStmt = db.prepare(
+  `SELECT item_id, market_price, fetched_at FROM market_prices`
+);
+
+const upsertMarketPriceStmt = db.prepare(
+  `INSERT INTO market_prices (item_id, market_price, fetched_at) VALUES (?, ?, ?)
+   ON CONFLICT(item_id) DO UPDATE SET
+     market_price = excluded.market_price,
+     fetched_at = excluded.fetched_at`
+);
+
+const staleMarketItemIdsStmt = db.prepare(
+  `SELECT i.item_id
+   FROM items i
+   LEFT JOIN market_prices m ON m.item_id = i.item_id
+   WHERE m.item_id IS NULL OR m.fetched_at < ?
+   ORDER BY COALESCE(m.fetched_at, 0) ASC
+   LIMIT ?`
+);
+
+export function getMarketPriceRow(itemId) {
+  return getMarketPriceRowStmt.get(itemId);
+}
+
+export function getAllMarketPriceRows() {
+  return getAllMarketPriceRowsStmt.all();
+}
+
+export function upsertMarketPrice(itemId, marketPrice, fetchedAt) {
+  upsertMarketPriceStmt.run(itemId, marketPrice, fetchedAt);
+}
+
+/** Item ids missing from cache or older than staleBeforeTs, oldest first. */
+export function getStaleMarketItemIds(staleBeforeTs, limit) {
+  return staleMarketItemIdsStmt.all(staleBeforeTs, limit).map((row) => row.item_id);
 }
 
 export default db;

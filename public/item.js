@@ -1124,56 +1124,11 @@ function renderPredictionPanel(events, segments) {
     .join("");
 }
 
-function getFlightSec(country) {
-  return (
-    state.countries[country]?.flightSec?.[state.travelType] ??
-    state.countries[country]?.flightSec?.Standard ??
-    null
-  );
-}
-
-function fmtSignedMoney(amount) {
-  const rounded = Math.round(amount);
-  const sign = rounded < 0 ? "-" : "";
-  return `${sign}${fmtMoney(Math.abs(rounded))}`;
-}
-
-function fmtProfitPerHour(profitPerHour) {
-  if (profitPerHour == null) return null;
-  return `${fmtSignedMoney(profitPerHour)}/hr`;
-}
-
-function profitValueClass(value) {
-  if (value > 0) return "positive";
-  if (value < 0) return "negative";
-  return "neutral";
-}
-
 function setProfitStat(node, text, valueClass = null) {
   if (!node) return;
   node.textContent = text;
   node.classList.remove("positive", "negative", "neutral");
   if (valueClass) node.classList.add(valueClass);
-}
-
-function computeProfitMetrics({ buyPrice, sellPrice, country }) {
-  const flightSec = getFlightSec(country);
-  if (flightSec == null || sellPrice == null) return null;
-  const roundTripSec = flightSec * 2;
-  if (roundTripSec <= 0) return null;
-  const itemsPerTrip = state.travelCapacity;
-  const profitPerItem = sellPrice - buyPrice;
-  const totalProfit = profitPerItem * itemsPerTrip;
-  const profitPerHour = itemsPerTrip <= 0 ? 0 : totalProfit / (roundTripSec / 3600);
-  return {
-    buyPrice,
-    sellPrice,
-    profitPerItem,
-    totalProfit,
-    profitPerHour,
-    itemsPerTrip,
-    roundTripSec,
-  };
 }
 
 async function fetchMarketPrice(itemId) {
@@ -1630,6 +1585,7 @@ async function loadCurrentStock() {
     el.currentQty.textContent = fmtNum(item.quantity);
     el.currentQty.className = `current-qty ${item.quantity === 0 ? "qty-zero" : "qty-ok"}`;
     el.currentMeta.textContent = `${fmtMoney(item.cost)} each · polled ${fmtTime(data.timestamp)}`;
+    noteStockTimestamp(data.timestamp);
     syncCurrentStockDepletion(item.quantity, data.timestamp);
     renderProfitEstimate(item, marketPrice);
   } catch (err) {
@@ -2032,7 +1988,7 @@ async function drawChart() {
   loadRestockData(restockData);
 
   el.itemEmpty.classList.toggle("hidden", history.points.length > 0);
-  el.status.textContent = `${history.points.length} snapshots in range — auto-refreshes every minute`;
+  el.status.textContent = `${history.points.length} snapshots in range — updates when YATA polls (~every minute)`;
   renderCycleHistory();
 
   const timeline = buildTimeline(history.points, state.predictionHours);
@@ -2215,9 +2171,7 @@ window.addEventListener("timeformatchange", () => {
   setupItemPage(item);
   await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);
   setInterval(updateCurrentDepletionCountdown, 1000);
-  setInterval(() => {
-    drawChart();
-    loadCurrentStock();
-    refreshTravelStatus();
-  }, 60_000);
+  startStockUpdateWatcher(async () => {
+    await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);
+  });
 })();

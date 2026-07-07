@@ -6,7 +6,7 @@ import { getFlightMatrix } from "./src/flight-times.js";
 import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks, setRestockIgnored } from "./src/db.js";
 import { startPolling, getLatest } from "./src/yata.js";
 import { getPlayerInfo, getTravelStatus } from "./src/torn.js";
-import { getMarketPrice } from "./src/market.js";
+import { getMarketPrice, getCachedMarketPrices, enqueueStaleMarketRefresh, startMarketRefresh, CACHE_TTL_SEC } from "./src/market.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -47,6 +47,12 @@ app.post("/api/market", async (req, res) => {
   }
 });
 
+app.get("/api/markets", (_req, res) => {
+  const { prices, fetchedAt } = getCachedMarketPrices();
+  enqueueStaleMarketRefresh();
+  res.json({ prices, fetchedAt, cacheTtlSec: CACHE_TTL_SEC });
+});
+
 app.post("/api/travel", async (req, res) => {
   const apiKey = req.body?.apiKey;
   const country = req.body?.country;
@@ -82,6 +88,17 @@ app.get("/api/stocks", (_req, res) => {
     return;
   }
   res.json({ stocks: payload.stocks, timestamp: payload.timestamp, lastError });
+});
+
+// Lightweight poll probe so clients can detect new YATA snapshots without
+// downloading the full stocks payload on every check.
+app.get("/api/stocks/status", (_req, res) => {
+  const { payload, lastError } = getLatest();
+  if (!payload) {
+    res.status(503).json({ error: lastError || "No data fetched from YATA yet" });
+    return;
+  }
+  res.json({ timestamp: payload.timestamp, lastError });
 });
 
 // Shared validation for routes with :country/:itemId params.
@@ -260,4 +277,5 @@ app.get("/item/:country/:itemId(\\d+)/price", (_req, res) => {
 app.listen(PORT, () => {
   console.log(`Torn Travel Planner running at http://localhost:${PORT}`);
   startPolling();
+  startMarketRefresh();
 });

@@ -72,7 +72,7 @@ async function drawChart() {
     state.chartPoints = history.points;
 
     el.itemEmpty.classList.toggle("hidden", history.points.length > 0);
-    el.status.textContent = `${history.points.length} snapshots in range — auto-refreshes every minute`;
+    el.status.textContent = `${history.points.length} snapshots in range — updates when YATA polls (~every minute)`;
     el.status.classList.remove("error");
 
     if (!history.points.length) {
@@ -154,5 +154,5 @@ window.addEventListener("timeformatchange", () => {
   }
   setupItemHeader(item, "price");
   await drawChart();
-  setInterval(drawChart, 60_000);
+  startStockUpdateWatcher(drawChart);
 })();
