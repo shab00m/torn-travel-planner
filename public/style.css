@@ -554,6 +554,7 @@ body.page-item {
   font-size: 0.8rem;
 }
 .prediction-list .safe-leave-by { color: var(--green); font-weight: 600; white-space: nowrap; }
+.prediction-list .safe-leave-missed { color: var(--red); font-weight: 600; white-space: nowrap; }
 .prediction-list .leave-missed { color: var(--red); font-weight: 600; white-space: nowrap; }
 .prediction-list .prediction-item { flex-wrap: wrap; }
 .prediction-list .prediction-main {

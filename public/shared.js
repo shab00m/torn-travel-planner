@@ -17,7 +17,9 @@ const state = {
   rangeHours: 24,
   predictionHours: 0,
   timeFormat: "european",
+  flightTimeVariance: false,
   predictedEvents: [],
+  safeWindowAnchors: [],
   safeWindows: [],
   chartOffsetSec: 0,
   chartScale: 1,
@@ -38,6 +40,7 @@ const SAMPLE_OPTIONS = [1, 3, 5, 10, 20];
 const RANGE_HOURS_OPTIONS = [1, 6, 24, 168, 0];
 const PREDICTION_HOURS_OPTIONS = [0, 1, 2, 3, 6, 12, 24];
 const TIME_FORMATS = ["european", "us"];
+const FLIGHT_TIME_VARIANCE = 0.03;
 
 function loadPrefs() {
   try {
@@ -78,6 +81,7 @@ function applyStoredPrefs() {
   state.countryFilter = typeof prefs.countryFilter === "string" ? prefs.countryFilter : "";
   state.inStockOnly = prefs.inStockOnly === true;
   state.timeFormat = TIME_FORMATS.includes(prefs.timeFormat) ? prefs.timeFormat : "european";
+  state.flightTimeVariance = prefs.flightTimeVariance === true;
 }
 
 function syncHourButtons(container, hours) {
@@ -314,6 +318,11 @@ function getFlightSec(country) {
     state.countries[country]?.flightSec?.Standard ??
     null
   );
+}
+
+function flightSecWithVariance(flightSec, kind) {
+  if (kind === "fast") return Math.round(flightSec * (1 - FLIGHT_TIME_VARIANCE));
+  return Math.round(flightSec * (1 + FLIGHT_TIME_VARIANCE));
 }
 
 function fmtSignedMoney(amount) {

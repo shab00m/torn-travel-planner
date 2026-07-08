@@ -46,6 +46,7 @@ const el = {
   chartOffset: document.getElementById("chart-offset"),
   chartScale: document.getElementById("chart-scale"),
   chartWrap: document.querySelector(".chart-wrap"),
+  flightVarianceToggle: document.getElementById("flight-variance-toggle"),
 };
 
 const snapshotInspector = {
@@ -174,9 +175,9 @@ function getCurrentRestockRate(
   return w.rate > 0 ? w.rate : null;
 }
 
-function depletionRateForCycle(t, nowTs, startQty, avgRate) {
-  if (startQty > 0 && t === nowTs) {
-    return getCurrentRestockRate(startQty, nowTs) ?? avgRate;
+function depletionRateForCycle(t, startTs, startQty, avgRate) {
+  if (startQty > 0 && t === startTs) {
+    return getCurrentRestockRate(startQty, startTs) ?? avgRate;
   }
   return avgRate;
 }
@@ -554,6 +555,32 @@ function getHistoricalExtents() {
   };
 }
 
+function maxEmptyForSec() {
+  return getHistoricalExtents().maxEmptyFor;
+}
+
+/** Restock events chained with max historical empty-for — independent of avg/min/max timing. */
+function getSafeWindowAnchorRestocks(startTs, endTs, startQty) {
+  const maxEmptyFor = maxEmptyForSec();
+  const rate = rateFromHistory();
+  if (maxEmptyFor == null || rate == null || startQty == null) return [];
+
+  const configuredQty = currentRestockAmount();
+  const qtySample = getUsableRates().slice(0, state.avgRateSamples);
+  const qtySource = qtySample.length ? qtySample : getUsableRates();
+  if (!configuredQty && !qtySource.length) return [];
+  const restockQty =
+    configuredQty ??
+    Math.round(qtySource.reduce((sum, w) => sum + w.start_qty, 0) / qtySource.length);
+
+  const { events } = simulatePredictions(startTs, endTs, startQty, {
+    restockSec: maxEmptyFor,
+    rate,
+    restockQty,
+  });
+  return events.filter((e) => e.type === "restock" && e.ts >= startTs);
+}
+
 function stockoutSecFromHistory() {
   const restocks = getUsableCompletedRestocks();
   if (!restocks.length) return null;
@@ -597,14 +624,14 @@ function getAverages() {
   };
 }
 
-function simulatePredictions(nowTs, endTs, startQty, averages) {
+function simulatePredictions(startTs, endTs, startQty, averages) {
   const { restockSec, rate: avgRate, restockQty } = averages;
   const events = [];
   const segments = [];
   const open =
     startQty === 0 ? state.restocks.find((r) => r.restocked_ts == null) : null;
 
-  let t = nowTs;
+  let t = startTs;
   let qty = startQty;
   let outOfStock = startQty === 0;
   let depletedTs = open?.depleted_ts ?? null;
@@ -623,7 +650,7 @@ function simulatePredictions(nowTs, endTs, startQty, averages) {
       continue;
     }
 
-    const rate = depletionRateForCycle(t, nowTs, startQty, avgRate);
+    const rate = depletionRateForCycle(t, startTs, startQty, avgRate);
     const depleteSec = (qty / rate) * 60;
     const depleteTs = Math.round(t + depleteSec);
     if (depleteTs >= endTs) {
@@ -655,7 +682,7 @@ function simulatePredictions(nowTs, endTs, startQty, averages) {
   return { events, segments };
 }
 
-function qtyAtPredicted(ts, nowTs, startQty, segments, events) {
+function qtyAtPredicted(ts, startTs, startQty, segments, events) {
   for (const ev of events) {
     if (ev.type === "out_of_stock" && ts >= ev.start && ts < ev.end) return 0;
   }
@@ -667,14 +694,14 @@ function qtyAtPredicted(ts, nowTs, startQty, segments, events) {
       return Math.max(0, Math.round(seg.start_qty + slope * (ts - seg.start_ts)));
     }
   }
-  if (ts <= nowTs) return startQty;
+  if (ts <= startTs) return startQty;
   return 0;
 }
 
-// One point per minute from now through endTs, plus exact event timestamps.
-function buildPredictedMinuteSeries(nowTs, endTs, startQty, segments, events, cost) {
-  const tsSet = new Set([nowTs, endTs]);
-  for (let ts = Math.ceil(nowTs / 60) * 60; ts <= endTs; ts += 60) tsSet.add(ts);
+// One point per minute from the latest snapshot through endTs, plus exact event timestamps.
+function buildPredictedMinuteSeries(startTs, endTs, startQty, segments, events, cost) {
+  const tsSet = new Set([startTs, endTs]);
+  for (let ts = Math.ceil(startTs / 60) * 60; ts <= endTs; ts += 60) tsSet.add(ts);
   for (const ev of events) {
     if (ev.ts != null) tsSet.add(ev.ts);
     if (ev.start != null) tsSet.add(ev.start);
@@ -685,17 +712,17 @@ function buildPredictedMinuteSeries(nowTs, endTs, startQty, segments, events, co
   }
 
   const points = [...tsSet]
-    .filter((ts) => ts >= nowTs && ts <= endTs)
+    .filter((ts) => ts >= startTs && ts <= endTs)
     .sort((a, b) => a - b)
     .map((ts) => ({
       x: tsMs(ts),
-      y: qtyAtPredicted(ts, nowTs, startQty, segments, events),
+      y: qtyAtPredicted(ts, startTs, startQty, segments, events),
       cost,
       predicted: true,
     }));
 
   const restockTimes = new Set(
-    events.filter((e) => e.type === "restock" && e.ts >= nowTs).map((e) => e.ts)
+    events.filter((e) => e.type === "restock" && e.ts >= startTs).map((e) => e.ts)
   );
 
   const data = [];
@@ -710,13 +737,23 @@ function buildPredictedMinuteSeries(nowTs, endTs, startQty, segments, events, co
 }
 
 function buildTimeline(historicalPoints, predictionHours) {
-  const nowTs = Math.floor(Date.now() / 1000);
+  const wallTs = Math.floor(Date.now() / 1000);
   if (!historicalPoints.length) {
-    return { actualData: [], predictedData: [], nowTs, xMin: 0, xMax: 0, segments: [], events: [] };
+    return {
+      actualData: [],
+      predictedData: [],
+      dataTs: 0,
+      wallTs,
+      xMin: 0,
+      xMax: 0,
+      segments: [],
+      events: [],
+    };
   }
 
   const firstTs = historicalPoints[0].yata_ts;
   const lastHist = historicalPoints[historicalPoints.length - 1];
+  const dataTs = lastHist.yata_ts;
 
   const actualData = historicalPoints.map((p) => ({
     x: tsMs(p.yata_ts),
@@ -726,17 +763,7 @@ function buildTimeline(historicalPoints, predictionHours) {
     predicted: false,
   }));
 
-  if (nowTs > lastHist.yata_ts) {
-    actualData.push({
-      x: tsMs(nowTs),
-      y: lastHist.quantity,
-      cost: lastHist.cost,
-      predicted: false,
-      nowAnchor: true,
-    });
-  }
-
-  let endTs = Math.max(nowTs, lastHist.yata_ts);
+  let endTs = dataTs;
   let predictedData = [];
   let segments = [];
   let events = [];
@@ -744,10 +771,10 @@ function buildTimeline(historicalPoints, predictionHours) {
   if (predictionHours > 0) {
     const averages = getAverages();
     if (averages) {
-      endTs = nowTs + predictionHours * 3600;
-      ({ events, segments } = simulatePredictions(nowTs, endTs, lastHist.quantity, averages));
+      endTs = dataTs + predictionHours * 3600;
+      ({ events, segments } = simulatePredictions(dataTs, endTs, lastHist.quantity, averages));
       predictedData = buildPredictedMinuteSeries(
-        nowTs,
+        dataTs,
         endTs,
         lastHist.quantity,
         segments,
@@ -757,15 +784,17 @@ function buildTimeline(historicalPoints, predictionHours) {
     }
   }
 
-  const arriveTs = getArriveTs(nowTs, state.item?.country);
+  const arriveTs = getArriveTs(wallTs, state.item?.country);
   if (arriveTs != null) {
     endTs = Math.max(endTs, arriveTs);
   }
+  endTs = Math.max(endTs, wallTs);
 
   return {
     actualData,
     predictedData,
-    nowTs,
+    dataTs,
+    wallTs,
     xMin: tsMs(firstTs),
     xMax: tsMs(endTs),
     segments,
@@ -775,12 +804,12 @@ function buildTimeline(historicalPoints, predictionHours) {
 
 function buildAnnotations(restocks, rates, timeline) {
   const annotations = {};
-  const { nowTs, segments = [], events = [], xMin, xMax } = timeline;
+  const { dataTs, wallTs, segments = [], events = [], xMin, xMax } = timeline;
   if (!xMax) return annotations;
 
   restocks.filter((r) => !r.ignored).forEach((r, i) => {
     const adjusted = adjustedRestockRecord(r);
-    const boxEnd = adjusted.adjusted_restocked_ts ?? nowTs;
+    const boxEnd = adjusted.adjusted_restocked_ts ?? dataTs;
     if (tsMs(boxEnd) < xMin || tsMs(r.depleted_ts) > xMax) return;
     annotations[`restock${i}`] = {
       type: "box",
@@ -803,11 +832,11 @@ function buildAnnotations(restocks, rates, timeline) {
   });
 
   getUsableRates().forEach((w, i) => {
-    if (tsMs(w.end_ts) < xMin || w.start_ts > nowTs) return;
+    if (tsMs(w.end_ts) < xMin || w.start_ts > dataTs) return;
     if (state.predictionHours > 0 && state.rates.find((r) => r.start_ts === w.start_ts)?.open) return;
     const slope = (w.end_qty - w.start_qty) / (w.end_ts - w.start_ts);
     const startTs = Math.max(w.start_ts, xMin / 1000);
-    const endTs = Math.min(w.end_ts, nowTs, xMax / 1000);
+    const endTs = Math.min(w.end_ts, dataTs, xMax / 1000);
     if (startTs >= endTs) return;
     annotations[`rate${i}`] = {
       type: "line",
@@ -831,14 +860,14 @@ function buildAnnotations(restocks, rates, timeline) {
 
   annotations.now = {
     type: "line",
-    xMin: tsMs(nowTs),
-    xMax: tsMs(nowTs),
+    xMin: tsMs(wallTs),
+    xMax: tsMs(wallTs),
     borderColor: "#ffea00",
     borderWidth: 2,
     borderDash: [4, 4],
   };
 
-  const arriveTs = getArriveTs(nowTs, state.item?.country);
+  const arriveTs = getArriveTs(wallTs, state.item?.country);
   if (arriveTs != null) {
     annotations.arrive = {
       type: "line",
@@ -872,9 +901,9 @@ function buildAnnotations(restocks, rates, timeline) {
     });
 
     segments.forEach((w, i) => {
-      if (w.end_ts <= nowTs) return;
+      if (w.end_ts <= dataTs) return;
       const slope = (w.end_qty - w.start_qty) / (w.end_ts - w.start_ts);
-      const startTs = Math.max(w.start_ts, nowTs);
+      const startTs = Math.max(w.start_ts, dataTs);
       const endTs = Math.min(w.end_ts, xMax / 1000);
       if (startTs >= endTs) return;
       const midTs = (startTs + endTs) / 2;
@@ -996,17 +1025,17 @@ function depletionAfterRestock(restockTs, events, segments) {
   return seg?.end_ts ?? null;
 }
 
-function predictedRestockBounds(e, averages, events, segments, { nowTs, startQty } = {}) {
+function predictedRestockBounds(e, averages, events, segments, { dataTs, startQty } = {}) {
   let restockEarliest = e.ts;
   const amount = currentRestockAmount();
   const isFirstFromCurrentCycle =
     startQty > 0 &&
-    nowTs != null &&
-    e.ts >= nowTs &&
-    e === events.find((ev) => ev.type === "restock" && ev.ts >= nowTs);
+    dataTs != null &&
+    e.ts >= dataTs &&
+    e === events.find((ev) => ev.type === "restock" && ev.ts >= dataTs);
   const rate =
-    isFirstFromCurrentCycle && nowTs != null
-      ? getCurrentRestockRate(startQty, nowTs) ?? averages?.rate
+    isFirstFromCurrentCycle && dataTs != null
+      ? getCurrentRestockRate(startQty, dataTs) ?? averages?.rate
       : averages?.rate;
   if (amount && rate) {
     restockEarliest = adjustRestockTime(
@@ -1022,19 +1051,22 @@ function predictedRestockBounds(e, averages, events, segments, { nowTs, startQty
   return { restockEarliest, restockLatest };
 }
 
-function safeWindowBounds(e) {
-  const { minEmptyFor, maxEmptyFor, maxRate } = getHistoricalExtents();
-  if (minEmptyFor == null || maxEmptyFor == null || maxRate == null) return null;
+function safeWindowBoundsForDepletedTs(depletedTs, qty) {
+  const { maxEmptyFor, maxRate } = getHistoricalExtents();
+  if (maxEmptyFor == null || maxRate == null || depletedTs == null) return null;
 
-  const depletedTs = e.depleted_ts;
-  if (depletedTs == null) return null;
-
-  const restockQty = currentRestockAmount() ?? e.qty;
+  const restockQty = currentRestockAmount() ?? qty;
   const safeStart = Math.round(depletedTs + maxEmptyFor);
-  const safeEnd = Math.round(depletedTs + minEmptyFor + (restockQty / maxRate) * 60);
+  const safeEnd = Math.round(depletedTs + maxEmptyFor + (restockQty / maxRate) * 60);
 
   if (safeStart >= safeEnd) return null;
   return { safeStart, safeEnd };
+}
+
+function safeWindowBoundsForEvent(event, index) {
+  const anchor = state.safeWindowAnchors?.[index];
+  const depletedTs = anchor?.depleted_ts ?? event.depleted_ts;
+  return safeWindowBoundsForDepletedTs(depletedTs, event.qty);
 }
 
 function formatSafeWindowLabel(bounds, i) {
@@ -1058,25 +1090,35 @@ function formatRestockLabel(e, i, averages, events, segments, predictionCtx) {
   return `#${i + 1}: Window between ${fmtTimeShort(restockEarliest)} → ${fmtTimeShort(restockLatest)}`;
 }
 
-function formatLeaveWindow(restockEarliest, restockLatest, flightSec, nowTs) {
+function formatLeaveWindow(restockEarliest, restockLatest, flightSec, wallTs) {
   if (flightSec == null || restockEarliest == null || restockLatest == null) return "";
   const leaveEarliest = restockEarliest - flightSec;
   const leaveLatest = restockLatest - flightSec;
 
-  if (leaveLatest <= nowTs) {
-    const missedSec = nowTs - leaveLatest;
+  if (leaveLatest <= wallTs) {
+    const missedSec = wallTs - leaveLatest;
     return `<span class="leave-missed">Missed window by ${fmtDuration(missedSec)}</span>`;
   }
 
   return `<span class="leave-by">Leave between ${fmtTimeShort(leaveEarliest)} and ${fmtTimeShort(leaveLatest)}</span>`;
 }
 
-function formatSafeLeaveWindow(bounds, flightSec, nowTs) {
+function formatSafeLeaveWindow(bounds, flightSec, wallTs) {
   if (!bounds || flightSec == null) return "";
-  return formatLeaveWindow(bounds.safeStart, bounds.safeEnd, flightSec, nowTs).replace(
-    "leave-by",
-    "safe-leave-by"
-  );
+
+  const leaveEarliest = state.flightTimeVariance
+    ? bounds.safeStart - flightSecWithVariance(flightSec, "fast")
+    : bounds.safeStart - flightSec;
+  const leaveLatest = state.flightTimeVariance
+    ? bounds.safeEnd - flightSecWithVariance(flightSec, "slow")
+    : bounds.safeEnd - flightSec;
+
+  if (leaveLatest <= wallTs) {
+    const missedSec = wallTs - leaveLatest;
+    return `<span class="safe-leave-missed">Missed window by ${fmtDuration(missedSec)}</span>`;
+  }
+
+  return `<span class="safe-leave-by">Leave between ${fmtTimeShort(leaveEarliest)} and ${fmtTimeShort(leaveLatest)}</span>`;
 }
 
 function renderPredictionPanel(events, segments) {
@@ -1087,13 +1129,18 @@ function renderPredictionPanel(events, segments) {
   const country = state.item?.country;
   const flightSec = country ? getFlightSec(country) : null;
   el.predictionTravelNote.textContent = flightSec
-    ? `Leave times assume ${state.travelType} travel (${fmtDuration(flightSec)} one-way)`
+    ? `Leave times assume ${state.travelType} travel (${fmtDuration(flightSec)} one-way${
+        state.flightTimeVariance
+          ? "; safe leave windows use fastest flight for earliest leave and slowest for latest"
+          : ""
+      })`
     : "";
 
-  const nowTs = Math.floor(Date.now() / 1000);
+  const wallTs = Math.floor(Date.now() / 1000);
+  const dataTs = state.lastTimeline?.dataTs ?? wallTs;
   const averages = getAverages();
-  const predictionCtx = { nowTs, startQty: predictionStartQty() };
-  const restocks = events.filter((e) => e.type === "restock" && e.ts >= nowTs);
+  const predictionCtx = { dataTs, startQty: predictionStartQty() };
+  const restocks = events.filter((e) => e.type === "restock" && e.ts >= dataTs);
   if (!restocks.length) {
     el.predictionList.innerHTML = `<li class="ongoing">Not enough data to predict restocks.</li>`;
     return;
@@ -1108,10 +1155,10 @@ function renderPredictionPanel(events, segments) {
         segments,
         predictionCtx
       );
-      const leaveHtml = formatLeaveWindow(restockEarliest, restockLatest, flightSec, nowTs);
-      const safe = safeWindowBounds(e);
+      const leaveHtml = formatLeaveWindow(restockEarliest, restockLatest, flightSec, wallTs);
+      const safe = safeWindowBoundsForEvent(e, i);
       const safeHtml = safe
-        ? `<div class="safe-window-info">${formatSafeWindowLabel(safe, i)}${formatSafeLeaveWindow(safe, flightSec, nowTs)}</div>`
+        ? `<div class="safe-window-info">${formatSafeWindowLabel(safe, i)}${formatSafeLeaveWindow(safe, flightSec, wallTs)}</div>`
         : "";
       return `<li class="prediction-item">
         <div class="prediction-main">
@@ -1236,7 +1283,6 @@ function isSnapshotSelected(yataTs) {
 
 function snapshotPointRadius(ctx, defaultRadius) {
   const raw = ctx.raw;
-  if (raw?.nowAnchor) return 0;
   if (snapshotInspector.enabled && raw?.yata_ts != null) {
     if (isSnapshotSelected(raw.yata_ts)) return 7;
     return defaultRadius > 0 ? Math.max(defaultRadius, 4) : 4;
@@ -1455,12 +1501,12 @@ function updateRestockMarkers(chart) {
   const xScale = scales.x;
   if (!xScale) return;
 
-  const nowTs = Math.floor(Date.now() / 1000);
+  const dataTs = state.lastTimeline?.dataTs ?? Math.floor(Date.now() / 1000);
   const xMin = chart.options.scales.x.min;
   const xMax = chart.options.scales.x.max;
 
   const restocks = state.predictedEvents.filter(
-    (e) => e.type === "restock" && e.ts >= nowTs
+    (e) => e.type === "restock" && e.ts >= dataTs
   );
 
   restocks.forEach((ev, i) => {
@@ -1537,10 +1583,19 @@ function refreshChart(timeline) {
   state.chartScale = clampChartScale(state.chartScale, timeline);
   state.chartOffsetSec = clampChartOffsetSec(state.chartOffsetSec, timeline);
   state.predictedEvents = timeline.events ?? [];
-  const nowTs = Math.floor(Date.now() / 1000);
-  state.safeWindows = state.predictedEvents
-    .filter((e) => e.type === "restock" && e.ts >= nowTs)
-    .map((e) => safeWindowBounds(e))
+  const dataTs = timeline.dataTs;
+  const endTs = Math.round(timeline.xMax / 1000);
+  const startQty = predictionStartQty();
+  if (state.predictionHours > 0 && startQty != null && dataTs > 0) {
+    state.safeWindowAnchors = getSafeWindowAnchorRestocks(dataTs, endTs, startQty);
+  } else {
+    state.safeWindowAnchors = [];
+  }
+  const upcomingRestocks = state.predictedEvents.filter(
+    (e) => e.type === "restock" && e.ts >= dataTs
+  );
+  state.safeWindows = upcomingRestocks
+    .map((e, i) => safeWindowBoundsForEvent(e, i))
     .filter(Boolean);
   renderPredictionPanel(state.predictedEvents, timeline.segments ?? []);
   const options = chartOptions(timeline);
@@ -1572,10 +1627,9 @@ async function loadCurrentStock() {
       fetchJson("/api/stocks"),
       fetchMarketPrice(state.item.itemId),
     ]);
-    const item = data.stocks[state.item.country]?.stocks.find(
-      (i) => i.id === state.item.itemId
-    );
-    if (!item) {
+    const countryData = data.stocks[state.item.country];
+    const item = countryData?.stocks.find((i) => i.id === state.item.itemId);
+    if (!item || !countryData) {
       el.currentStock.classList.add("hidden");
       el.profitEstimate?.classList.add("hidden");
       syncCurrentStockDepletion(null, null);
@@ -1584,9 +1638,9 @@ async function loadCurrentStock() {
     el.currentStock.classList.remove("hidden");
     el.currentQty.textContent = fmtNum(item.quantity);
     el.currentQty.className = `current-qty ${item.quantity === 0 ? "qty-zero" : "qty-ok"}`;
-    el.currentMeta.textContent = `${fmtMoney(item.cost)} each · polled ${fmtTime(data.timestamp)}`;
+    el.currentMeta.textContent = `${fmtMoney(item.cost)} each · updated ${fmtTime(countryData.update)}`;
     noteStockTimestamp(data.timestamp);
-    syncCurrentStockDepletion(item.quantity, data.timestamp);
+    syncCurrentStockDepletion(item.quantity, countryData.update);
     renderProfitEstimate(item, marketPrice);
   } catch (err) {
     el.currentStock.classList.remove("hidden");
@@ -2124,6 +2178,15 @@ el.predictionButtons.addEventListener("click", (e) => {
 
 syncHourButtons(el.rangeButtons, state.rangeHours);
 syncHourButtons(el.predictionButtons, state.predictionHours);
+
+if (el.flightVarianceToggle) {
+  el.flightVarianceToggle.checked = state.flightTimeVariance;
+  el.flightVarianceToggle.addEventListener("change", () => {
+    state.flightTimeVariance = el.flightVarianceToggle.checked;
+    savePrefs({ flightTimeVariance: state.flightTimeVariance });
+    redrawPrediction();
+  });
+}
 
 initSampleExtremaButtons(el.avgButtons, state.avgSamples, "stockoutTiming", ({ mode, n }) => {
   if (mode === "avg") {
