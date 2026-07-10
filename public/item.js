@@ -15,8 +15,13 @@ const el = {
   restockAvg: document.getElementById("restock-avg"),
   cycleOpenNote: document.getElementById("cycle-open-note"),
   cycleHistoryBody: document.getElementById("cycle-history-body"),
+  cycleHistoryPager: document.getElementById("cycle-history-pager"),
+  cycleHistoryPrev: document.getElementById("cycle-history-prev"),
+  cycleHistoryNext: document.getElementById("cycle-history-next"),
+  cycleHistoryPageInfo: document.getElementById("cycle-history-page-info"),
   rateAvgButtons: document.getElementById("rate-avg-buttons"),
   rateAvg: document.getElementById("rate-avg"),
+  safeWindowUseRate: document.getElementById("safe-window-use-rate"),
   predictionButtons: document.getElementById("prediction-buttons"),
   predictionList: document.getElementById("prediction-list"),
   predictionTravelNote: document.getElementById("prediction-travel-note"),
@@ -31,6 +36,7 @@ const el = {
   profitSell: document.getElementById("profit-sell"),
   profitSellReset: document.getElementById("profit-sell-reset"),
   profitPerItem: document.getElementById("profit-per-item"),
+  profitTotalCost: document.getElementById("profit-total-cost"),
   profitTotal: document.getElementById("profit-total"),
   profitPerHour: document.getElementById("profit-per-hour"),
   profitNote: document.getElementById("profit-note"),
@@ -98,6 +104,7 @@ function updateProfitCalcs() {
   if (!metrics) return;
 
   setProfitStat(el.profitPerItem, fmtSignedMoney(metrics.profitPerItem), profitValueClass(metrics.profitPerItem));
+  setProfitStat(el.profitTotalCost, fmtMoney(metrics.totalCost));
   setProfitStat(el.profitTotal, fmtSignedMoney(metrics.totalProfit), profitValueClass(metrics.totalProfit));
   setProfitStat(
     el.profitPerHour,
@@ -224,7 +231,8 @@ function syncCurrentStockDepletion(quantity, pollTs) {
 }
 
 const fmtRate = (r) => (Math.abs(r) >= 10 ? r.toFixed(0) : r.toFixed(1));
-const CYCLE_HISTORY_LIMIT = 10;
+const CYCLE_HISTORY_PAGE_SIZE = 10;
+let cycleHistoryPage = 0;
 const CHART_TOP_PADDING = 48;
 const CHART_VIEWPORT_HOURS = 24;
 const CHART_MIN_VIEWPORT_SEC = 15 * 60;
@@ -928,7 +936,7 @@ function buildAnnotations(restocks, rates, timeline) {
 function getCycleHistoryRows() {
   const completed = getAdjustedCompletedRestocks();
   const adjustedRates = getAdjustedRates();
-  return completed.slice(0, CYCLE_HISTORY_LIMIT).map((r) => {
+  return completed.map((r) => {
     const origIdx = state.rates.findIndex((w) => w.start_ts === r.restocked_ts);
     const rate = origIdx >= 0 ? adjustedRates[origIdx]?.rate : null;
     return {
@@ -941,8 +949,32 @@ function getCycleHistoryRows() {
   });
 }
 
-function getUsableCycleHistoryRows() {
-  return getCycleHistoryRows().filter((r) => !r.ignored);
+function getCycleHistoryPageCount(rowCount) {
+  return Math.max(1, Math.ceil(rowCount / CYCLE_HISTORY_PAGE_SIZE));
+}
+
+function clampCycleHistoryPage(page, rowCount) {
+  return Math.max(0, Math.min(page, getCycleHistoryPageCount(rowCount) - 1));
+}
+
+function getCycleHistoryPageRows(rows, page) {
+  const start = page * CYCLE_HISTORY_PAGE_SIZE;
+  return rows.slice(start, start + CYCLE_HISTORY_PAGE_SIZE);
+}
+
+function renderCycleHistoryPager(rowCount) {
+  if (!el.cycleHistoryPager) return;
+  const totalPages = getCycleHistoryPageCount(rowCount);
+  const showPager = rowCount > CYCLE_HISTORY_PAGE_SIZE;
+  el.cycleHistoryPager.classList.toggle("hidden", !showPager);
+  if (!showPager) return;
+
+  const page = clampCycleHistoryPage(cycleHistoryPage, rowCount);
+  if (el.cycleHistoryPageInfo) {
+    el.cycleHistoryPageInfo.textContent = `${page + 1} / ${totalPages}`;
+  }
+  if (el.cycleHistoryPrev) el.cycleHistoryPrev.disabled = page <= 0;
+  if (el.cycleHistoryNext) el.cycleHistoryNext.disabled = page >= totalPages - 1;
 }
 
 function renderCycleHistory() {
@@ -955,37 +987,38 @@ function renderCycleHistory() {
   }
 
   const rows = getCycleHistoryRows();
-  const usableRows = getUsableCycleHistoryRows();
+  const usableRestocks = getUsableCompletedRestocks();
+  const usableRates = getUsableRates();
 
-  const stockoutSample = usableRows.slice(0, state.avgSamples);
+  const stockoutSample = usableRestocks.slice(0, state.avgSamples);
   if (state.stockoutTiming === "min" || state.stockoutTiming === "max") {
     const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
     const value = state.stockoutTiming === "min" ? minEmptyFor : maxEmptyFor;
-    if (value != null && usableRows.length) {
-      el.restockAvg.textContent = `${fmtDuration(value)} (${state.stockoutTiming.toUpperCase()} of ${usableRows.length})`;
+    if (value != null && usableRestocks.length) {
+      el.restockAvg.textContent = `${fmtDuration(value)} (${state.stockoutTiming.toUpperCase()} of ${usableRestocks.length})`;
     } else {
       el.restockAvg.textContent = "no samples yet";
     }
   } else if (stockoutSample.length) {
     const avg =
-      stockoutSample.reduce((sum, r) => sum + r.emptyForSec, 0) / stockoutSample.length;
+      stockoutSample.reduce((sum, r) => sum + r.adjusted_duration, 0) / stockoutSample.length;
     el.restockAvg.textContent = `${fmtDuration(avg)} (${stockoutSample.length} sample${stockoutSample.length === 1 ? "" : "s"})`;
   } else {
     el.restockAvg.textContent = "no samples yet";
   }
 
-  const rateSample = usableRows.filter((r) => r.rate != null).slice(0, state.avgRateSamples);
+  const rateSample = usableRates.filter((w) => w.rate != null).slice(0, state.avgRateSamples);
   if (state.rateTiming === "min" || state.rateTiming === "max") {
     const { minRate, maxRate } = getHistoricalExtents();
     const value = state.rateTiming === "min" ? minRate : maxRate;
-    const allRateRows = usableRows.filter((r) => r.rate != null);
+    const allRateRows = usableRates.filter((w) => w.rate != null);
     if (value != null && allRateRows.length) {
       el.rateAvg.textContent = `${fmtRate(value)}/min (${state.rateTiming.toUpperCase()} of ${allRateRows.length})`;
     } else {
       el.rateAvg.textContent = "no samples yet";
     }
   } else if (rateSample.length) {
-    const avg = rateSample.reduce((sum, r) => sum + r.rate, 0) / rateSample.length;
+    const avg = rateSample.reduce((sum, w) => sum + w.rate, 0) / rateSample.length;
     el.rateAvg.textContent = `${fmtRate(avg)}/min (${rateSample.length} sample${rateSample.length === 1 ? "" : "s"})`;
   } else {
     el.rateAvg.textContent = "no samples yet";
@@ -994,10 +1027,15 @@ function renderCycleHistory() {
   if (!rows.length) {
     el.cycleHistoryBody.innerHTML =
       `<tr><td colspan="5" class="empty-note">No depletion/restock cycles observed yet.</td></tr>`;
+    renderCycleHistoryPager(0);
     return;
   }
 
-  el.cycleHistoryBody.innerHTML = rows
+  cycleHistoryPage = clampCycleHistoryPage(cycleHistoryPage, rows.length);
+  const pageRows = getCycleHistoryPageRows(rows, cycleHistoryPage);
+  renderCycleHistoryPager(rows.length);
+
+  el.cycleHistoryBody.innerHTML = pageRows
     .map(
       (r) => `<tr class="${r.ignored ? "cycle-ignored" : ""}" data-depleted-ts="${r.depleted_ts}">
         <td class="cycle-count-cell">
@@ -1051,13 +1089,19 @@ function predictedRestockBounds(e, averages, events, segments, { dataTs, startQt
   return { restockEarliest, restockLatest };
 }
 
+function safeWindowDepletionRate() {
+  if (state.safeWindowUseRateSelection) return rateFromHistory();
+  return getHistoricalExtents().maxRate;
+}
+
 function safeWindowBoundsForDepletedTs(depletedTs, qty) {
-  const { maxEmptyFor, maxRate } = getHistoricalExtents();
-  if (maxEmptyFor == null || maxRate == null || depletedTs == null) return null;
+  const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
+  const depletionRate = safeWindowDepletionRate();
+  if (minEmptyFor == null || maxEmptyFor == null || depletionRate == null || depletedTs == null) return null;
 
   const restockQty = currentRestockAmount() ?? qty;
   const safeStart = Math.round(depletedTs + maxEmptyFor);
-  const safeEnd = Math.round(depletedTs + maxEmptyFor + (restockQty / maxRate) * 60);
+  const safeEnd = Math.round(depletedTs + minEmptyFor + (restockQty / depletionRate) * 60);
 
   if (safeStart >= safeEnd) return null;
   return { safeStart, safeEnd };
@@ -1195,7 +1239,7 @@ function renderProfitEstimate(item, marketPrice) {
   if (!el.profitEstimate) return;
 
   const resetValues = () => {
-    for (const node of [el.profitBuy, el.profitMarket, el.profitPerItem, el.profitTotal, el.profitPerHour]) {
+    for (const node of [el.profitBuy, el.profitMarket, el.profitPerItem, el.profitTotalCost, el.profitTotal, el.profitPerHour]) {
       setProfitStat(node, "—");
     }
   };
@@ -2075,6 +2119,7 @@ function parseItemFromUrl() {
 }
 
 function setupItemPage(item) {
+  cycleHistoryPage = 0;
   setupItemHeader(item, "stock");
   const savedAmount = getRestockAmount(item.country, item.itemId);
   el.restockAmount.value = savedAmount ?? "";
@@ -2138,6 +2183,19 @@ el.cycleHistoryBody.addEventListener("change", async (e) => {
   }
 });
 
+el.cycleHistoryPrev?.addEventListener("click", () => {
+  if (cycleHistoryPage <= 0) return;
+  cycleHistoryPage -= 1;
+  renderCycleHistory();
+});
+
+el.cycleHistoryNext?.addEventListener("click", () => {
+  const rowCount = getCycleHistoryRows().length;
+  if (cycleHistoryPage >= getCycleHistoryPageCount(rowCount) - 1) return;
+  cycleHistoryPage += 1;
+  renderCycleHistory();
+});
+
 el.restockAmount.addEventListener("change", () => {
   const item = state.item;
   if (!item) return;
@@ -2188,6 +2246,15 @@ if (el.flightVarianceToggle) {
   });
 }
 
+if (el.safeWindowUseRate) {
+  el.safeWindowUseRate.checked = state.safeWindowUseRateSelection;
+  el.safeWindowUseRate.addEventListener("change", () => {
+    state.safeWindowUseRateSelection = el.safeWindowUseRate.checked;
+    savePrefs({ safeWindowUseRateSelection: state.safeWindowUseRateSelection });
+    redrawPrediction();
+  });
+}
+
 initSampleExtremaButtons(el.avgButtons, state.avgSamples, "stockoutTiming", ({ mode, n }) => {
   if (mode === "avg") {
     state.stockoutTiming = "avg";
@@ -2221,6 +2288,11 @@ window.addEventListener("timeformatchange", () => {
     const timeline = buildTimeline(state.chartPoints, state.predictionHours);
     refreshChart(timeline);
   }
+});
+
+window.addEventListener("travelsettingschange", () => {
+  if (!profitSell.item) return;
+  updateProfitCalcs();
 });
 
 (async () => {

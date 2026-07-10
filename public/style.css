@@ -982,6 +982,45 @@ body.page-item {
   accent-color: var(--green);
 }
 
+.cycle-history-pager {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cycle-history-pager.hidden { display: none; }
+
+.cycle-history-pager-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.cycle-history-pager-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.cycle-history-pager-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.cycle-history-page-info {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  font-weight: 600;
+  min-width: 4.5rem;
+  text-align: center;
+}
+
 .restock-list {
   list-style: none;
   margin: 12px 0 0;
@@ -1007,3 +1046,8 @@ body.page-item {
   padding-top: 12px;
 }
 .rate-controls .restock-avg { color: var(--green); }
+
+.rate-safe-window-toggle {
+  margin-top: 8px;
+  font-size: 0.84rem;
+}

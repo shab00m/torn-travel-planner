@@ -13,6 +13,7 @@ const state = {
   avgRateSamples: 5,
   stockoutTiming: "avg", // "avg" | "min" | "max"
   rateTiming: "avg", // "avg" | "min" | "max"
+  safeWindowUseRateSelection: false,
   item: null, // { country, itemId, name } on the item detail page
   rangeHours: 24,
   predictionHours: 0,
@@ -77,6 +78,7 @@ function applyStoredPrefs() {
     ? prefs.stockoutTiming
     : "avg";
   state.rateTiming = ["avg", "min", "max"].includes(prefs.rateTiming) ? prefs.rateTiming : "avg";
+  state.safeWindowUseRateSelection = prefs.safeWindowUseRateSelection === true;
   state.search = typeof prefs.search === "string" ? prefs.search : "";
   state.countryFilter = typeof prefs.countryFilter === "string" ? prefs.countryFilter : "";
   state.inStockOnly = prefs.inStockOnly === true;
@@ -349,12 +351,14 @@ function computeProfitMetrics({ buyPrice, sellPrice, country }) {
   if (roundTripSec <= 0) return null;
   const itemsPerTrip = state.travelCapacity;
   const profitPerItem = sellPrice - buyPrice;
+  const totalCost = buyPrice * itemsPerTrip;
   const totalProfit = profitPerItem * itemsPerTrip;
   const profitPerHour = itemsPerTrip <= 0 ? 0 : totalProfit / (roundTripSec / 3600);
   return {
     buyPrice,
     sellPrice,
     profitPerItem,
+    totalCost,
     totalProfit,
     profitPerHour,
     itemsPerTrip,

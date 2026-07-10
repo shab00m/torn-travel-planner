@@ -99,6 +99,10 @@
 							<span id="profit-per-item" class="profit-stat-value">—</span>
 						</div>
 						<div class="profit-stat">
+							<span class="profit-stat-label" title="Buy price × inventory slots">Total cost</span>
+							<span id="profit-total-cost" class="profit-stat-value">—</span>
+						</div>
+						<div class="profit-stat">
 							<span class="profit-stat-label">Total profit</span>
 							<span id="profit-total" class="profit-stat-value">—</span>
 						</div>
@@ -238,6 +242,10 @@
 						<div class="avg-buttons" id="rate-avg-buttons"></div>
 						<span id="rate-avg" class="restock-avg"></span>
 					</div>
+					<label class="checkbox rate-safe-window-toggle" for="safe-window-use-rate">
+						<input id="safe-window-use-rate" type="checkbox" />
+						Use for safe window
+					</label>
 				</div>
 				<p id="cycle-open-note" class="cycle-open-note hidden"></p>
 				<table class="cycle-history">
@@ -258,6 +266,11 @@
 					</thead>
 					<tbody id="cycle-history-body"></tbody>
 				</table>
+				<div id="cycle-history-pager" class="cycle-history-pager hidden">
+					<button type="button" id="cycle-history-prev" class="cycle-history-pager-btn">← Prev</button>
+					<span id="cycle-history-page-info" class="cycle-history-page-info"></span>
+					<button type="button" id="cycle-history-next" class="cycle-history-pager-btn">Next →</button>
+				</div>
 			</div>
 		</main>
 
