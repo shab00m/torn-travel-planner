@@ -281,6 +281,66 @@ th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
   color: #f0c674;
 }
 
+.favorites-card .col-safe-window { width: 10.5rem; }
+.favorites-card .col-leave-by { width: 10.5rem; }
+
+.favorites-card thead th {
+  padding: 7px 10px;
+}
+
+.favorites-sort {
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+  width: 100%;
+  text-align: inherit;
+}
+
+.favorites-sort:hover {
+  color: var(--text);
+}
+
+.favorites-sort.active {
+  color: var(--accent);
+}
+
+.safe-window-cell,
+.leave-by-cell {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.82rem;
+}
+
+.safe-window-ok,
+.leave-by-ok {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.safe-window-stale {
+  opacity: 0.65;
+}
+
+.safe-window-missed,
+.leave-by-missed {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.safe-window-unavailable,
+.safe-window-loading,
+.leave-by-unavailable,
+.leave-by-loading {
+  color: var(--text-dim);
+}
+
 thead th {
   color: var(--text-dim);
   font-weight: 500;

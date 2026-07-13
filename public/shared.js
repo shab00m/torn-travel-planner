@@ -32,6 +32,9 @@ const state = {
   marketPricesFetchedAt: null, // { [itemId]: unix ts }
   marketPricesStatus: null, // null | "empty" | "ready" | "error"
   marketCacheTtlSec: 300,
+  safeWindows: {}, // { "mex:123": { available, safeWindow, reason } }
+  safeWindowsStatus: null, // null | "loading" | "ready" | "error"
+  favoritesSort: { column: "item", dir: "asc" },
 };
 
 const PREFS_KEY = "plannerPrefs";
@@ -84,6 +87,13 @@ function applyStoredPrefs() {
   state.inStockOnly = prefs.inStockOnly === true;
   state.timeFormat = TIME_FORMATS.includes(prefs.timeFormat) ? prefs.timeFormat : "european";
   state.flightTimeVariance = prefs.flightTimeVariance === true;
+  if (
+    prefs.favoritesSort &&
+    ["item", "stock", "cost", "profit", "safeWindow", "leaveBy"].includes(prefs.favoritesSort.column) &&
+    ["asc", "desc"].includes(prefs.favoritesSort.dir)
+  ) {
+    state.favoritesSort = prefs.favoritesSort;
+  }
 }
 
 function syncHourButtons(container, hours) {
@@ -366,6 +376,35 @@ function initFavoriteToggle(btn, country, itemId) {
     toggleFavorite(country, itemId);
     syncFavoriteButton(btn, country, itemId);
   });
+}
+
+const SAFE_WINDOWS_CACHE_KEY = "safeWindowsCache";
+
+function getSafeWindowsCache() {
+  try {
+    return JSON.parse(localStorage.getItem(SAFE_WINDOWS_CACHE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function saveSafeWindowsCache(windows) {
+  const cache = getSafeWindowsCache();
+  const favorites = getFavorites();
+  for (const [key, value] of Object.entries(windows)) {
+    if (favorites[key]) cache[key] = value;
+  }
+  for (const key of Object.keys(cache)) {
+    if (!favorites[key]) delete cache[key];
+  }
+  localStorage.setItem(SAFE_WINDOWS_CACHE_KEY, JSON.stringify(cache));
+}
+
+function hydrateSafeWindowsFromCache() {
+  const cache = getSafeWindowsCache();
+  for (const key of Object.keys(getFavorites())) {
+    if (cache[key]) state.safeWindows[key] = cache[key];
+  }
 }
 
 function getFlightSec(country) {

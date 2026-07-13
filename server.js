@@ -7,6 +7,7 @@ import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot
 import { startPolling, getLatest } from "./src/yata.js";
 import { getPlayerInfo, getTravelStatus } from "./src/torn.js";
 import { getMarketPrice, getCachedMarketPrices, enqueueStaleMarketRefresh, startMarketRefresh, CACHE_TTL_SEC } from "./src/market.js";
+import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -141,6 +142,98 @@ app.get("/api/restocks/:country/:itemId", (req, res) => {
     restocks: getRestocks(params.country, params.id, 50),
     rates: getDepletionRates(params.country, params.id, 50),
   });
+});
+
+function parseSafeWindowOptions(query = {}, body = {}) {
+  const src = { ...query, ...body };
+  const opts = {};
+  if (src.restockAmount != null) {
+    const amount = Number.parseInt(src.restockAmount, 10);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      throw new Error("restockAmount must be a positive integer");
+    }
+    opts.restockAmount = amount;
+  }
+  if (src.travelType != null) {
+    if (typeof src.travelType !== "string") throw new Error("travelType must be a string");
+    opts.travelType = src.travelType;
+  }
+  if (src.flightTimeVariance != null) {
+    opts.flightTimeVariance = src.flightTimeVariance === true || src.flightTimeVariance === "true";
+  }
+  if (src.safeWindowUseRateSelection != null) {
+    opts.safeWindowUseRateSelection =
+      src.safeWindowUseRateSelection === true || src.safeWindowUseRateSelection === "true";
+  }
+  if (src.predictionHours != null) {
+    const hours = Number.parseFloat(src.predictionHours);
+    if (Number.isNaN(hours) || hours <= 0) throw new Error("predictionHours must be a positive number");
+    opts.predictionHours = hours;
+  }
+  for (const key of ["avgSamples", "avgRateSamples"]) {
+    if (src[key] != null) {
+      const n = Number.parseInt(src[key], 10);
+      if (!Number.isInteger(n) || n <= 0) throw new Error(`${key} must be a positive integer`);
+      opts[key] = n;
+    }
+  }
+  for (const key of ["stockoutTiming", "rateTiming"]) {
+    if (src[key] != null) {
+      if (!["avg", "min", "max"].includes(src[key])) {
+        throw new Error(`${key} must be avg, min, or max`);
+      }
+      opts[key] = src[key];
+    }
+  }
+  return opts;
+}
+
+app.get("/api/safe-window/:country/:itemId", (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  try {
+    const opts = parseSafeWindowOptions(req.query);
+    res.json(computeNextSafeWindow(params.country, params.id, opts));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/safe-windows", (req, res) => {
+  const items = req.body?.items;
+  if (!Array.isArray(items) || !items.length) {
+    res.status(400).json({ error: "items array is required" });
+    return;
+  }
+  const parsed = [];
+  for (const raw of items) {
+    const country = raw?.country;
+    const itemId = Number.parseInt(raw?.itemId, 10);
+    if (typeof country !== "string" || !COUNTRIES[country]) {
+      res.status(400).json({ error: "each item needs a valid country code" });
+      return;
+    }
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      res.status(400).json({ error: "each item needs a positive integer itemId" });
+      return;
+    }
+    const entry = { country, itemId };
+    if (raw.restockAmount != null) {
+      const amount = Number.parseInt(raw.restockAmount, 10);
+      if (!Number.isInteger(amount) || amount <= 0) {
+        res.status(400).json({ error: "restockAmount must be a positive integer" });
+        return;
+      }
+      entry.restockAmount = amount;
+    }
+    parsed.push(entry);
+  }
+  try {
+    const opts = parseSafeWindowOptions({}, req.body);
+    res.json({ windows: computeSafeWindowsBatch(parsed, opts) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 function parseDepletedTs(req, res) {
