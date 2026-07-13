@@ -1,5 +1,4 @@
-import { getRestocks, getDepletionRates, getHistory } from "./db.js";
-import { getLatest } from "./yata.js";
+import { getRestocks, getDepletionRates, getHistory, getRestockAmount as getStoredRestockAmount } from "./db.js";
 import { getFlightSeconds } from "./flight-times.js";
 
 const FLIGHT_TIME_VARIANCE = 0.03;
@@ -9,20 +8,42 @@ function flightSecWithVariance(flightSec, kind) {
   return Math.round(flightSec * (1 + FLIGHT_TIME_VARIANCE));
 }
 
-function lastZeroBeforeRestock(chartPoints, restockedTs, depletedTs) {
+function buildLastZeroLookup(chartPoints) {
+  if (!chartPoints.length) return null;
+  const prefixLastZero = new Array(chartPoints.length);
   let lastZero = null;
-  for (const p of chartPoints) {
-    if (p.yata_ts < restockedTs && p.quantity === 0) lastZero = p.yata_ts;
+  for (let i = 0; i < chartPoints.length; i++) {
+    if (chartPoints[i].quantity === 0) lastZero = chartPoints[i].yata_ts;
+    prefixLastZero[i] = lastZero;
   }
-  return lastZero ?? depletedTs ?? null;
+  return { points: chartPoints, prefixLastZero };
 }
 
-function adjustRestockTime(chartPoints, restockedTs, observedQty, ratePerMin, restockAmount, depletedTs) {
+function lastZeroBeforeRestock(lookup, restockedTs, depletedTs) {
+  if (!lookup) return depletedTs ?? null;
+  const { points, prefixLastZero } = lookup;
+  let lo = 0;
+  let hi = points.length - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (points[mid].yata_ts < restockedTs) {
+      idx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (idx < 0) return depletedTs ?? null;
+  return prefixLastZero[idx] ?? depletedTs ?? null;
+}
+
+function adjustRestockTime(lookup, restockedTs, observedQty, ratePerMin, restockAmount, depletedTs) {
   if (!restockAmount || !ratePerMin || ratePerMin <= 0 || !observedQty) return restockedTs;
   if (observedQty >= restockAmount) return restockedTs;
   const adjustSec = ((restockAmount - observedQty) / ratePerMin) * 60;
   let adjusted = Math.round(restockedTs - adjustSec);
-  const lastZero = lastZeroBeforeRestock(chartPoints, restockedTs, depletedTs);
+  const lastZero = lastZeroBeforeRestock(lookup, restockedTs, depletedTs);
   if (lastZero != null) adjusted = Math.max(adjusted, lastZero + 1);
   return adjusted;
 }
@@ -40,6 +61,8 @@ function createContext({
   currentQty,
   currentPollTs,
 }) {
+  const lastZeroLookup = buildLastZeroLookup(chartPoints);
+
   function rateWindowForRestock(restockedTs) {
     return rates.find((w) => w.start_ts === restockedTs);
   }
@@ -58,7 +81,7 @@ function createContext({
       return { ...r, adjusted_restocked_ts: r.restocked_ts, adjusted_duration: r.duration };
     }
     const adjustedTs = adjustRestockTime(
-      chartPoints,
+      lastZeroLookup,
       r.restocked_ts,
       window.start_qty,
       window.rate,
@@ -76,7 +99,7 @@ function createContext({
     if (!restockAmount || w.start_qty >= restockAmount) return w;
     const restock = restocks.find((r) => r.restocked_ts === w.start_ts);
     const startTs = adjustRestockTime(
-      chartPoints,
+      lastZeroLookup,
       w.start_ts,
       w.start_qty,
       w.rate,
@@ -310,6 +333,36 @@ function createContext({
 /**
  * Next leave window where the player can still arrive during a safe stock period.
  */
+function resolveCurrentStock(chartPoints) {
+  const lastPoint = chartPoints[chartPoints.length - 1];
+  if (!lastPoint) return null;
+  return {
+    quantity: lastPoint.quantity,
+    cost: lastPoint.cost,
+    dataTs: lastPoint.yata_ts,
+  };
+}
+
+function safeWindowHint(reason, { restockAmount, startQty, restocks }) {
+  if (reason === "no_stock_data") {
+    return "No snapshot data in the database for this item.";
+  }
+  if (reason === "no_upcoming_restock" && restockAmount == null) {
+    const openCycle = restocks.some((r) => r.restocked_ts == null);
+    if (startQty === 0 || openCycle) {
+      return "Set restockAmount on the item detail page — it strongly affects safe window prediction for out-of-stock items.";
+    }
+  }
+  if (reason === "no_upcoming_restock" && restockAmount != null) {
+    return `Configured restock amount (${restockAmount}) does not produce a safe window with default rate settings. Try safeWindowUseRateSelection=true if "Use for safe window" is checked on the item page.`;
+  }
+  return null;
+}
+
+function safeWindowResponse(fields, restockAmount) {
+  return { ...fields, restockAmount: restockAmount ?? null };
+}
+
 export function computeNextSafeWindow(country, itemId, userOpts = {}) {
   const opts = {
     restockAmount: null,
@@ -324,26 +377,35 @@ export function computeNextSafeWindow(country, itemId, userOpts = {}) {
     wallTs: Math.floor(Date.now() / 1000),
     ...userOpts,
   };
+  const restockAmount = opts.restockAmount ?? getStoredRestockAmount(country, itemId);
 
   const restocks = getRestocks(country, itemId, 50);
   const rates = getDepletionRates(country, itemId, 50);
   const chartPoints = getHistory(country, itemId, 0);
 
-  const { payload } = getLatest();
-  const countryData = payload?.stocks?.[country];
-  const stockItem = countryData?.stocks?.find((i) => i.id === itemId);
-  if (!stockItem || !countryData) {
-    return { country, itemId, available: false, safeWindow: null, reason: "no_stock_data" };
+  const current = resolveCurrentStock(chartPoints);
+  if (!current) {
+    return safeWindowResponse(
+      {
+        country,
+        itemId,
+        available: false,
+        safeWindow: null,
+        reason: "no_stock_data",
+        hint: safeWindowHint("no_stock_data", { restockAmount, startQty: null, restocks }),
+      },
+      restockAmount
+    );
   }
 
-  const dataTs = countryData.update;
-  const startQty = stockItem.quantity;
+  const dataTs = current.dataTs;
+  const startQty = current.quantity;
 
   const ctx = createContext({
     restocks,
     rates,
     chartPoints,
-    restockAmount: opts.restockAmount,
+    restockAmount,
     avgSamples: opts.avgSamples,
     avgRateSamples: opts.avgRateSamples,
     stockoutTiming: opts.stockoutTiming,
@@ -355,20 +417,41 @@ export function computeNextSafeWindow(country, itemId, userOpts = {}) {
 
   const { minEmptyFor, maxEmptyFor } = ctx.getHistoricalExtents();
   if (minEmptyFor == null || maxEmptyFor == null) {
-    return { country, itemId, available: false, safeWindow: null, reason: "insufficient_history" };
+    return safeWindowResponse(
+      { country, itemId, available: false, safeWindow: null, reason: "insufficient_history" },
+      restockAmount
+    );
   }
 
   const endTs = dataTs + opts.predictionHours * 3600;
   const safeWindows = ctx.computeSafeWindows(dataTs, endTs, startQty);
   if (!safeWindows.length) {
-    return { country, itemId, available: false, safeWindow: null, reason: "no_upcoming_restock" };
+    const reason = "no_upcoming_restock";
+    return safeWindowResponse(
+      {
+        country,
+        itemId,
+        available: false,
+        safeWindow: null,
+        reason,
+        hint: safeWindowHint(reason, {
+          restockAmount,
+          startQty,
+          restocks,
+        }),
+      },
+      restockAmount
+    );
   }
 
   let flightSec;
   try {
     flightSec = getFlightSeconds(country, opts.travelType);
   } catch {
-    return { country, itemId, available: false, safeWindow: null, reason: "unknown_travel_type" };
+    return safeWindowResponse(
+      { country, itemId, available: false, safeWindow: null, reason: "unknown_travel_type" },
+      restockAmount
+    );
   }
 
   for (const bounds of safeWindows) {
@@ -380,23 +463,29 @@ export function computeNextSafeWindow(country, itemId, userOpts = {}) {
       : bounds.safeEnd - flightSec;
 
     if (leaveLatest > opts.wallTs) {
-      return {
-        country,
-        itemId,
-        available: true,
-        safeWindow: {
-          safeStart: bounds.safeStart,
-          safeEnd: bounds.safeEnd,
-          leaveEarliest,
-          leaveLatest,
-          depletedTs: bounds.depletedTs,
+      return safeWindowResponse(
+        {
+          country,
+          itemId,
+          available: true,
+          safeWindow: {
+            safeStart: bounds.safeStart,
+            safeEnd: bounds.safeEnd,
+            leaveEarliest,
+            leaveLatest,
+            depletedTs: bounds.depletedTs,
+          },
+          reason: null,
         },
-        reason: null,
-      };
+        restockAmount
+      );
     }
   }
 
-  return { country, itemId, available: false, safeWindow: null, reason: "missed" };
+  return safeWindowResponse(
+    { country, itemId, available: false, safeWindow: null, reason: "missed" },
+    restockAmount
+  );
 }
 
 export function computeSafeWindowsBatch(items, opts = {}) {
@@ -405,7 +494,7 @@ export function computeSafeWindowsBatch(items, opts = {}) {
     const key = `${item.country}:${item.itemId}`;
     windows[key] = computeNextSafeWindow(item.country, item.itemId, {
       ...opts,
-      restockAmount: item.restockAmount ?? opts.restockAmount ?? null,
+      restockAmount: item.restockAmount ?? opts.restockAmount ?? getStoredRestockAmount(item.country, item.itemId),
     });
   }
   return windows;

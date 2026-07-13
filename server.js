@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COUNTRIES } from "./src/countries.js";
 import { getFlightMatrix } from "./src/flight-times.js";
-import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks, setRestockIgnored } from "./src/db.js";
+import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks, setRestockIgnored, getRestockAmount, getAllRestockAmounts, setRestockAmount, deleteRestockAmount } from "./src/db.js";
 import { startPolling, getLatest } from "./src/yata.js";
 import { getPlayerInfo, getTravelStatus } from "./src/torn.js";
 import { getMarketPrice, getCachedMarketPrices, enqueueStaleMarketRefresh, startMarketRefresh, CACHE_TTL_SEC } from "./src/market.js";
@@ -142,6 +142,38 @@ app.get("/api/restocks/:country/:itemId", (req, res) => {
     restocks: getRestocks(params.country, params.id, 50),
     rates: getDepletionRates(params.country, params.id, 50),
   });
+});
+
+app.get("/api/restock-amounts", (_req, res) => {
+  res.json({ amounts: getAllRestockAmounts() });
+});
+
+app.get("/api/restock-amounts/:country/:itemId", (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  res.json({ country: params.country, itemId: params.id, amount: getRestockAmount(params.country, params.id) });
+});
+
+app.put("/api/restock-amounts/:country/:itemId", (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  const amount = req.body?.amount;
+  if (amount == null) {
+    deleteRestockAmount(params.country, params.id);
+    res.json({ country: params.country, itemId: params.id, amount: null });
+    return;
+  }
+  const parsed = Number.parseInt(amount, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    res.status(400).json({ error: "amount must be a positive integer" });
+    return;
+  }
+  try {
+    setRestockAmount(params.country, params.id, parsed);
+    res.json({ country: params.country, itemId: params.id, amount: parsed });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 function parseSafeWindowOptions(query = {}, body = {}) {

@@ -41,13 +41,8 @@ The SQLite database is created automatically at `data/travel.db`. History accumu
 | `src/torn.js` | Torn API key validation + travel perk parsing |
 | `src/flight-times.js` | One-way flight duration lookup by country and travel method |
 | `public/` | Frontend (vanilla JS + Chart.js) |
+| `docs/API.md` | Full HTTP API reference |
 
 ## API
 
-| Endpoint | Description |
-| --- | --- |
-| `GET /api/countries` | Country code metadata |
-| `GET /api/stocks` | Latest YATA payload |
-| `GET /api/history/:country/:itemId?hours=24` | Snapshot history (`hours=0` for all) |
-| `GET /api/restocks/:country/:itemId` | Recent out-of-stock periods with durations plus depletion-rate windows, newest first |
-| `POST /api/login` | Body `{ "apiKey": "..." }` — validates the key and returns player + travel info |
+See **[docs/API.md](docs/API.md)** for all endpoints, query/body parameters, defaults, and safe-window response shapes.

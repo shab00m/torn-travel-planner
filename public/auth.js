@@ -94,6 +94,34 @@ function logout() {
   if (typeof loadCurrentStock === "function" && state.item) loadCurrentStock();
 }
 
+function isInvalidKeyError(err) {
+  return /Torn API error (1|2):/.test(String(err?.message ?? ""));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function autoLogin() {
+  const saved = localStorage.getItem(KEY_STORAGE);
+  if (!saved) return;
+  const retryDelays = [0, 2000, 5000];
+  for (let attempt = 0; attempt < retryDelays.length; attempt++) {
+    if (retryDelays[attempt] > 0) await sleep(retryDelays[attempt]);
+    if (localStorage.getItem(KEY_STORAGE) !== saved) return;
+    try {
+      await login(saved);
+      return;
+    } catch (err) {
+      if (isInvalidKeyError(err)) {
+        logout();
+        return;
+      }
+    }
+  }
+  showLoggedOut();
+}
+
 async function login(apiKey) {
   const res = await fetch("/api/login", {
     method: "POST",
@@ -132,13 +160,4 @@ authEl.form.addEventListener("submit", async (e) => {
 initGuestTravelControls();
 syncGuestTravelControls();
 
-// Auto-login with a previously saved key.
-(async () => {
-  const saved = localStorage.getItem(KEY_STORAGE);
-  if (!saved) return;
-  try {
-    await login(saved);
-  } catch {
-    logout();
-  }
-})();
+window.authReady = autoLogin();

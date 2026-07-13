@@ -145,6 +145,7 @@ window.addEventListener("timeformatchange", () => {
 });
 
 (async () => {
+  await window.authReady;
   await loadCountries();
   const item = parseItemFromUrl();
   if (!item) {

@@ -45,6 +45,13 @@ db.exec(`
     market_price INTEGER,
     fetched_at   INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS restock_amounts (
+    country TEXT    NOT NULL,
+    item_id INTEGER NOT NULL,
+    amount  INTEGER NOT NULL,
+    PRIMARY KEY (country, item_id)
+  ) WITHOUT ROWID;
 `);
 
 try {
@@ -446,6 +453,48 @@ export function upsertMarketPrice(itemId, marketPrice, fetchedAt) {
 /** Item ids missing from cache or older than staleBeforeTs, oldest first. */
 export function getStaleMarketItemIds(staleBeforeTs, limit) {
   return staleMarketItemIdsStmt.all(staleBeforeTs, limit).map((row) => row.item_id);
+}
+
+const getRestockAmountStmt = db.prepare(
+  `SELECT amount FROM restock_amounts WHERE country = ? AND item_id = ?`
+);
+
+const getAllRestockAmountsStmt = db.prepare(
+  `SELECT country, item_id, amount FROM restock_amounts`
+);
+
+const upsertRestockAmountStmt = db.prepare(
+  `INSERT INTO restock_amounts (country, item_id, amount) VALUES (?, ?, ?)
+   ON CONFLICT(country, item_id) DO UPDATE SET amount = excluded.amount`
+);
+
+const deleteRestockAmountStmt = db.prepare(
+  `DELETE FROM restock_amounts WHERE country = ? AND item_id = ?`
+);
+
+export function getRestockAmount(country, itemId) {
+  const row = getRestockAmountStmt.get(country, itemId);
+  return row?.amount ?? null;
+}
+
+/** All stored restock amounts keyed as "country:itemId". */
+export function getAllRestockAmounts() {
+  const amounts = {};
+  for (const row of getAllRestockAmountsStmt.all()) {
+    amounts[`${row.country}:${row.item_id}`] = row.amount;
+  }
+  return amounts;
+}
+
+export function setRestockAmount(country, itemId, amount) {
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error("amount must be a positive integer");
+  }
+  upsertRestockAmountStmt.run(country, itemId, amount);
+}
+
+export function deleteRestockAmount(country, itemId) {
+  deleteRestockAmountStmt.run(country, itemId);
 }
 
 export default db;

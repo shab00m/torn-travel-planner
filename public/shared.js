@@ -35,6 +35,7 @@ const state = {
   safeWindows: {}, // { "mex:123": { available, safeWindow, reason } }
   safeWindowsStatus: null, // null | "loading" | "ready" | "error"
   favoritesSort: { column: "item", dir: "asc" },
+  restockAmounts: {}, // { "uni:206": 5000 } from /api/restock-amounts
 };
 
 const PREFS_KEY = "plannerPrefs";
@@ -293,20 +294,83 @@ function setupItemHeader(item, activeView) {
   initFavoriteToggle(document.getElementById("favorite-toggle"), item.country, item.itemId);
 }
 
-const RESTOCK_AMOUNTS_KEY = "restockAmounts";
+const LEGACY_RESTOCK_AMOUNTS_KEY = "restockAmounts";
+const RESTOCK_AMOUNTS_MIGRATED_KEY = "restockAmountsMigrated";
+
+function restockAmountKey(country, itemId) {
+  return `${country}:${itemId}`;
+}
 
 function getRestockAmount(country, itemId) {
-  const all = JSON.parse(localStorage.getItem(RESTOCK_AMOUNTS_KEY) || "{}");
-  const v = all[`${country}:${itemId}`];
+  const v = state.restockAmounts[restockAmountKey(country, itemId)];
   return typeof v === "number" && v > 0 ? v : null;
 }
 
-function setRestockAmount(country, itemId, amount) {
-  const all = JSON.parse(localStorage.getItem(RESTOCK_AMOUNTS_KEY) || "{}");
-  const key = `${country}:${itemId}`;
-  if (amount == null) delete all[key];
-  else all[key] = amount;
-  localStorage.setItem(RESTOCK_AMOUNTS_KEY, JSON.stringify(all));
+async function migrateLocalRestockAmounts() {
+  if (localStorage.getItem(RESTOCK_AMOUNTS_MIGRATED_KEY)) return;
+  const raw = localStorage.getItem(LEGACY_RESTOCK_AMOUNTS_KEY);
+  if (!raw) {
+    localStorage.setItem(RESTOCK_AMOUNTS_MIGRATED_KEY, "1");
+    return;
+  }
+  let all;
+  try {
+    all = JSON.parse(raw);
+  } catch {
+    localStorage.removeItem(LEGACY_RESTOCK_AMOUNTS_KEY);
+    localStorage.setItem(RESTOCK_AMOUNTS_MIGRATED_KEY, "1");
+    return;
+  }
+  localStorage.removeItem(LEGACY_RESTOCK_AMOUNTS_KEY);
+  for (const [key, amount] of Object.entries(all)) {
+    if (typeof amount !== "number" || amount <= 0) continue;
+    const sep = key.indexOf(":");
+    if (sep <= 0) continue;
+    const country = key.slice(0, sep);
+    const itemId = Number.parseInt(key.slice(sep + 1), 10);
+    if (!Number.isInteger(itemId) || itemId <= 0) continue;
+    try {
+      await fetchJsonWithBody(`/api/restock-amounts/${country}/${itemId}`, {
+        method: "PUT",
+        body: { amount },
+      });
+    } catch {
+      // partial migration is fine; user can re-enter missing values
+    }
+  }
+  localStorage.setItem(RESTOCK_AMOUNTS_MIGRATED_KEY, "1");
+}
+
+async function loadRestockAmounts() {
+  await migrateLocalRestockAmounts();
+  const data = await fetchJson("/api/restock-amounts");
+  state.restockAmounts = data.amounts ?? {};
+}
+
+async function loadRestockAmountForItem(country, itemId) {
+  const data = await fetchJson(`/api/restock-amounts/${country}/${itemId}`);
+  if (data.amount != null) {
+    state.restockAmounts[restockAmountKey(country, itemId)] = data.amount;
+  }
+}
+
+async function setRestockAmount(country, itemId, amount) {
+  const key = restockAmountKey(country, itemId);
+  if (amount == null) {
+    await fetchJsonWithBody(`/api/restock-amounts/${country}/${itemId}`, {
+      method: "PUT",
+      body: { amount: null },
+    });
+    delete state.restockAmounts[key];
+  } else {
+    const data = await fetchJsonWithBody(`/api/restock-amounts/${country}/${itemId}`, {
+      method: "PUT",
+      body: { amount },
+    });
+    state.restockAmounts[key] = data.amount;
+  }
+  clearSafeWindowsCache();
+  window.dispatchEvent(new CustomEvent("restockamountchange"));
 }
 
 const SELL_PRICES_KEY = "sellPrices";
@@ -386,6 +450,11 @@ function getSafeWindowsCache() {
   } catch {
     return {};
   }
+}
+
+function clearSafeWindowsCache() {
+  localStorage.removeItem(SAFE_WINDOWS_CACHE_KEY);
+  state.safeWindows = {};
 }
 
 function saveSafeWindowsCache(windows) {

@@ -324,7 +324,6 @@ async function loadSafeWindows() {
   const items = favorites.map(({ country, item }) => ({
     country,
     itemId: item.id,
-    restockAmount: getRestockAmount(country, item.id) ?? undefined,
   }));
 
   try {
@@ -529,8 +528,14 @@ window.addEventListener("favoriteschange", () => {
   loadSafeWindows();
 });
 
+window.addEventListener("restockamountchange", () => {
+  loadSafeWindows();
+});
+
 (async () => {
+  await window.authReady;
   await loadCountries();
+  await loadRestockAmounts();
   hydrateSafeWindowsFromCache();
   await populateCountryFilter();
   el.search.value = state.search;

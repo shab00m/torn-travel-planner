@@ -466,12 +466,42 @@ function currentRestockAmount() {
   return getRestockAmount(item.country, item.itemId);
 }
 
-function lastZeroBeforeRestock(restockedTs, depletedTs) {
-  let lastZero = null;
-  for (const p of state.chartPoints) {
-    if (p.yata_ts < restockedTs && p.quantity === 0) lastZero = p.yata_ts;
+let lastZeroLookup = null;
+
+function rebuildLastZeroLookup() {
+  const points = state.chartPoints;
+  if (!points.length) {
+    lastZeroLookup = null;
+    return;
   }
-  return lastZero ?? depletedTs ?? null;
+  const prefixLastZero = new Array(points.length);
+  let lastZero = null;
+  for (let i = 0; i < points.length; i++) {
+    if (points[i].quantity === 0) lastZero = points[i].yata_ts;
+    prefixLastZero[i] = lastZero;
+  }
+  lastZeroLookup = { points, prefixLastZero };
+}
+
+function lastZeroBeforeRestock(restockedTs, depletedTs) {
+  if (!lastZeroLookup || lastZeroLookup.points !== state.chartPoints) rebuildLastZeroLookup();
+  const lookup = lastZeroLookup;
+  if (!lookup) return depletedTs ?? null;
+  const { points, prefixLastZero } = lookup;
+  let lo = 0;
+  let hi = points.length - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (points[mid].yata_ts < restockedTs) {
+      idx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (idx < 0) return depletedTs ?? null;
+  return prefixLastZero[idx] ?? depletedTs ?? null;
 }
 
 /** Shift restock time earlier when the first snapshot is below the known full restock size. */
@@ -2083,6 +2113,7 @@ async function drawChart() {
     fetchJson(`/api/restocks/${country}/${itemId}`),
   ]);
   state.chartPoints = history.points;
+  rebuildLastZeroLookup();
   loadRestockData(restockData);
 
   el.itemEmpty.classList.toggle("hidden", history.points.length > 0);
@@ -2196,23 +2227,28 @@ el.cycleHistoryNext?.addEventListener("click", () => {
   renderCycleHistory();
 });
 
-el.restockAmount.addEventListener("change", () => {
+el.restockAmount.addEventListener("change", async () => {
   const item = state.item;
   if (!item) return;
   const raw = el.restockAmount.value.trim();
-  if (raw === "") {
-    setRestockAmount(item.country, item.itemId, null);
+  const prev = getRestockAmount(item.country, item.itemId);
+  try {
+    if (raw === "") {
+      await setRestockAmount(item.country, item.itemId, null);
+      refreshRestockAdjustments();
+      return;
+    }
+    const amount = Number.parseInt(raw, 10);
+    if (!Number.isInteger(amount) || amount <= 0) {
+      el.restockAmount.value = prev ?? "";
+      return;
+    }
+    await setRestockAmount(item.country, item.itemId, amount);
+    el.restockAmount.value = amount;
     refreshRestockAdjustments();
-    return;
+  } catch {
+    el.restockAmount.value = prev ?? "";
   }
-  const amount = Number.parseInt(raw, 10);
-  if (!Number.isInteger(amount) || amount <= 0) {
-    el.restockAmount.value = getRestockAmount(item.country, item.itemId) ?? "";
-    return;
-  }
-  setRestockAmount(item.country, item.itemId, amount);
-  el.restockAmount.value = amount;
-  refreshRestockAdjustments();
 });
 
 el.rangeButtons.addEventListener("click", (e) => {
@@ -2296,6 +2332,7 @@ window.addEventListener("travelsettingschange", () => {
 });
 
 (async () => {
+  await window.authReady;
   await loadCountries();
   const item = parseItemFromUrl();
   if (!item) {
@@ -2304,7 +2341,15 @@ window.addEventListener("travelsettingschange", () => {
     return;
   }
   setupItemPage(item);
-  await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);
+  await Promise.all([
+    loadRestockAmountForItem(item.country, item.itemId).then(() => {
+      el.restockAmount.value = getRestockAmount(item.country, item.itemId) ?? "";
+      refreshRestockAdjustments();
+    }),
+    drawChart(),
+    loadCurrentStock(),
+    refreshTravelStatus(),
+  ]);
   setInterval(updateCurrentDepletionCountdown, 1000);
   startStockUpdateWatcher(async () => {
     await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);
