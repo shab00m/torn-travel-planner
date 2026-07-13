@@ -186,7 +186,7 @@ h1 { margin: 0; font-size: 1.35rem; }
 .countries {
   padding: 20px 24px 60px;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
   gap: 18px;
   align-items: start;
 }
@@ -196,6 +196,37 @@ h1 { margin: 0; font-size: 1.35rem; }
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
+}
+
+.country-card table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.country-card .col-favorite { width: 2.25rem; }
+.country-card .col-stock { width: 4.5rem; }
+.country-card .col-cost { width: 5.75rem; }
+.country-card .col-profit { width: 9.25rem; }
+
+.country-card td:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.country-card th:nth-child(3),
+.country-card td:nth-child(3),
+.country-card th:nth-child(4),
+.country-card td:nth-child(4),
+.country-card th:nth-child(5),
+.country-card td:nth-child(5) {
+  padding-left: 8px;
+  padding-right: 10px;
+}
+
+.country-card th:last-child,
+.country-card td.profit-hr {
+  font-variant-numeric: tabular-nums;
 }
 
 .country-header {
@@ -213,7 +244,42 @@ h1 { margin: 0; font-size: 1.35rem; }
 table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
 
 th, td { padding: 7px 16px; text-align: right; white-space: nowrap; }
-th:first-child, td:first-child { text-align: left; white-space: normal; }
+th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
+
+.favorite-cell {
+  width: 2.25rem;
+  padding-left: 12px;
+  padding-right: 4px;
+  text-align: center !important;
+}
+
+.favorite-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.favorite-btn:hover {
+  color: #f0c674;
+  background: rgba(240, 198, 116, 0.1);
+}
+
+.favorite-btn.is-favorite {
+  color: #f0c674;
+}
+
+.favorites-card {
+  grid-column: 1 / -1;
+}
+
+.favorites-card .country-header h2 {
+  color: #f0c674;
+}
 
 thead th {
   color: var(--text-dim);
@@ -260,6 +326,21 @@ body.page-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.item-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.item-title-row h1 {
+  margin: 0;
+}
+
+.item-title-row .favorite-btn {
+  font-size: 1.35rem;
+  padding: 4px 6px;
 }
 
 .back-link {

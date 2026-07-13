@@ -280,6 +280,7 @@ function setupItemHeader(item, activeView) {
   if (subtitleEl) subtitleEl.textContent = `${meta.flag} ${meta.name}`;
   document.title = `${item.name} — Torn Travel Planner`;
   renderItemViewNav(activeView);
+  initFavoriteToggle(document.getElementById("favorite-toggle"), item.country, item.itemId);
 }
 
 const RESTOCK_AMOUNTS_KEY = "restockAmounts";
@@ -312,6 +313,59 @@ function setSellPrice(country, itemId, price) {
   if (price == null) delete all[key];
   else all[key] = price;
   localStorage.setItem(SELL_PRICES_KEY, JSON.stringify(all));
+}
+
+const FAVORITES_KEY = "favoriteItems";
+
+function favoriteItemKey(country, itemId) {
+  return `${country}:${itemId}`;
+}
+
+function getFavorites() {
+  try {
+    return JSON.parse(localStorage.getItem(FAVORITES_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function isFavorite(country, itemId) {
+  return getFavorites()[favoriteItemKey(country, itemId)] === true;
+}
+
+function toggleFavorite(country, itemId) {
+  const all = getFavorites();
+  const key = favoriteItemKey(country, itemId);
+  if (all[key]) delete all[key];
+  else all[key] = true;
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify(all));
+  window.dispatchEvent(new CustomEvent("favoriteschange"));
+  return !!all[key];
+}
+
+function syncFavoriteButton(btn, country, itemId) {
+  if (!btn) return;
+  const fav = isFavorite(country, itemId);
+  btn.classList.toggle("is-favorite", fav);
+  btn.textContent = fav ? "★" : "☆";
+  btn.title = fav ? "Remove from favorites" : "Add to favorites";
+  btn.setAttribute("aria-pressed", String(fav));
+}
+
+function favoriteButtonHtml(country, itemId) {
+  const fav = isFavorite(country, itemId);
+  return `<button type="button" class="favorite-btn${fav ? " is-favorite" : ""}" data-country="${country}" data-item="${itemId}" title="${fav ? "Remove from favorites" : "Add to favorites"}" aria-pressed="${fav}">${fav ? "★" : "☆"}</button>`;
+}
+
+function initFavoriteToggle(btn, country, itemId) {
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = "1";
+  syncFavoriteButton(btn, country, itemId);
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleFavorite(country, itemId);
+    syncFavoriteButton(btn, country, itemId);
+  });
 }
 
 function getFlightSec(country) {

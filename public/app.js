@@ -36,6 +36,55 @@ function marketPriceTitle(country, item) {
   return parts.join(" · ");
 }
 
+const STOCK_TABLE_COLGROUP = `<colgroup>
+    <col class="col-favorite" />
+    <col class="col-item" />
+    <col class="col-stock" />
+    <col class="col-cost" />
+    <col class="col-profit" />
+  </colgroup>`;
+
+function itemRowHtml(country, item, { showCountry = false } = {}) {
+  const meta = state.countries[country];
+  const nameCell = showCountry
+    ? `${meta.flag} ${highlight(item.name, state.search.trim())}`
+    : highlight(item.name, state.search.trim());
+  return `
+        <tr data-country="${country}" data-item="${item.id}" data-name="${escapeHtml(item.name)}" title="View item history">
+          <td class="favorite-cell">${favoriteButtonHtml(country, item.id)}</td>
+          <td>${nameCell}</td>
+          <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
+          <td>${fmtMoney(item.cost)}</td>
+          ${profitHrCell(country, item)}
+        </tr>`;
+}
+
+function collectFavoriteItems() {
+  const favorites = [];
+  for (const key of Object.keys(getFavorites())) {
+    const [country, itemIdStr] = key.split(":");
+    const itemId = Number.parseInt(itemIdStr, 10);
+    if (!state.countries[country] || !Number.isInteger(itemId)) continue;
+    const data = state.stocks?.[country];
+    const item = data?.stocks.find((it) => it.id === itemId);
+    if (!item) continue;
+    favorites.push({ country, item, update: data.update });
+  }
+  favorites.sort((a, b) => {
+    const nameCmp = a.item.name.localeCompare(b.item.name);
+    if (nameCmp !== 0) return nameCmp;
+    return a.country.localeCompare(b.country);
+  });
+  return favorites;
+}
+
+function filterItems(items, query) {
+  let filtered = items;
+  if (query) filtered = filtered.filter((it) => it.name.toLowerCase().includes(query));
+  if (state.inStockOnly) filtered = filtered.filter((it) => it.quantity > 0);
+  return filtered;
+}
+
 function profitHrCell(country, item) {
   const profitPerHour = getItemProfitPerHour(country, item);
   if (profitPerHour != null) {
@@ -99,19 +148,48 @@ async function loadStocks() {
   }
 }
 
+function renderFavoritesSection(query, frag) {
+  const favorites = collectFavoriteItems();
+  if (!favorites.length) return;
+
+  const filtered = favorites.filter(({ item }) => filterItems([item], query).length > 0);
+  const card = document.createElement("section");
+  card.className = "country-card favorites-card";
+  card.innerHTML = `
+    <div class="country-header">
+      <h2>⭐ Favorites</h2>
+      <span class="country-updated">${filtered.length} item${filtered.length === 1 ? "" : "s"}</span>
+    </div>`;
+
+  if (!filtered.length) {
+    card.insertAdjacentHTML("beforeend", `<p class="empty-note">No favorites match the current filters.</p>`);
+  } else {
+    const rows = filtered.map(({ country, item }) => itemRowHtml(country, item, { showCountry: true })).join("");
+    card.insertAdjacentHTML(
+      "beforeend",
+      `<table>
+          ${STOCK_TABLE_COLGROUP}
+          <thead><tr><th></th><th>Item</th><th>Stock</th><th>Cost</th><th>Profit/hr</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`
+    );
+  }
+  frag.appendChild(card);
+}
+
 function render() {
   if (!state.stocks) return;
   const query = state.search.trim().toLowerCase();
   const frag = document.createDocumentFragment();
+
+  renderFavoritesSection(query, frag);
 
   for (const [code, meta] of Object.entries(state.countries)) {
     if (state.countryFilter && state.countryFilter !== code) continue;
     const data = state.stocks[code];
     if (!data) continue;
 
-    let items = data.stocks;
-    if (query) items = items.filter((it) => it.name.toLowerCase().includes(query));
-    if (state.inStockOnly) items = items.filter((it) => it.quantity > 0);
+    const items = filterItems(data.stocks, query);
     if (!items.length && (query || state.inStockOnly)) continue;
 
     const card = document.createElement("section");
@@ -125,21 +203,12 @@ function render() {
     if (!items.length) {
       card.insertAdjacentHTML("beforeend", `<p class="empty-note">No items.</p>`);
     } else {
-      const rows = items
-        .map(
-          (it) => `
-        <tr data-country="${code}" data-item="${it.id}" data-name="${escapeHtml(it.name)}" title="View item history">
-          <td>${highlight(it.name, state.search.trim())}</td>
-          <td class="${it.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(it.quantity)}</td>
-          <td>${fmtMoney(it.cost)}</td>
-          ${profitHrCell(code, it)}
-        </tr>`
-        )
-        .join("");
+      const rows = items.map((it) => itemRowHtml(code, it)).join("");
       card.insertAdjacentHTML(
         "beforeend",
         `<table>
-          <thead><tr><th>Item</th><th>Stock</th><th>Cost</th><th>Profit / hr</th></tr></thead>
+          ${STOCK_TABLE_COLGROUP}
+          <thead><tr><th></th><th>Item</th><th>Stock</th><th>Cost</th><th>Profit/hr</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>`
       );
@@ -179,10 +248,23 @@ window.addEventListener("timeformatchange", () => {
 window.addEventListener("travelsettingschange", () => render());
 
 el.countries.addEventListener("click", (e) => {
+  const favBtn = e.target.closest(".favorite-btn");
+  if (favBtn) {
+    e.stopPropagation();
+    const country = favBtn.dataset.country;
+    const itemId = Number.parseInt(favBtn.dataset.item, 10);
+    if (!country || !Number.isInteger(itemId)) return;
+    toggleFavorite(country, itemId);
+    syncFavoriteButton(favBtn, country, itemId);
+    render();
+    return;
+  }
   const row = e.target.closest("tr[data-item]");
   if (!row) return;
   window.location.href = itemUrl(row.dataset.country, row.dataset.item, row.dataset.name);
 });
+
+window.addEventListener("favoriteschange", () => render());
 
 (async () => {
   await loadCountries();
