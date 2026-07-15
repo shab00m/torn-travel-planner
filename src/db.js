@@ -72,7 +72,7 @@ const insertSnapshot = db.prepare(
 );
 
 const prevQuantityStmt = db.prepare(
-  `SELECT quantity FROM snapshots
+  `SELECT yata_ts, quantity FROM snapshots
    WHERE country = ? AND item_id = ? AND yata_ts < ?
    ORDER BY yata_ts DESC LIMIT 1`
 );
@@ -109,6 +109,18 @@ const restockRowStmt = db.prepare(
    WHERE country = ? AND item_id = ? AND depleted_ts = ?`
 );
 
+const lastRestockedAtOrBeforeStmt = db.prepare(
+  `SELECT restocked_ts FROM restocks
+   WHERE country = ? AND item_id = ? AND restocked_ts IS NOT NULL AND restocked_ts <= ?
+   ORDER BY restocked_ts DESC LIMIT 1`
+);
+
+const zeroBetweenStmt = db.prepare(
+  `SELECT 1 AS hit FROM snapshots
+   WHERE country = ? AND item_id = ? AND yata_ts > ? AND yata_ts < ? AND quantity = 0
+   LIMIT 1`
+);
+
 const insertRestockStmt = db.prepare(
   `INSERT OR IGNORE INTO restocks (country, item_id, depleted_ts) VALUES (?, ?, ?)`
 );
@@ -119,23 +131,90 @@ const closeRestockStmt = db.prepare(
    WHERE country = ? AND item_id = ? AND depleted_ts = ? AND restocked_ts IS NULL`
 );
 
+const quantityAtStmt = db.prepare(
+  `SELECT quantity FROM snapshots WHERE country = ? AND item_id = ? AND yata_ts = ?`
+);
+
+const lastPositiveBeforeStmt = db.prepare(
+  `SELECT yata_ts, quantity FROM snapshots
+   WHERE country = ? AND item_id = ? AND yata_ts < ? AND quantity > 0
+   ORDER BY yata_ts DESC LIMIT 1`
+);
+
+/**
+ * Items/min over [startTs, endTs] when stock fell from startQty to endQty.
+ * @returns {number|null}
+ */
+function rateFromEndpoints(startTs, endTs, startQty, endQty) {
+  const minutes = (endTs - startTs) / 60;
+  if (minutes <= 0 || startQty <= endQty) return null;
+  const rate = (startQty - endQty) / minutes;
+  return rate > 0 ? rate : null;
+}
+
+/**
+ * Depletion rate (items/min) ending at the last in-stock snapshot before a gap.
+ * Prefers the current restock→last-positive window; falls back to the previous
+ * positive in the same in-stock run.
+ */
+function depletionRateBefore(country, itemId, endTs, endQty) {
+  const restockedTs = lastRestockedAtOrBeforeStmt.get(country, itemId, endTs)?.restocked_ts;
+  if (restockedTs != null && restockedTs < endTs) {
+    const startQty = quantityAtStmt.get(country, itemId, restockedTs)?.quantity;
+    if (startQty != null) {
+      const rate = rateFromEndpoints(restockedTs, endTs, startQty, endQty);
+      if (rate != null) return rate;
+    }
+  }
+
+  const earlier = lastPositiveBeforeStmt.get(country, itemId, endTs);
+  if (
+    earlier &&
+    earlier.quantity > endQty &&
+    !zeroBetweenStmt.get(country, itemId, earlier.yata_ts, endTs)
+  ) {
+    return rateFromEndpoints(earlier.yata_ts, endTs, earlier.quantity, endQty);
+  }
+  return null;
+}
+
+/**
+ * When the first observed zero arrives after a gap, walk depleted_ts back from
+ * the last positive using the in-stock depletion rate. Clamped to (prevTs, observedZeroTs].
+ */
+function estimateDepletedTs(country, itemId, observedZeroTs, prevTs, prevQty) {
+  if (prevTs == null || prevQty == null || prevQty <= 0 || prevTs >= observedZeroTs) {
+    return observedZeroTs;
+  }
+  const rate = depletionRateBefore(country, itemId, prevTs, prevQty);
+  if (rate == null) return observedZeroTs;
+  const estimated = Math.round(prevTs + (prevQty / rate) * 60);
+  return Math.min(observedZeroTs, Math.max(prevTs + 1, estimated));
+}
+
 // >0 -> 0 opens an out-of-stock period, 0 -> >0 closes the most recent
 // open period started before this timestamp and fixes the duration.
 // Returns what happened so callers can report it.
-function applyTransition(country, itemId, ts, prevQuantity, quantity) {
+function applyTransition(country, itemId, ts, prevTs, prevQuantity, quantity) {
   if (prevQuantity > 0 && quantity === 0) {
-    const res = insertRestockStmt.run(country, itemId, ts);
+    const depletedTs = estimateDepletedTs(country, itemId, ts, prevTs, prevQuantity);
+    const res = insertRestockStmt.run(country, itemId, depletedTs);
     return res.changes > 0 ? "depleted" : null;
   }
   if (prevQuantity === 0 && quantity > 0) {
     let depletedTs = openRestockStmt.get(country, itemId, ts)?.depleted_ts;
     // No open period — infer the depletion for this out-of-stock run.
     if (depletedTs == null) {
-      depletedTs =
+      const observedZero =
         missedDepletionBeforeStmt.get(country, itemId, ts)?.yata_ts ??
         firstZeroBeforeStmt.get(country, itemId, ts)?.yata_ts ??
         null;
-      if (depletedTs != null) {
+      if (observedZero != null) {
+        const prev = prevQuantityStmt.get(country, itemId, observedZero);
+        depletedTs =
+          prev && prev.quantity > 0
+            ? estimateDepletedTs(country, itemId, observedZero, prev.yata_ts, prev.quantity)
+            : observedZero;
         const existing = restockRowStmt.get(country, itemId, depletedTs);
         if (existing?.restocked_ts != null) return null;
         insertRestockStmt.run(country, itemId, depletedTs);
@@ -151,7 +230,7 @@ function applyTransition(country, itemId, ts, prevQuantity, quantity) {
 
 function trackRestock(country, itemId, ts, quantity) {
   const prev = prevQuantityStmt.get(country, itemId, ts);
-  if (prev) applyTransition(country, itemId, ts, prev.quantity, quantity);
+  if (prev) applyTransition(country, itemId, ts, prev.yata_ts, prev.quantity, quantity);
 }
 
 const allSnapshotsStmt = db.prepare(
@@ -179,20 +258,43 @@ export function backfillRestocks() {
   let opened = 0;
   let closed = 0;
   let key = null;
+  let prevTs = null;
   let prevQuantity = null;
   for (const row of allSnapshotsStmt.all()) {
     const rowKey = `${row.country}:${row.item_id}`;
     if (rowKey === key) {
-      const result = applyTransition(row.country, row.item_id, row.yata_ts, prevQuantity, row.quantity);
+      const result = applyTransition(
+        row.country,
+        row.item_id,
+        row.yata_ts,
+        prevTs,
+        prevQuantity,
+        row.quantity
+      );
       if (result === "depleted") opened += 1;
       else if (result === "restocked") closed += 1;
     }
     key = rowKey;
+    prevTs = row.yata_ts;
     prevQuantity = row.quantity;
   }
 
+  // Ignored keys may shift when depleted_ts is extrapolated earlier across a gap.
+  const findCycleCoveringStmt = db.prepare(
+    `SELECT depleted_ts FROM restocks
+     WHERE country = ? AND item_id = ?
+       AND depleted_ts <= ?
+       AND (restocked_ts IS NULL OR restocked_ts > ?)
+     ORDER BY depleted_ts DESC LIMIT 1`
+  );
   for (const row of ignoredRows) {
-    restoreIgnoredStmt.run(row.country, row.item_id, row.depleted_ts);
+    const match = findCycleCoveringStmt.get(
+      row.country,
+      row.item_id,
+      row.depleted_ts,
+      row.depleted_ts
+    );
+    if (match) restoreIgnoredStmt.run(row.country, row.item_id, match.depleted_ts);
   }
 
   return { opened, closed };
@@ -263,10 +365,6 @@ export function setRestockIgnored(country, itemId, depletedTs, ignored) {
   const res = setRestockIgnoredStmt.run(ignored ? 1 : 0, country, itemId, depletedTs);
   if (res.changes === 0) throw new Error("Restock cycle not found");
 }
-
-const quantityAtStmt = db.prepare(
-  `SELECT quantity FROM snapshots WHERE country = ? AND item_id = ? AND yata_ts = ?`
-);
 
 const snapshotStmt = db.prepare(
   `SELECT yata_ts, quantity, cost FROM snapshots
@@ -354,12 +452,6 @@ export function deleteSnapshots(country, itemId, yataTsList) {
 const latestSnapshotStmt = db.prepare(
   `SELECT yata_ts, quantity FROM snapshots
    WHERE country = ? AND item_id = ?
-   ORDER BY yata_ts DESC LIMIT 1`
-);
-
-const lastPositiveBeforeStmt = db.prepare(
-  `SELECT yata_ts, quantity FROM snapshots
-   WHERE country = ? AND item_id = ? AND yata_ts < ? AND quantity > 0
    ORDER BY yata_ts DESC LIMIT 1`
 );
 
