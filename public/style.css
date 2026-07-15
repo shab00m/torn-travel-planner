@@ -715,6 +715,7 @@ body.page-item {
   overflow: visible;
 }
 .chart-time-markers { z-index: 3; }
+.chart-event-markers { z-index: 2; }
 .chart-safe-window-markers { z-index: 2; }
 .chart-restock-markers { z-index: 1; }
 .safe-window-overlay {
@@ -737,13 +738,21 @@ body.page-item {
   line-height: 1.3;
   z-index: 3;
 }
-.restock-marker {
+.restock-marker,
+.event-marker {
   position: absolute;
   width: 0;
   border-left: 3px dashed rgba(62, 207, 142, 0.95);
   transform: translateX(-1.5px);
 }
-.restock-marker-label {
+.event-marker {
+  border-left-style: dotted;
+}
+.event-marker.depleted {
+  border-left-color: rgba(242, 106, 106, 0.95);
+}
+.restock-marker-label,
+.event-marker-label {
   position: absolute;
   transform: translateX(-50%);
   padding: 2px 6px;
@@ -755,6 +764,9 @@ body.page-item {
   border-radius: 3px;
   text-align: center;
   line-height: 1.3;
+}
+.event-marker-label.depleted {
+  color: #f26a6a;
 }
 .chart-tooltip {
   position: absolute;

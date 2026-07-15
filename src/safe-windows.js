@@ -95,6 +95,13 @@ function createContext({
     };
   }
 
+  function rateFromWindowEndpoints(startTs, endTs, startQty, endQty) {
+    const minutes = (endTs - startTs) / 60;
+    if (minutes <= 0) return null;
+    const rate = (startQty - endQty) / minutes;
+    return rate > 0 ? rate : null;
+  }
+
   function adjustedRateWindow(w) {
     if (!restockAmount || w.start_qty >= restockAmount) return w;
     const restock = restocks.find((r) => r.restocked_ts === w.start_ts);
@@ -106,7 +113,8 @@ function createContext({
       restockAmount,
       restock?.depleted_ts
     );
-    return { ...w, start_ts: startTs, start_qty: restockAmount };
+    const rate = rateFromWindowEndpoints(startTs, w.end_ts, restockAmount, w.end_qty) ?? w.rate;
+    return { ...w, start_ts: startTs, start_qty: restockAmount, rate };
   }
 
   function getAdjustedCompletedRestocks() {
@@ -122,7 +130,8 @@ function createContext({
   }
 
   function getUsableRates() {
-    return getAdjustedRates().filter((w) => !isRateWindowIgnored(w.start_ts));
+    // Filter on raw start_ts before adjustment — adjusted timestamps no longer match restocks.
+    return rates.filter((w) => !isRateWindowIgnored(w.start_ts)).map(adjustedRateWindow);
   }
 
   function getHistoricalExtents() {
@@ -162,16 +171,14 @@ function createContext({
     const w = getOpenRateWindow();
     if (!w) return null;
     if (qty == null || refTs == null || qty <= 0) return null;
-    const elapsedMin = (refTs - w.start_ts) / 60;
-    if (elapsedMin > 0) {
-      const depleted = w.start_qty - qty;
-      if (depleted > 0) return depleted / elapsedMin;
-    }
-    return w.rate > 0 ? w.rate : null;
+    return rateFromWindowEndpoints(w.start_ts, refTs, w.start_qty, qty) ?? (w.rate > 0 ? w.rate : null);
   }
 
   function depletionRateForCycle(t, startTs, startQty, avgRate) {
     if (startQty > 0 && t === startTs) {
+      // Continue the current open cycle at its observed rate — not the historical average.
+      const w = getOpenRateWindow();
+      if (w?.rate > 0) return w.rate;
       return getCurrentRestockRate(startQty, startTs) ?? avgRate;
     }
     return avgRate;

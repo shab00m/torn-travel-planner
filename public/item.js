@@ -9,6 +9,7 @@ const el = {
   rangeButtons: document.getElementById("range-buttons"),
   chartCanvas: document.getElementById("history-chart"),
   timeMarkers: document.getElementById("time-markers"),
+  eventMarkers: document.getElementById("event-markers"),
   restockMarkers: document.getElementById("restock-markers"),
   safeWindowMarkers: document.getElementById("safe-window-markers"),
   avgButtons: document.getElementById("avg-buttons"),
@@ -173,17 +174,15 @@ function getCurrentRestockRate(
 
   if (qty == null || refTs == null || qty <= 0) return null;
 
-  const elapsedMin = (refTs - w.start_ts) / 60;
-  if (elapsedMin > 0) {
-    const depleted = w.start_qty - qty;
-    if (depleted > 0) return depleted / elapsedMin;
-  }
-
-  return w.rate > 0 ? w.rate : null;
+  // Same formula as the open-window chart rate: deplete from (possibly adjusted) restock.
+  return rateFromWindowEndpoints(w.start_ts, refTs, w.start_qty, qty) ?? (w.rate > 0 ? w.rate : null);
 }
 
 function depletionRateForCycle(t, startTs, startQty, avgRate) {
   if (startQty > 0 && t === startTs) {
+    // Continue the current open cycle at its observed rate — not the historical average.
+    const w = getOpenRateWindow();
+    if (w?.rate > 0) return w.rate;
     return getCurrentRestockRate(startQty, startTs) ?? avgRate;
   }
   return avgRate;
@@ -216,7 +215,8 @@ function updateCurrentDepletionCountdown() {
   }
   const remaining = depletionTs - Math.floor(Date.now() / 1000);
   if (remaining <= 0) {
-    el.currentDepletion.textContent = "Depleted";
+    // Estimate hit zero but latest snapshot is still in stock — don't claim depleted yet.
+    el.currentDepletion.textContent = "Depletion Imminent";
     el.currentDepletion.className = "current-depletion-value qty-zero";
     return;
   }
@@ -240,6 +240,8 @@ const CHART_PAN_DRAG_THRESHOLD_PX = 4;
 const CHART_SCALE_INPUT_DECIMALS = 2;
 const CHART_TIME_MARKER_LABEL_Y_ADJUST = -34;
 const CHART_PREDICTION_LABEL_Y_ADJUST = 8;
+const CHART_EVENT_LABEL_Y_ADJUST = 8;
+const CHART_EVENT_DEPLETED_LABEL_Y_ADJUST = 36;
 const tsMs = (ts) => ts * 1000;
 
 function getTimelineSpanSec(timeline) {
@@ -542,6 +544,13 @@ function adjustedRestockRecord(r) {
   };
 }
 
+function rateFromWindowEndpoints(startTs, endTs, startQty, endQty) {
+  const minutes = (endTs - startTs) / 60;
+  if (minutes <= 0) return null;
+  const rate = (startQty - endQty) / minutes;
+  return rate > 0 ? rate : null;
+}
+
 function adjustedRateWindow(w) {
   const amount = currentRestockAmount();
   if (!amount || w.start_qty >= amount) return w;
@@ -553,7 +562,8 @@ function adjustedRateWindow(w) {
     amount,
     restock?.depleted_ts
   );
-  return { ...w, start_ts: startTs, start_qty: amount };
+  const rate = rateFromWindowEndpoints(startTs, w.end_ts, amount, w.end_qty) ?? w.rate;
+  return { ...w, start_ts: startTs, start_qty: amount, rate };
 }
 
 function getAdjustedCompletedRestocks() {
@@ -570,7 +580,8 @@ function isRateWindowIgnored(startTs) {
 }
 
 function getUsableRates() {
-  return getAdjustedRates().filter((w) => !isRateWindowIgnored(w.start_ts));
+  // Filter on raw start_ts before adjustment — adjusted timestamps no longer match restocks.
+  return state.rates.filter((w) => !isRateWindowIgnored(w.start_ts)).map(adjustedRateWindow);
 }
 
 function getAdjustedRates() {
@@ -871,11 +882,13 @@ function buildAnnotations(restocks, rates, timeline) {
 
   getUsableRates().forEach((w, i) => {
     if (tsMs(w.end_ts) < xMin || w.start_ts > dataTs) return;
-    if (state.predictionHours > 0 && state.rates.find((r) => r.start_ts === w.start_ts)?.open) return;
+    // Keep the open restock→now rate visible while predicting so it shares a rate
+    // with the now→deplete segment (prediction starts at dataTs; ranges meet, don't overlap).
     const slope = (w.end_qty - w.start_qty) / (w.end_ts - w.start_ts);
     const startTs = Math.max(w.start_ts, xMin / 1000);
     const endTs = Math.min(w.end_ts, dataTs, xMax / 1000);
     if (startTs >= endTs) return;
+    const rate = rateFromWindowEndpoints(w.start_ts, w.end_ts, w.start_qty, w.end_qty) ?? w.rate;
     annotations[`rate${i}`] = {
       type: "line",
       xMin: tsMs(startTs),
@@ -887,7 +900,7 @@ function buildAnnotations(restocks, rates, timeline) {
       borderDash: [6, 4],
       label: {
         display: true,
-        content: `${fmtRate(w.rate)}/min`,
+        content: `${fmtRate(rate)}/min`,
         position: "center",
         backgroundColor: "rgba(23, 28, 38, 0.85)",
         color: "#3ecf8e",
@@ -1524,10 +1537,40 @@ function destroyChart() {
   }
   const existing = Chart.getChart(el.chartCanvas);
   if (existing) existing.destroy();
+  if (el.eventMarkers) el.eventMarkers.replaceChildren();
   if (el.restockMarkers) el.restockMarkers.replaceChildren();
   if (el.safeWindowMarkers) el.safeWindowMarkers.replaceChildren();
   if (el.timeMarkers) el.timeMarkers.replaceChildren();
   el.chartCanvas?.parentNode?.querySelector(".chart-tooltip")?.remove();
+}
+
+function appendVerticalChartMarker(container, chart, { ts, lineClass, labelClass, labelHtml, labelYAdjust }) {
+  const { chartArea, scales } = chart;
+  const xScale = scales.x;
+  if (!xScale || !chartArea) return;
+
+  const xMin = chart.options.scales.x.min;
+  const xMax = chart.options.scales.x.max;
+  const xMs = tsMs(ts);
+  if (xMs < xMin || xMs > xMax) return;
+
+  const x = xScale.getPixelForValue(xMs);
+  if (x < chartArea.left || x > chartArea.right) return;
+
+  const line = document.createElement("div");
+  line.className = lineClass;
+  line.style.left = `${x}px`;
+  line.style.top = `${chart.canvas.offsetTop + chartArea.top}px`;
+  line.style.height = `${chartArea.bottom - chartArea.top}px`;
+
+  const label = document.createElement("span");
+  label.className = labelClass;
+  label.innerHTML = labelHtml;
+  label.style.left = `${x}px`;
+  label.style.top = `${chartMarkerTop(chart, chartArea, labelYAdjust)}px`;
+
+  container.appendChild(line);
+  container.appendChild(label);
 }
 
 function updateTimeMarkers(chart) {
@@ -1566,46 +1609,63 @@ function updateTimeMarkers(chart) {
   });
 }
 
+function updateEventMarkers(chart) {
+  if (!el.eventMarkers) return;
+  el.eventMarkers.replaceChildren();
+  if (!chart?.chartArea || !state.restocks?.length) return;
+
+  state.restocks
+    .filter((r) => !r.ignored)
+    .forEach((r) => {
+      const adjusted = adjustedRestockRecord(r);
+      appendVerticalChartMarker(el.eventMarkers, chart, {
+        ts: r.depleted_ts,
+        lineClass: "event-marker depleted",
+        labelClass: "event-marker-label depleted",
+        labelHtml: `Depleted<br>${fmtTimeShort(r.depleted_ts)}`,
+        labelYAdjust: CHART_EVENT_DEPLETED_LABEL_Y_ADJUST,
+      });
+      if (adjusted.adjusted_restocked_ts == null) return;
+      appendVerticalChartMarker(el.eventMarkers, chart, {
+        ts: adjusted.adjusted_restocked_ts,
+        lineClass: "event-marker",
+        labelClass: "event-marker-label",
+        labelHtml: `Restocked<br>${fmtTimeShort(adjusted.adjusted_restocked_ts)}`,
+        labelYAdjust: CHART_EVENT_LABEL_Y_ADJUST,
+      });
+    });
+}
+
 function updateRestockMarkers(chart) {
   if (!el.restockMarkers) return;
   el.restockMarkers.replaceChildren();
   if (!chart?.chartArea || state.predictionHours <= 0 || !state.predictedEvents?.length) return;
 
-  const { chartArea, scales } = chart;
-  const xScale = scales.x;
-  if (!xScale) return;
-
   const dataTs = state.lastTimeline?.dataTs ?? Math.floor(Date.now() / 1000);
-  const xMin = chart.options.scales.x.min;
-  const xMax = chart.options.scales.x.max;
 
-  const restocks = state.predictedEvents.filter(
-    (e) => e.type === "restock" && e.ts >= dataTs
-  );
+  state.predictedEvents
+    .filter((e) => e.type === "deplete" && e.ts >= dataTs)
+    .forEach((ev) => {
+      appendVerticalChartMarker(el.restockMarkers, chart, {
+        ts: ev.ts,
+        lineClass: "event-marker depleted",
+        labelClass: "event-marker-label depleted",
+        labelHtml: `Depleted<br>${fmtTimeShort(ev.ts)}`,
+        labelYAdjust: CHART_EVENT_DEPLETED_LABEL_Y_ADJUST,
+      });
+    });
 
-  restocks.forEach((ev, i) => {
-    const xMs = tsMs(ev.ts);
-    if (xMs < xMin || xMs > xMax) return;
-
-    const x = xScale.getPixelForValue(xMs);
-    if (x < chartArea.left || x > chartArea.right) return;
-
-    const line = document.createElement("div");
-    line.className = "restock-marker";
-    const canvasTop = chart.canvas.offsetTop;
-    line.style.left = `${x}px`;
-    line.style.top = `${canvasTop + chartArea.top}px`;
-    line.style.height = `${chartArea.bottom - chartArea.top}px`;
-
-    const label = document.createElement("span");
-    label.className = "restock-marker-label";
-    label.innerHTML = `#${i + 1}<br>${fmtTimeShort(ev.ts)}`;
-    label.style.left = `${x}px`;
-    label.style.top = `${chartMarkerTop(chart, chartArea, CHART_PREDICTION_LABEL_Y_ADJUST)}px`;
-
-    el.restockMarkers.appendChild(line);
-    el.restockMarkers.appendChild(label);
-  });
+  state.predictedEvents
+    .filter((e) => e.type === "restock" && e.ts >= dataTs)
+    .forEach((ev, i) => {
+      appendVerticalChartMarker(el.restockMarkers, chart, {
+        ts: ev.ts,
+        lineClass: "restock-marker",
+        labelClass: "restock-marker-label",
+        labelHtml: `#${i + 1}<br>${fmtTimeShort(ev.ts)}`,
+        labelYAdjust: CHART_PREDICTION_LABEL_Y_ADJUST,
+      });
+    });
 }
 
 function updateSafeWindowMarkers(chart) {
@@ -1648,6 +1708,7 @@ function updateSafeWindowMarkers(chart) {
 
 function updateChartMarkers(chart) {
   updateTimeMarkers(chart);
+  updateEventMarkers(chart);
   updateSafeWindowMarkers(chart);
   updateRestockMarkers(chart);
 }
