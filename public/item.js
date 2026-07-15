@@ -627,7 +627,7 @@ function getSafeWindowAnchorRestocks(startTs, endTs, startQty) {
     restockSec: maxEmptyFor,
     rate,
     restockQty,
-  });
+  }, Math.floor(Date.now() / 1000));
   return events.filter((e) => e.type === "restock" && e.ts >= startTs);
 }
 
@@ -645,6 +645,20 @@ function stockoutSecFromHistory() {
   const sample = restocks.slice(0, state.avgSamples);
   if (!sample.length) return null;
   return sample.reduce((sum, r) => sum + r.adjusted_duration, 0) / sample.length;
+}
+
+/** When the selected empty-for already elapsed, step up to the next historical duration after now. */
+function openCycleRestockSec(depletedTs, selectedRestockSec, nowTs) {
+  if (depletedTs == null || nowTs == null) return selectedRestockSec;
+  if (depletedTs + selectedRestockSec > nowTs) return selectedRestockSec;
+
+  const durations = getUsableCompletedRestocks()
+    .map((r) => r.adjusted_duration)
+    .filter((d) => d != null && d > 0);
+  const next = [...new Set(durations)]
+    .sort((a, b) => a - b)
+    .find((d) => depletedTs + d > nowTs);
+  return next ?? selectedRestockSec;
 }
 
 function rateFromHistory() {
@@ -674,7 +688,7 @@ function getAverages() {
   };
 }
 
-function simulatePredictions(startTs, endTs, startQty, averages) {
+function simulatePredictions(startTs, endTs, startQty, averages, nowTs = startTs) {
   const { restockSec, rate: avgRate, restockQty } = averages;
   const events = [];
   const segments = [];
@@ -685,11 +699,17 @@ function simulatePredictions(startTs, endTs, startQty, averages) {
   let qty = startQty;
   let outOfStock = startQty === 0;
   let depletedTs = open?.depleted_ts ?? null;
+  let firstOpenCycle = outOfStock;
 
   while (t < endTs) {
     if (outOfStock) {
+      const sec =
+        firstOpenCycle && depletedTs != null
+          ? openCycleRestockSec(depletedTs, restockSec, nowTs)
+          : restockSec;
+      firstOpenCycle = false;
       const restockTs = Math.round(
-        depletedTs ? Math.max(t, depletedTs + restockSec) : t + restockSec
+        depletedTs ? Math.max(t, depletedTs + sec) : t + sec
       );
       if (restockTs > endTs) break;
       events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: depletedTs });
@@ -822,7 +842,13 @@ function buildTimeline(historicalPoints, predictionHours) {
     const averages = getAverages();
     if (averages) {
       endTs = dataTs + predictionHours * 3600;
-      ({ events, segments } = simulatePredictions(dataTs, endTs, lastHist.quantity, averages));
+      ({ events, segments } = simulatePredictions(
+        dataTs,
+        endTs,
+        lastHist.quantity,
+        averages,
+        wallTs
+      ));
       predictedData = buildPredictedMinuteSeries(
         dataTs,
         endTs,
@@ -854,12 +880,24 @@ function buildTimeline(historicalPoints, predictionHours) {
 
 function buildAnnotations(restocks, rates, timeline) {
   const annotations = {};
-  const { dataTs, wallTs, segments = [], events = [], xMin, xMax } = timeline;
+  const { dataTs, segments = [], events = [], xMin, xMax } = timeline;
+  const wallTs = Math.floor(Date.now() / 1000);
   if (!xMax) return annotations;
 
   restocks.filter((r) => !r.ignored).forEach((r, i) => {
     const adjusted = adjustedRestockRecord(r);
-    const boxEnd = adjusted.adjusted_restocked_ts ?? dataTs;
+    let boxEnd = adjusted.adjusted_restocked_ts;
+    let durationSec = adjusted.adjusted_duration;
+
+    if (boxEnd == null) {
+      // Open cycle: stretch to the predicted #1 restock and show that empty-for duration.
+      const nextPred =
+        events.find((e) => e.type === "restock" && e.depleted_ts === r.depleted_ts) ??
+        events.find((e) => e.type === "restock" && e.ts >= dataTs);
+      boxEnd = nextPred?.ts ?? Math.max(dataTs, wallTs);
+      durationSec = boxEnd - r.depleted_ts;
+    }
+
     if (tsMs(boxEnd) < xMin || tsMs(r.depleted_ts) > xMax) return;
     annotations[`restock${i}`] = {
       type: "box",
@@ -870,10 +908,7 @@ function buildAnnotations(restocks, rates, timeline) {
       borderWidth: 1,
       label: {
         display: true,
-        content:
-          adjusted.adjusted_duration != null
-            ? fmtDuration(adjusted.adjusted_duration)
-            : "out of stock",
+        content: durationSec != null && durationSec > 0 ? fmtDuration(durationSec) : "out of stock",
         position: { x: "center", y: "start" },
         color: "#f26a6a",
         font: { size: 11, weight: "600" },
@@ -2234,6 +2269,31 @@ function redrawPrediction() {
   refreshChart(timeline);
 }
 
+/** Advance NOW/ARRIVE and refresh predictions as wall time moves (no page reload). */
+function tickLiveChart() {
+  updateCurrentDepletionCountdown();
+  if (!state.chart || !state.lastTimeline || !state.chartPoints?.length) return;
+  if (chartPan.active || snapshotInspector.drag) return;
+
+  const wallTs = Math.floor(Date.now() / 1000);
+  if (wallTs === state.lastTimeline.wallTs) return;
+
+  const followingLive =
+    state.chartOffsetSec >= getMaxChartOffsetSec(state.lastTimeline) - 0.5;
+
+  if (state.predictionHours > 0) {
+    const next = buildTimeline(state.chartPoints, state.predictionHours);
+    if (followingLive) state.chartOffsetSec = getMaxChartOffsetSec(next);
+    refreshChart(next);
+    return;
+  }
+
+  state.lastTimeline.wallTs = wallTs;
+  if (tsMs(wallTs) > state.lastTimeline.xMax) state.lastTimeline.xMax = tsMs(wallTs);
+  if (followingLive) state.chartOffsetSec = getMaxChartOffsetSec(state.lastTimeline);
+  applyChartView(state.lastTimeline);
+}
+
 function parseItemFromUrl() {
   const parsed = parseItemFromPath();
   if (!parsed || parsed.view !== "stock") return null;
@@ -2444,7 +2504,7 @@ window.addEventListener("travelsettingschange", () => {
     loadCurrentStock(),
     refreshTravelStatus(),
   ]);
-  setInterval(updateCurrentDepletionCountdown, 1000);
+  setInterval(tickLiveChart, 1000);
   startStockUpdateWatcher(async () => {
     await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);
   });

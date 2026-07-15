@@ -60,6 +60,7 @@ function createContext({
   safeWindowUseRateSelection,
   currentQty,
   currentPollTs,
+  wallTs,
 }) {
   const lastZeroLookup = buildLastZeroLookup(chartPoints);
 
@@ -200,6 +201,20 @@ function createContext({
     return sample.reduce((sum, r) => sum + r.adjusted_duration, 0) / sample.length;
   }
 
+  /** When the selected empty-for already elapsed, step up to the next historical duration after now. */
+  function openCycleRestockSec(depletedTs, selectedRestockSec, nowTs) {
+    if (depletedTs == null || nowTs == null) return selectedRestockSec;
+    if (depletedTs + selectedRestockSec > nowTs) return selectedRestockSec;
+
+    const durations = getUsableCompletedRestocks()
+      .map((r) => r.adjusted_duration)
+      .filter((d) => d != null && d > 0);
+    const next = [...new Set(durations)]
+      .sort((a, b) => a - b)
+      .find((d) => depletedTs + d > nowTs);
+    return next ?? selectedRestockSec;
+  }
+
   function getAverages() {
     const restockSec = stockoutSecFromHistory();
     const rate = rateFromHistory();
@@ -215,7 +230,7 @@ function createContext({
     };
   }
 
-  function simulatePredictions(startTs, endTs, startQty, averages) {
+  function simulatePredictions(startTs, endTs, startQty, averages, nowTs = wallTs ?? startTs) {
     const { restockSec, rate: avgRate, restockQty } = averages;
     const events = [];
     const segments = [];
@@ -225,11 +240,17 @@ function createContext({
     let qty = startQty;
     let outOfStock = startQty === 0;
     let depletedTs = open?.depleted_ts ?? null;
+    let firstOpenCycle = outOfStock;
 
     while (t < endTs) {
       if (outOfStock) {
+        const sec =
+          firstOpenCycle && depletedTs != null
+            ? openCycleRestockSec(depletedTs, restockSec, nowTs)
+            : restockSec;
+        firstOpenCycle = false;
         const restockTs = Math.round(
-          depletedTs ? Math.max(t, depletedTs + restockSec) : t + restockSec
+          depletedTs ? Math.max(t, depletedTs + sec) : t + sec
         );
         if (restockTs > endTs) break;
         events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: depletedTs });
@@ -420,6 +441,7 @@ export function computeNextSafeWindow(country, itemId, userOpts = {}) {
     safeWindowUseRateSelection: opts.safeWindowUseRateSelection,
     currentQty: startQty,
     currentPollTs: dataTs,
+    wallTs: opts.wallTs,
   });
 
   const { minEmptyFor, maxEmptyFor } = ctx.getHistoricalExtents();
