@@ -622,6 +622,8 @@ body.page-item {
   flex-shrink: 0;
 }
 
+.control-group.hidden { display: none; }
+
 .control-group {
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1204,3 +1206,163 @@ body.page-item {
   margin-top: 8px;
   font-size: 0.84rem;
 }
+
+.users-link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.users-link:hover { text-decoration: underline; }
+
+.users-main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.users-gate {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+}
+.users-gate.hidden,
+.users-panel.hidden { display: none; }
+
+.users-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.user-create-form {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px 18px;
+}
+
+.user-create-form h2 {
+  margin: 0 0 12px;
+  font-size: 1rem;
+}
+
+.user-create-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.user-create-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.user-create-fields label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 8px;
+  color: var(--text);
+}
+
+.user-create-fields input[type="text"],
+.user-create-fields input[type="number"] {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 0.85rem;
+  min-width: 140px;
+}
+
+.user-create-fields button {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.users-table-wrap {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.users-table th,
+.users-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.users-table th {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.users-table tr:last-child td { border-bottom: none; }
+
+.users-table .user-name-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  width: 100%;
+  min-width: 120px;
+}
+
+.user-row-actions {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.user-save-btn,
+.user-delete-btn {
+  border-radius: 6px;
+  padding: 5px 10px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.user-save-btn {
+  background: var(--accent);
+  border: none;
+  color: #fff;
+}
+
+.user-delete-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.user-delete-btn:hover:not(:disabled) { color: var(--red); }
+.user-delete-btn:disabled,
+.user-save-btn:disabled { opacity: 0.45; cursor: not-allowed; }

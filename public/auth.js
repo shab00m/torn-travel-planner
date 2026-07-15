@@ -21,8 +21,15 @@ const TRAVEL_TYPE_ICONS = {
   Business: "💼",
 };
 
+/** @type {{ playerId: number, name: string, isAdmin: boolean } | null} */
+let currentUser = null;
+
 function getStoredApiKey() {
   return localStorage.getItem(KEY_STORAGE);
+}
+
+function getCurrentUser() {
+  return currentUser;
 }
 
 function setGuestTravelVisible(visible) {
@@ -65,10 +72,14 @@ function showLoggedIn(player) {
   const capacityTitle =
     `Base ${player.baseCapacity} (${player.travelType})` +
     (player.capacityPerks.length ? `\n${player.capacityPerks.join("\n")}` : "");
+  const usersLink = player.isAdmin
+    ? `<a href="/users" class="users-link">Users</a>`
+    : "";
   authEl.playerInfo.innerHTML = `
     <span class="player-name">${player.name} <span class="player-id">[${player.playerId}]</span></span>
     <span class="player-stat" title="Travel type">${icon} ${player.travelType}</span>
     <span class="player-stat" title="${capacityTitle}">🧳 ${player.capacity} slots</span>
+    ${usersLink}
     <button id="logout-btn" class="logout-btn" title="Log out">Log out</button>
   `;
   authEl.playerInfo.classList.remove("hidden");
@@ -78,6 +89,7 @@ function showLoggedIn(player) {
 }
 
 function showLoggedOut() {
+  currentUser = null;
   authEl.playerInfo.classList.add("hidden");
   authEl.playerInfo.innerHTML = "";
   authEl.form.classList.remove("hidden");
@@ -87,6 +99,7 @@ function showLoggedOut() {
 
 function logout() {
   localStorage.removeItem(KEY_STORAGE);
+  currentUser = null;
   applyTravelSettings(loadPrefs());
   showLoggedOut();
   window.dispatchEvent(new CustomEvent("travelsettingschange"));
@@ -113,7 +126,7 @@ async function autoLogin() {
       await login(saved);
       return;
     } catch (err) {
-      if (isInvalidKeyError(err)) {
+      if (isInvalidKeyError(err) || err?.statusCode === 403) {
         logout();
         return;
       }
@@ -129,8 +142,18 @@ async function login(apiKey) {
     body: JSON.stringify({ apiKey }),
   });
   const body = await res.json();
-  if (!res.ok) throw new Error(body.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(body.error || `HTTP ${res.status}`);
+    err.statusCode = res.status;
+    if (res.status === 403) localStorage.removeItem(KEY_STORAGE);
+    throw err;
+  }
   localStorage.setItem(KEY_STORAGE, apiKey);
+  currentUser = {
+    playerId: body.playerId,
+    name: body.name,
+    isAdmin: Boolean(body.isAdmin),
+  };
   state.travelType = body.travelType ?? "Standard";
   state.travelCapacity = body.capacity ?? BASE_TRAVEL_CAPACITY[state.travelType];
   showLoggedIn(body);
@@ -160,4 +183,6 @@ authEl.form.addEventListener("submit", async (e) => {
 initGuestTravelControls();
 syncGuestTravelControls();
 
+window.getStoredApiKey = getStoredApiKey;
+window.getCurrentUser = getCurrentUser;
 window.authReady = autoLogin();

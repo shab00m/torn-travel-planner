@@ -199,10 +199,10 @@ async function parseFetchResponse(res) {
   return body;
 }
 
-async function fetchJsonWithBody(url, { method, body }) {
+async function fetchJsonWithBody(url, { method, body, headers } = {}) {
   const res = await fetch(url, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...headers },
     body: JSON.stringify(body),
   });
   return parseFetchResponse(res);

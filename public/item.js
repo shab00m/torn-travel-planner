@@ -41,6 +41,7 @@ const el = {
   profitTotal: document.getElementById("profit-total"),
   profitPerHour: document.getElementById("profit-per-hour"),
   profitNote: document.getElementById("profit-note"),
+  inspectControls: document.getElementById("inspect-controls"),
   inspectToggle: document.getElementById("inspect-toggle"),
   chartInspectLayer: document.getElementById("chart-inspect-layer"),
   chartSelectionBox: document.getElementById("chart-selection-box"),
@@ -1923,9 +1924,33 @@ function renderSnapshotInspector() {
     .join("");
 }
 
+function adminApiHeaders() {
+  const apiKey = window.getStoredApiKey?.();
+  if (!apiKey) throw new Error("Admin login required");
+  return {
+    "Content-Type": "application/json",
+    "X-Api-Key": apiKey,
+  };
+}
+
+function isAdminUser() {
+  return Boolean(window.getCurrentUser?.()?.isAdmin);
+}
+
+/** Show Data Inspector only for admins; turn it off on logout/demotion. */
+function syncInspectAdminAccess() {
+  const allowed = isAdminUser();
+  el.inspectControls?.classList.toggle("hidden", !allowed);
+  if (!allowed && snapshotInspector.enabled) setInspectMode(false);
+}
+
 async function saveSnapshotRow(originalTs) {
   const item = state.item;
   if (!item) return;
+  if (!isAdminUser()) {
+    alert("Admin access required.");
+    return;
+  }
   const tr = el.snapshotInspectorBody.querySelector(`tr[data-yata-ts="${originalTs}"]`);
   if (!tr) return;
 
@@ -1951,7 +1976,7 @@ async function saveSnapshotRow(originalTs) {
   try {
     const body = await fetchJsonWithBody(
       `/api/snapshots/${item.country}/${item.itemId}/${originalTs}`,
-      { method: "PATCH", body: { yata_ts, quantity, cost } }
+      { method: "PATCH", body: { yata_ts, quantity, cost }, headers: adminApiHeaders() }
     );
     snapshotInspector.selected.delete(originalTs);
     snapshotInspector.selected.add(body.snapshot.yata_ts);
@@ -1967,6 +1992,10 @@ async function saveSnapshotRow(originalTs) {
 async function deleteSnapshotRows(yataTsList) {
   const item = state.item;
   if (!item || !yataTsList.length) return;
+  if (!isAdminUser()) {
+    alert("Admin access required.");
+    return;
+  }
   if (
     !confirm(
       `Delete ${yataTsList.length} snapshot${yataTsList.length === 1 ? "" : "s"}? Restock history will be rebuilt.`
@@ -1981,12 +2010,14 @@ async function deleteSnapshotRows(yataTsList) {
       const ts = yataTsList[0];
       const res = await fetch(`/api/snapshots/${item.country}/${item.itemId}/${ts}`, {
         method: "DELETE",
+        headers: adminApiHeaders(),
       });
       await parseFetchResponse(res);
     } else {
       await fetchJsonWithBody(`/api/snapshots/${item.country}/${item.itemId}/delete`, {
         method: "POST",
         body: { yata_ts: yataTsList },
+        headers: adminApiHeaders(),
       });
     }
     for (const ts of yataTsList) snapshotInspector.selected.delete(ts);
@@ -2388,12 +2419,14 @@ window.addEventListener("timeformatchange", () => {
 });
 
 window.addEventListener("travelsettingschange", () => {
+  syncInspectAdminAccess();
   if (!profitSell.item) return;
   updateProfitCalcs();
 });
 
 (async () => {
   await window.authReady;
+  syncInspectAdminAccess();
   await loadCountries();
   const item = parseItemFromUrl();
   if (!item) {

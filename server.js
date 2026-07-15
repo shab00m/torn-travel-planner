@@ -5,9 +5,11 @@ import { COUNTRIES } from "./src/countries.js";
 import { getFlightMatrix } from "./src/flight-times.js";
 import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks, setRestockIgnored, getRestockAmount, getAllRestockAmounts, setRestockAmount, deleteRestockAmount } from "./src/db.js";
 import { startPolling, getLatest } from "./src/yata.js";
-import { getPlayerInfo, getTravelStatus } from "./src/torn.js";
+import { getTravelStatus } from "./src/torn.js";
 import { getMarketPrice, getCachedMarketPrices, enqueueStaleMarketRefresh, startMarketRefresh, CACHE_TTL_SEC } from "./src/market.js";
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
+import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
+import { listUsers, createUser, updateUser, deleteUser } from "./src/users.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -16,7 +18,7 @@ const PORT = process.env.PORT || 3000;
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 
-// Validate a Torn API key and return player name + travel info.
+// Validate a Torn API key, enforce whitelist, return player + role flags.
 // The key is only relayed to the Torn API, never stored server-side.
 app.post("/api/login", async (req, res) => {
   const apiKey = req.body?.apiKey;
@@ -25,9 +27,79 @@ app.post("/api/login", async (req, res) => {
     return;
   }
   try {
-    res.json(await getPlayerInfo(apiKey.trim()));
+    const { player, user } = await resolveAllowedUser(apiKey.trim());
+    res.json({
+      ...player,
+      isAdmin: user.isAdmin,
+      isAllowed: user.isAllowed,
+    });
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    const status = err.statusCode === 403 ? 403 : 502;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+app.get("/api/users", requireAdmin, (_req, res) => {
+  res.json({ users: listUsers() });
+});
+
+app.post("/api/users", requireAdmin, (req, res) => {
+  try {
+    const playerId = Number.parseInt(req.body?.playerId, 10);
+    const user = createUser({
+      playerId,
+      name: req.body?.name,
+      isAdmin: Boolean(req.body?.isAdmin),
+      isAllowed: req.body?.isAllowed !== undefined ? Boolean(req.body.isAllowed) : true,
+    });
+    res.status(201).json(user);
+  } catch (err) {
+    const status = err.message === "User already exists" ? 409 : 400;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+app.patch("/api/users/:playerId", requireAdmin, (req, res) => {
+  const playerId = Number.parseInt(req.params.playerId, 10);
+  if (!Number.isInteger(playerId) || playerId <= 0) {
+    res.status(400).json({ error: "playerId must be a positive integer" });
+    return;
+  }
+  const body = req.body ?? {};
+  const fields = {};
+  if (body.name !== undefined) fields.name = body.name;
+  if (body.isAdmin !== undefined) fields.isAdmin = Boolean(body.isAdmin);
+  if (body.isAllowed !== undefined) fields.isAllowed = Boolean(body.isAllowed);
+  try {
+    if (req.auth.user.playerId === playerId) {
+      if (fields.isAdmin === false || fields.isAllowed === false) {
+        res.status(400).json({ error: "Cannot demote or disallow your own account" });
+        return;
+      }
+    }
+    res.json(updateUser(playerId, fields));
+  } catch (err) {
+    const status = err.message === "User not found" ? 404 : 400;
+    res.status(status).json({ error: err.message });
+  }
+});
+
+app.delete("/api/users/:playerId", requireAdmin, (req, res) => {
+  const playerId = Number.parseInt(req.params.playerId, 10);
+  if (!Number.isInteger(playerId) || playerId <= 0) {
+    res.status(400).json({ error: "playerId must be a positive integer" });
+    return;
+  }
+  if (req.auth.user.playerId === playerId) {
+    res.status(400).json({ error: "Cannot delete your own account" });
+    return;
+  }
+  try {
+    deleteUser(playerId);
+    res.json({ ok: true });
+  } catch (err) {
+    const status = err.message === "User not found" ? 404 : 400;
+    res.status(status).json({ error: err.message });
   }
 });
 
@@ -316,7 +388,7 @@ function rerunRestocks(country, itemId) {
   };
 }
 
-app.post("/api/snapshots/:country/:itemId/delete", (req, res) => {
+app.post("/api/snapshots/:country/:itemId/delete", requireAdmin, (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const list = req.body?.yata_ts;
@@ -350,7 +422,7 @@ app.get("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
   res.json({ country: params.country, itemId: params.id, ...row });
 });
 
-app.patch("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
+app.patch("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const yataTs = parseYataTs(req, res);
@@ -377,7 +449,7 @@ app.patch("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
   }
 });
 
-app.delete("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
+app.delete("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const yataTs = parseYataTs(req, res);
@@ -389,6 +461,10 @@ app.delete("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
   } catch (err) {
     res.status(err.message === "Snapshot not found" ? 404 : 400).json({ error: err.message });
   }
+});
+
+app.get("/users", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "users.html"));
 });
 
 app.get("/item/:country/:itemId(\\d+)", (_req, res) => {

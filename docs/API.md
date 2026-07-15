@@ -257,6 +257,8 @@ The item detail page and favorites list pass options from browser state. A bare 
 
 ## Snapshots (manual edit)
 
+Mutating snapshot routes require a whitelisted admin (`X-Api-Key` or `apiKey` in the body). The Data Inspector UI is only shown to admins.
+
 ### `GET /api/snapshots/:country/:itemId/:yataTs`
 
 **Response:** `{ country, itemId, yata_ts, quantity, cost }`
@@ -265,7 +267,7 @@ The item detail page and favorites list pass options from browser state. A bare 
 
 ### `PATCH /api/snapshots/:country/:itemId/:yataTs`
 
-Update snapshot fields. Changing `yata_ts` replaces the primary-key row.
+Admin only. Update snapshot fields. Changing `yata_ts` replaces the primary-key row.
 
 **Body:** any of `{ yata_ts, quantity, cost }`
 
@@ -275,13 +277,15 @@ Update snapshot fields. Changing `yata_ts` replaces the primary-key row.
 
 ### `DELETE /api/snapshots/:country/:itemId/:yataTs`
 
+Admin only.
+
 **Response:** `{ ok, restocks, rates }`
 
 ---
 
 ### `POST /api/snapshots/:country/:itemId/delete`
 
-Bulk delete.
+Admin only. Bulk delete.
 
 **Body:** `{ "yata_ts": [1783961506, 1783960900] }`
 
@@ -295,11 +299,39 @@ These relay requests to the Torn API. The server does not store API keys.
 
 ### `POST /api/login`
 
-Validate a Torn API key and return player travel info.
+Validate a Torn API key against the Torn API, then check the local whitelist.
 
 **Body:** `{ "apiKey": "..." }`
 
-**Response:** `{ name, playerId, level, travelType, capacity, baseCapacity, bonusCapacity, capacityPerks }`
+**Response:** `{ name, playerId, level, travelType, capacity, baseCapacity, bonusCapacity, capacityPerks, isAdmin, isAllowed }`
+
+Returns **403** if the Torn account is not in the `users` table with `is_allowed`.
+
+---
+
+### Users (admin only)
+
+All `/api/users` routes require a whitelisted admin. Pass the Torn API key as `X-Api-Key` (or `apiKey` in the JSON body for mutating requests).
+
+### `GET /api/users`
+
+**Response:** `{ users: [{ playerId, name, isAdmin, isAllowed, createdAt, updatedAt, lastLoginAt }] }`
+
+### `POST /api/users`
+
+**Body:** `{ "playerId": 123, "name": "...", "isAdmin"?: false, "isAllowed"?: true }`
+
+**Response:** created user object (201).
+
+### `PATCH /api/users/:playerId`
+
+**Body:** partial `{ name?, isAdmin?, isAllowed? }`
+
+### `DELETE /api/users/:playerId`
+
+**Response:** `{ ok: true }`
+
+Admins cannot demote, disallow, or delete their own account. The last remaining admin cannot be demoted or deleted.
 
 ---
 
