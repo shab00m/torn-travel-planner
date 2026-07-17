@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COUNTRIES } from "./src/countries.js";
 import { getFlightMatrix } from "./src/flight-times.js";
-import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks, setRestockIgnored, getRestockAmount, getAllRestockAmounts, setRestockAmount, deleteRestockAmount } from "./src/db.js";
+import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks, setRestockIgnored, flagOutlierRestocks, getRestockAmount, getAllRestockAmounts, setRestockAmount, deleteRestockAmount } from "./src/db.js";
 import { startPolling, getLatest } from "./src/yata.js";
 import { getTravelStatus } from "./src/torn.js";
 import { getMarketPrice, getCachedMarketPrices, enqueueStaleMarketRefresh, startMarketRefresh, CACHE_TTL_SEC } from "./src/market.js";
@@ -368,6 +368,24 @@ app.patch("/api/restocks/:country/:itemId/:depletedTs", (req, res) => {
     });
   } catch (err) {
     res.status(err.message === "Restock cycle not found" ? 404 : 400).json({ error: err.message });
+  }
+});
+
+/** Exclude outlier cycles from averages for one item. */
+app.post("/api/restocks/:country/:itemId/flag-outliers", (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  try {
+    const result = flagOutlierRestocks(params.country, params.id);
+    res.json({
+      ok: true,
+      flagged: result.flagged,
+      depletedTs: result.depletedTs,
+      restocks: getRestocks(params.country, params.id, 50),
+      rates: getDepletionRates(params.country, params.id, 50),
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

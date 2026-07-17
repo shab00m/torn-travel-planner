@@ -1071,9 +1071,36 @@ body.page-item {
 
 .cycle-open-note.hidden { display: none; }
 
+.cycle-history-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 10px;
+  flex-wrap: wrap;
+}
+
+.cycle-history-action {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.cycle-history-action:hover { border-color: var(--accent); }
+.cycle-history-action:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.cycle-history-action-status {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
 .cycle-history {
   width: 100%;
-  margin-top: 12px;
+  margin-top: 0;
   border-collapse: collapse;
   font-size: 0.84rem;
   table-layout: fixed;

@@ -2,6 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isCycleOutlier } from "./outliers.js";
 
 const dataDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "data");
 mkdirSync(dataDir, { recursive: true });
@@ -230,7 +231,19 @@ function applyTransition(country, itemId, ts, prevTs, prevQuantity, quantity) {
 
 function trackRestock(country, itemId, ts, quantity) {
   const prev = prevQuantityStmt.get(country, itemId, ts);
-  if (prev) applyTransition(country, itemId, ts, prev.yata_ts, prev.quantity, quantity);
+  if (!prev) return null;
+  const result = applyTransition(
+    country,
+    itemId,
+    ts,
+    prev.yata_ts,
+    prev.quantity,
+    quantity
+  );
+  if (result === "restocked") {
+    autoIgnoreOutlierAfterRestock(country, itemId, ts);
+  }
+  return result;
 }
 
 const allSnapshotsStmt = db.prepare(
@@ -364,6 +377,90 @@ const setRestockIgnoredStmt = db.prepare(
 export function setRestockIgnored(country, itemId, depletedTs, ignored) {
   const res = setRestockIgnoredStmt.run(ignored ? 1 : 0, country, itemId, depletedTs);
   if (res.changes === 0) throw new Error("Restock cycle not found");
+}
+
+const allCompletedRestocksStmt = db.prepare(
+  `SELECT depleted_ts, restocked_ts, duration, ignored
+   FROM restocks
+   WHERE country = ? AND item_id = ? AND duration IS NOT NULL
+   ORDER BY depleted_ts ASC`
+);
+
+/** Completed cycles with Count normalized to a boolean `ignored` flag. */
+function loadCompletedRestocks(country, itemId) {
+  return allCompletedRestocksStmt.all(country, itemId).map((row) => ({
+    depleted_ts: row.depleted_ts,
+    restocked_ts: row.restocked_ts,
+    duration: row.duration,
+    ignored: Boolean(row.ignored),
+  }));
+}
+
+/**
+ * Normal-range baseline: only cycles that still have Count checked.
+ * Unchecked (ignored) rows never contribute to median/MAD.
+ */
+function durationOutlierBaseline(cycles, excludeDepletedTs) {
+  const durations = [];
+  for (const cycle of cycles) {
+    if (cycle.ignored) continue;
+    if (cycle.depleted_ts === excludeDepletedTs) continue;
+    if (cycle.duration != null && cycle.duration >= 0) durations.push(cycle.duration);
+  }
+  return { durations };
+}
+
+function maybeIgnoreCycle(country, itemId, cycle, cycles) {
+  if (!cycle || cycle.ignored || cycle.duration == null) return false;
+  const baseline = durationOutlierBaseline(cycles, cycle.depleted_ts);
+  if (!isCycleOutlier({ duration: cycle.duration }, baseline)) return false;
+  setRestockIgnoredStmt.run(1, country, itemId, cycle.depleted_ts);
+  cycle.ignored = true;
+  return true;
+}
+
+/**
+ * When a cycle closes, exclude it if empty-for is outside the usual cluster.
+ * Rate averages follow automatically via the shared ignored flag.
+ */
+function autoIgnoreOutlierAfterRestock(country, itemId, restockedTs) {
+  const cycles = loadCompletedRestocks(country, itemId);
+  const cycle = cycles.find((r) => r.restocked_ts === restockedTs);
+  maybeIgnoreCycle(country, itemId, cycle, cycles);
+}
+
+const MAX_OUTLIER_PASSES = 20;
+
+/**
+ * Scan all completed cycles for an item and uncheck Count on empty-for outliers.
+ * Normal range is always computed from currently checked cycles only.
+ * Repeats until stable so extreme gaps do not inflate MAD and hide milder
+ * outliers (e.g. 35m next to a 55–70m cluster).
+ * Does not re-include manually ignored cycles.
+ * @returns {{ flagged: number, depletedTs: number[] }}
+ */
+export function flagOutlierRestocks(country, itemId) {
+  const cycles = loadCompletedRestocks(country, itemId);
+  const depletedTs = [];
+
+  for (let pass = 0; pass < MAX_OUTLIER_PASSES; pass++) {
+    const batch = [];
+    for (const cycle of cycles) {
+      if (cycle.ignored || cycle.duration == null) continue;
+      const baseline = durationOutlierBaseline(cycles, cycle.depleted_ts);
+      if (!isCycleOutlier({ duration: cycle.duration }, baseline)) continue;
+      batch.push(cycle);
+    }
+    if (!batch.length) break;
+
+    for (const cycle of batch) {
+      setRestockIgnoredStmt.run(1, country, itemId, cycle.depleted_ts);
+      cycle.ignored = true;
+      depletedTs.push(cycle.depleted_ts);
+    }
+  }
+
+  return { flagged: depletedTs.length, depletedTs };
 }
 
 const snapshotStmt = db.prepare(

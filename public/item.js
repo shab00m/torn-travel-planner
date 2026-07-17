@@ -20,6 +20,8 @@ const el = {
   cycleHistoryPrev: document.getElementById("cycle-history-prev"),
   cycleHistoryNext: document.getElementById("cycle-history-next"),
   cycleHistoryPageInfo: document.getElementById("cycle-history-page-info"),
+  flagOutliersBtn: document.getElementById("flag-outliers-btn"),
+  flagOutliersStatus: document.getElementById("flag-outliers-status"),
   rateAvgButtons: document.getElementById("rate-avg-buttons"),
   rateAvg: document.getElementById("rate-avg"),
   safeWindowUseRate: document.getElementById("safe-window-use-rate"),
@@ -605,32 +607,6 @@ function getHistoricalExtents() {
   };
 }
 
-function maxEmptyForSec() {
-  return getHistoricalExtents().maxEmptyFor;
-}
-
-/** Restock events chained with max historical empty-for — independent of avg/min/max timing. */
-function getSafeWindowAnchorRestocks(startTs, endTs, startQty) {
-  const maxEmptyFor = maxEmptyForSec();
-  const rate = rateFromHistory();
-  if (maxEmptyFor == null || rate == null || startQty == null) return [];
-
-  const configuredQty = currentRestockAmount();
-  const qtySample = getUsableRates().slice(0, state.avgRateSamples);
-  const qtySource = qtySample.length ? qtySample : getUsableRates();
-  if (!configuredQty && !qtySource.length) return [];
-  const restockQty =
-    configuredQty ??
-    Math.round(qtySource.reduce((sum, w) => sum + w.start_qty, 0) / qtySource.length);
-
-  const { events } = simulatePredictions(startTs, endTs, startQty, {
-    restockSec: maxEmptyFor,
-    rate,
-    restockQty,
-  }, Math.floor(Date.now() / 1000));
-  return events.filter((e) => e.type === "restock" && e.ts >= startTs);
-}
-
 function stockoutSecFromHistory() {
   const restocks = getUsableCompletedRestocks();
   if (!restocks.length) return null;
@@ -1173,23 +1149,81 @@ function safeWindowDepletionRate() {
   return getHistoricalExtents().maxRate;
 }
 
-function safeWindowBoundsForDepletedTs(depletedTs, qty) {
-  const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
-  const depletionRate = safeWindowDepletionRate();
-  if (minEmptyFor == null || maxEmptyFor == null || depletionRate == null || depletedTs == null) return null;
-
-  const restockQty = currentRestockAmount() ?? qty;
-  const safeStart = Math.round(depletedTs + maxEmptyFor);
-  const safeEnd = Math.round(depletedTs + minEmptyFor + (restockQty / depletionRate) * 60);
-
-  if (safeStart >= safeEnd) return null;
-  return { safeStart, safeEnd };
+function restockQtyForSafeWindow() {
+  const configuredQty = currentRestockAmount();
+  if (configuredQty != null) return configuredQty;
+  const qtySample = getUsableRates().slice(0, state.avgRateSamples);
+  const qtySource = qtySample.length ? qtySample : getUsableRates();
+  if (!qtySource.length) return null;
+  return Math.round(qtySource.reduce((sum, w) => sum + w.start_qty, 0) / qtySource.length);
 }
 
-function safeWindowBoundsForEvent(event, index) {
-  const anchor = state.safeWindowAnchors?.[index];
-  const depletedTs = anchor?.depleted_ts ?? event.depleted_ts;
-  return safeWindowBoundsForDepletedTs(depletedTs, event.qty);
+/** Initial [earliest, latest] depletion bounds before the first upcoming restock. */
+function initialDepletionEnvelope(dataTs, startQty, depletionRate) {
+  if (startQty === 0) {
+    const open = state.restocks.find((r) => r.restocked_ts == null);
+    if (open?.depleted_ts == null) return null;
+    return { earliestDepleted: open.depleted_ts, latestDepleted: open.depleted_ts };
+  }
+  if (startQty > 0) {
+    const openWindow = getOpenRateWindow();
+    const rate =
+      openWindow?.rate > 0
+        ? depletionRateForCycle(dataTs, dataTs, startQty, depletionRate)
+        : depletionRate;
+    const d = Math.round(dataTs + (startQty / rate) * 60);
+    return { earliestDepleted: d, latestDepleted: d };
+  }
+  return null;
+}
+
+/**
+ * Safe windows as [latest possible restock, earliest possible depletion].
+ * Empty-for min/max compounds across cycles; depletion uses a single rate from
+ * safeWindowDepletionRate() (selected rate when "Use for safe window" is on,
+ * otherwise historical max). Stops when the envelope collapses.
+ */
+function computeCompoundSafeWindows(dataTs, endTs, startQty) {
+  const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
+  const depletionRate = safeWindowDepletionRate();
+  if (minEmptyFor == null || maxEmptyFor == null || depletionRate == null || startQty == null) {
+    return [];
+  }
+
+  const restockQty = restockQtyForSafeWindow();
+  if (restockQty == null || restockQty <= 0) return [];
+
+  const initial = initialDepletionEnvelope(dataTs, startQty, depletionRate);
+  if (!initial) return [];
+
+  let { earliestDepleted, latestDepleted } = initial;
+  const windows = [];
+  const depleteSec = (restockQty / depletionRate) * 60;
+
+  for (let i = 0; i < 100; i++) {
+    const safeStart = Math.round(latestDepleted + maxEmptyFor);
+    const safeEnd = Math.round(earliestDepleted + minEmptyFor + depleteSec);
+
+    if (safeStart > endTs) break;
+    if (safeStart >= safeEnd) break;
+
+    windows.push({
+      safeStart,
+      safeEnd,
+      depletedTs: latestDepleted,
+    });
+
+    // Compound empty-for uncertainty only; same depletion rate on both paths.
+    earliestDepleted = Math.round(earliestDepleted + minEmptyFor + depleteSec);
+    latestDepleted = Math.round(latestDepleted + maxEmptyFor + depleteSec);
+    if (earliestDepleted > endTs) break;
+  }
+
+  return windows;
+}
+
+function safeWindowBoundsForEvent(index) {
+  return state.safeWindows?.[index] ?? null;
 }
 
 function formatSafeWindowLabel(bounds, i) {
@@ -1279,7 +1313,7 @@ function renderPredictionPanel(events, segments) {
         predictionCtx
       );
       const leaveHtml = formatLeaveWindow(restockEarliest, restockLatest, flightSec, wallTs);
-      const safe = safeWindowBoundsForEvent(e, i);
+      const safe = safeWindowBoundsForEvent(i);
       const safeHtml = safe
         ? `<div class="safe-window-info">${formatSafeWindowLabel(safe, i)}${formatSafeLeaveWindow(safe, flightSec, wallTs)}</div>`
         : "";
@@ -1758,16 +1792,10 @@ function refreshChart(timeline) {
   const endTs = Math.round(timeline.xMax / 1000);
   const startQty = predictionStartQty();
   if (state.predictionHours > 0 && startQty != null && dataTs > 0) {
-    state.safeWindowAnchors = getSafeWindowAnchorRestocks(dataTs, endTs, startQty);
+    state.safeWindows = computeCompoundSafeWindows(dataTs, endTs, startQty);
   } else {
-    state.safeWindowAnchors = [];
+    state.safeWindows = [];
   }
-  const upcomingRestocks = state.predictedEvents.filter(
-    (e) => e.type === "restock" && e.ts >= dataTs
-  );
-  state.safeWindows = upcomingRestocks
-    .map((e, i) => safeWindowBoundsForEvent(e, i))
-    .filter(Boolean);
   renderPredictionPanel(state.predictedEvents, timeline.segments ?? []);
   const options = chartOptions(timeline);
   syncOffsetInput(timeline);
@@ -2377,6 +2405,35 @@ el.cycleHistoryNext?.addEventListener("click", () => {
   if (cycleHistoryPage >= getCycleHistoryPageCount(rowCount) - 1) return;
   cycleHistoryPage += 1;
   renderCycleHistory();
+});
+
+async function flagOutlierCycles() {
+  const item = state.item;
+  if (!item || !el.flagOutliersBtn) return;
+  el.flagOutliersBtn.disabled = true;
+  if (el.flagOutliersStatus) el.flagOutliersStatus.textContent = "Scanning…";
+  try {
+    const data = await fetchJsonWithBody(
+      `/api/restocks/${item.country}/${item.itemId}/flag-outliers`,
+      { method: "POST", body: {} }
+    );
+    loadRestockData(data);
+    refreshRestockViews();
+    const n = data.flagged ?? 0;
+    if (el.flagOutliersStatus) {
+      el.flagOutliersStatus.textContent =
+        n === 0 ? "No outliers found" : `Excluded ${n} outlier${n === 1 ? "" : "s"}`;
+    }
+  } catch (err) {
+    if (el.flagOutliersStatus) el.flagOutliersStatus.textContent = "";
+    alert(err.message || "Failed to flag outliers");
+  } finally {
+    el.flagOutliersBtn.disabled = false;
+  }
+}
+
+el.flagOutliersBtn?.addEventListener("click", () => {
+  flagOutlierCycles();
 });
 
 el.restockAmount.addEventListener("change", async () => {

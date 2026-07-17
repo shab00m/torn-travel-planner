@@ -252,6 +252,17 @@
 					</label>
 				</div>
 				<p id="cycle-open-note" class="cycle-open-note hidden"></p>
+				<div class="cycle-history-toolbar">
+					<button
+						type="button"
+						id="flag-outliers-btn"
+						class="cycle-history-action"
+						title="Uncheck Count on cycles whose empty-for sits outside this item’s usual cluster (iterative median/MAD check)"
+					>
+						Exclude outliers
+					</button>
+					<span id="flag-outliers-status" class="cycle-history-action-status" aria-live="polite"></span>
+				</div>
 				<table class="cycle-history">
 					<colgroup>
 						<col style="width: 2.5rem" />

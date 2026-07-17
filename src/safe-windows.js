@@ -293,62 +293,85 @@ function createContext({
     return { events, segments };
   }
 
-  function getSafeWindowAnchorRestocks(startTs, endTs, startQty) {
-    const { maxEmptyFor } = getHistoricalExtents();
-    const rate = rateFromHistory();
-    if (maxEmptyFor == null || rate == null || startQty == null) return [];
-
-    const qtySample = getUsableRates().slice(0, avgRateSamples);
-    const qtySource = qtySample.length ? qtySample : getUsableRates();
-    if (!restockAmount && !qtySource.length) return [];
-    const restockQty =
-      restockAmount ??
-      Math.round(qtySource.reduce((sum, w) => sum + w.start_qty, 0) / qtySource.length);
-
-    const { events } = simulatePredictions(startTs, endTs, startQty, {
-      restockSec: maxEmptyFor,
-      rate,
-      restockQty,
-    });
-    return events.filter((e) => e.type === "restock" && e.ts >= startTs);
-  }
-
   function safeWindowDepletionRate() {
     if (safeWindowUseRateSelection) return rateFromHistory();
     return getHistoricalExtents().maxRate;
   }
 
-  function safeWindowBoundsForDepletedTs(depletedTs, qty) {
-    const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
-    const depletionRate = safeWindowDepletionRate();
-    if (minEmptyFor == null || maxEmptyFor == null || depletionRate == null || depletedTs == null) {
-      return null;
-    }
-
-    const effectiveQty = restockAmount ?? qty;
-    const safeStart = Math.round(depletedTs + maxEmptyFor);
-    const safeEnd = Math.round(depletedTs + minEmptyFor + (effectiveQty / depletionRate) * 60);
-
-    if (safeStart >= safeEnd) return null;
-    return { safeStart, safeEnd, depletedTs };
+  function restockQtyForSafeWindow() {
+    if (restockAmount != null) return restockAmount;
+    const qtySample = getUsableRates().slice(0, avgRateSamples);
+    const qtySource = qtySample.length ? qtySample : getUsableRates();
+    if (!qtySource.length) return null;
+    return Math.round(qtySource.reduce((sum, w) => sum + w.start_qty, 0) / qtySource.length);
   }
 
-  function safeWindowBoundsForEvent(event, index, anchors) {
-    const anchor = anchors?.[index];
-    const depletedTs = anchor?.depleted_ts ?? event.depleted_ts;
-    return safeWindowBoundsForDepletedTs(depletedTs, event.qty);
+  /** Initial [earliest, latest] depletion bounds before the first upcoming restock. */
+  function initialDepletionEnvelope(dataTs, startQty, depletionRate) {
+    if (startQty === 0) {
+      const open = restocks.find((r) => r.restocked_ts == null);
+      if (open?.depleted_ts == null) return null;
+      return { earliestDepleted: open.depleted_ts, latestDepleted: open.depleted_ts };
+    }
+    if (startQty > 0) {
+      const openWindow = getOpenRateWindow();
+      const rate =
+        openWindow?.rate > 0
+          ? depletionRateForCycle(dataTs, dataTs, startQty, depletionRate)
+          : depletionRate;
+      const d = Math.round(dataTs + (startQty / rate) * 60);
+      return { earliestDepleted: d, latestDepleted: d };
+    }
+    return null;
+  }
+
+  /**
+   * Safe windows as [latest possible restock, earliest possible depletion].
+   * Empty-for min/max compounds across cycles; depletion uses a single rate from
+   * safeWindowDepletionRate() (selected rate when "Use for safe window" is on,
+   * otherwise historical max). Stops when the envelope collapses.
+   */
+  function computeCompoundSafeWindows(dataTs, endTs, startQty) {
+    const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
+    const depletionRate = safeWindowDepletionRate();
+    if (minEmptyFor == null || maxEmptyFor == null || depletionRate == null || startQty == null) {
+      return [];
+    }
+
+    const restockQty = restockQtyForSafeWindow();
+    if (restockQty == null || restockQty <= 0) return [];
+
+    const initial = initialDepletionEnvelope(dataTs, startQty, depletionRate);
+    if (!initial) return [];
+
+    let { earliestDepleted, latestDepleted } = initial;
+    const windows = [];
+    const depleteSec = (restockQty / depletionRate) * 60;
+
+    for (let i = 0; i < 100; i++) {
+      const safeStart = Math.round(latestDepleted + maxEmptyFor);
+      const safeEnd = Math.round(earliestDepleted + minEmptyFor + depleteSec);
+
+      if (safeStart > endTs) break;
+      if (safeStart >= safeEnd) break;
+
+      windows.push({
+        safeStart,
+        safeEnd,
+        depletedTs: latestDepleted,
+      });
+
+      // Compound empty-for uncertainty only; same depletion rate on both paths.
+      earliestDepleted = Math.round(earliestDepleted + minEmptyFor + depleteSec);
+      latestDepleted = Math.round(latestDepleted + maxEmptyFor + depleteSec);
+      if (earliestDepleted > endTs) break;
+    }
+
+    return windows;
   }
 
   function computeSafeWindows(dataTs, endTs, startQty) {
-    const averages = getAverages();
-    if (!averages) return [];
-
-    const anchors = getSafeWindowAnchorRestocks(dataTs, endTs, startQty);
-    const { events } = simulatePredictions(dataTs, endTs, startQty, averages);
-    const upcomingRestocks = events.filter((e) => e.type === "restock" && e.ts >= dataTs);
-    return upcomingRestocks
-      .map((e, i) => safeWindowBoundsForEvent(e, i, anchors))
-      .filter(Boolean);
+    return computeCompoundSafeWindows(dataTs, endTs, startQty);
   }
 
   return {

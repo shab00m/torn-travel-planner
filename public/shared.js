@@ -20,8 +20,6 @@ const state = {
   timeFormat: "european",
   flightTimeVariance: false,
   predictedEvents: [],
-  safeWindowAnchors: [],
-  safeWindows: [],
   chartOffsetSec: 0,
   chartScale: 1,
   lastTimeline: null,
@@ -32,7 +30,8 @@ const state = {
   marketPricesFetchedAt: null, // { [itemId]: unix ts }
   marketPricesStatus: null, // null | "empty" | "ready" | "error"
   marketCacheTtlSec: 300,
-  safeWindows: {}, // { "mex:123": { available, safeWindow, reason } }
+  // Item page: compound safe-window array. Favorites: { "mex:123": { available, safeWindow, reason } }.
+  safeWindows: {},
   safeWindowsStatus: null, // null | "loading" | "ready" | "error"
   favoritesSort: { column: "item", dir: "asc" },
   restockAmounts: {}, // { "uni:206": 5000 } from /api/restock-amounts

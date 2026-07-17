@@ -101,6 +101,19 @@ Mark a restock cycle as ignored (excluded from averages).
 
 ---
 
+### `POST /api/restocks/:country/:itemId/flag-outliers`
+
+Scan completed cycles for this item and set `ignored` on empty-for outliers (typically from snapshot gaps). Uses an iterative robust modified Z-score (median/MAD, threshold 1.5) so each item’s own cluster defines the band — extreme gaps are removed first, then nearer misses (e.g. ~44m / ~50m next to a 55–65m group). The normal-range baseline uses only cycles that still have Count checked; already-unchecked rows are never included. Rate averages follow automatically because ignored cycles are excluded from rate windows too. Does not re-include cycles that were already ignored.
+
+New cycles are also checked automatically when YATA polling closes an empty period.
+
+**Response:** `{ ok, flagged, depletedTs, restocks, rates }`
+
+- `flagged` — number of cycles newly ignored
+- `depletedTs` — `depleted_ts` values that were flagged
+
+---
+
 ## Restock amounts (database)
 
 Per-item “full restock quantity” used for safe-window prediction. Stored server-side; the web UI reads/writes these endpoints.
@@ -132,6 +145,8 @@ Set or clear the restock amount.
 ## Safe windows
 
 Safe-window endpoints use **database snapshots only** (not live YATA). They read the stored restock amount automatically when `restockAmount` is omitted.
+
+A **safe window** is the range from the latest possible restock time to the earliest possible depletion time. Window #1 uses the known (or currently projected) depletion. Later windows **compound** historical min/max empty-for across cycles (latest path uses max empty-for; earliest path uses min empty-for + depletion). Depletion uses a single rate: the selected historical rate when `safeWindowUseRateSelection` is true (UI: **Use for safe window**), otherwise the fastest historical rate. Each subsequent window shrinks and often disappears by #2 or #3 once the envelope collapses (`safeStart >= safeEnd`).
 
 To match the web UI, pass the same options the app sends (see [Safe window options](#safe-window-options) below). UI preferences live in browser `localStorage` (`plannerPrefs`); the server does not read them unless you pass them in the request.
 
