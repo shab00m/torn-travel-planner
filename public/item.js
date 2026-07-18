@@ -1226,11 +1226,6 @@ function safeWindowBoundsForEvent(index) {
   return state.safeWindows?.[index] ?? null;
 }
 
-function formatSafeWindowLabel(bounds, i) {
-  if (!bounds) return "";
-  return `<span class="safe-window-label">#${i + 1} safe: ${fmtTimeShort(bounds.safeStart)} → ${fmtTimeShort(bounds.safeEnd)}</span>`;
-}
-
 function predictionStartQty() {
   const last = state.chartPoints[state.chartPoints.length - 1];
   return last?.quantity ?? null;
@@ -1247,21 +1242,26 @@ function formatRestockLabel(e, i, averages, events, segments, predictionCtx) {
   return `#${i + 1}: Window between ${fmtTimeShort(restockEarliest)} → ${fmtTimeShort(restockLatest)}`;
 }
 
-function formatLeaveWindow(restockEarliest, restockLatest, flightSec, wallTs) {
-  if (flightSec == null || restockEarliest == null || restockLatest == null) return "";
+/** @returns {{ text: string, missed: boolean } | null} */
+function leaveWindowInfo(restockEarliest, restockLatest, flightSec, wallTs) {
+  if (flightSec == null || restockEarliest == null || restockLatest == null) return null;
   const leaveEarliest = restockEarliest - flightSec;
   const leaveLatest = restockLatest - flightSec;
-
   if (leaveLatest <= wallTs) {
-    const missedSec = wallTs - leaveLatest;
-    return `<span class="leave-missed">Missed window by ${fmtDuration(missedSec)}</span>`;
+    return {
+      text: `Missed window by ${fmtDuration(wallTs - leaveLatest)}`,
+      missed: true,
+    };
   }
-
-  return `<span class="leave-by">Leave between ${fmtTimeShort(leaveEarliest)} and ${fmtTimeShort(leaveLatest)}</span>`;
+  return {
+    text: `Leave between ${fmtTimeShort(leaveEarliest)} and ${fmtTimeShort(leaveLatest)}`,
+    missed: false,
+  };
 }
 
-function formatSafeLeaveWindow(bounds, flightSec, wallTs) {
-  if (!bounds || flightSec == null) return "";
+/** @returns {{ text: string, missed: boolean } | null} */
+function safeLeaveWindowInfo(bounds, flightSec, wallTs) {
+  if (!bounds || flightSec == null) return null;
 
   const leaveEarliest = state.flightTimeVariance
     ? bounds.safeStart - flightSecWithVariance(flightSec, "fast")
@@ -1271,11 +1271,22 @@ function formatSafeLeaveWindow(bounds, flightSec, wallTs) {
     : bounds.safeEnd - flightSec;
 
   if (leaveLatest <= wallTs) {
-    const missedSec = wallTs - leaveLatest;
-    return `<span class="safe-leave-missed">Missed window by ${fmtDuration(missedSec)}</span>`;
+    return {
+      text: `Missed window by ${fmtDuration(wallTs - leaveLatest)}`,
+      missed: true,
+    };
   }
+  return {
+    text: `Leave between ${fmtTimeShort(leaveEarliest)} and ${fmtTimeShort(leaveLatest)}`,
+    missed: false,
+  };
+}
 
-  return `<span class="safe-leave-by">Leave between ${fmtTimeShort(leaveEarliest)} and ${fmtTimeShort(leaveLatest)}</span>`;
+function escapeAttr(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;");
 }
 
 function renderPredictionPanel(events, segments) {
@@ -1299,7 +1310,7 @@ function renderPredictionPanel(events, segments) {
   const predictionCtx = { dataTs, startQty: predictionStartQty() };
   const restocks = events.filter((e) => e.type === "restock" && e.ts >= dataTs);
   if (!restocks.length) {
-    el.predictionList.innerHTML = `<li class="ongoing">Not enough data to predict restocks.</li>`;
+    el.predictionList.innerHTML = `<li class="prediction-item prediction-empty">Not enough data to predict restocks.</li>`;
     return;
   }
 
@@ -1312,20 +1323,56 @@ function renderPredictionPanel(events, segments) {
         segments,
         predictionCtx
       );
-      const leaveHtml = formatLeaveWindow(restockEarliest, restockLatest, flightSec, wallTs);
-      const safe = safeWindowBoundsForEvent(i);
-      const safeHtml = safe
-        ? `<div class="safe-window-info">${formatSafeWindowLabel(safe, i)}${formatSafeLeaveWindow(safe, flightSec, wallTs)}</div>`
+      const leave = leaveWindowInfo(restockEarliest, restockLatest, flightSec, wallTs);
+      const leaveHtml = leave
+        ? `<span class="prediction-right ${leave.missed ? "leave-missed" : "leave-by"}">${leave.text}</span>`
         : "";
+
+      const safe = safeWindowBoundsForEvent(i);
+      let safeHtml = "";
+      if (safe) {
+        const safeLeave = safeLeaveWindowInfo(safe, flightSec, wallTs);
+        const copyBtn =
+          safeLeave && !safeLeave.missed
+            ? `<button type="button" class="copy-leave-btn" data-copy="${escapeAttr(safeLeave.text)}" title="Copy leave window">Copy</button>`
+            : "";
+        const right = safeLeave
+          ? `<span class="prediction-right-group">
+              <span class="prediction-right ${safeLeave.missed ? "safe-leave-missed" : "safe-leave-by"}">${safeLeave.text}</span>
+              ${copyBtn}
+            </span>`
+          : "";
+        safeHtml = `<div class="prediction-row prediction-safe">
+          <span class="prediction-left safe-window-label">#${i + 1} safe: ${fmtTimeShort(safe.safeStart)} → ${fmtTimeShort(safe.safeEnd)}</span>
+          ${right}
+        </div>`;
+      }
+
       return `<li class="prediction-item">
-        <div class="prediction-main">
-          <span>${formatRestockLabel(e, i, averages, events, segments, predictionCtx)}</span>
+        <div class="prediction-row">
+          <span class="prediction-left">${formatRestockLabel(e, i, averages, events, segments, predictionCtx)}</span>
           ${leaveHtml}
         </div>
         ${safeHtml}
       </li>`;
     })
     .join("");
+}
+
+async function copyPredictionLeaveText(text, button) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    const prev = button.textContent;
+    button.textContent = "Copied";
+    button.disabled = true;
+    setTimeout(() => {
+      button.textContent = prev;
+      button.disabled = false;
+    }, 1200);
+  } catch {
+    alert("Could not copy to clipboard");
+  }
 }
 
 function setProfitStat(node, text, valueClass = null) {
@@ -2477,6 +2524,12 @@ el.predictionButtons.addEventListener("click", (e) => {
   savePrefs({ predictionHours: state.predictionHours });
   syncHourButtons(el.predictionButtons, state.predictionHours);
   redrawPrediction();
+});
+
+el.predictionList?.addEventListener("click", (e) => {
+  const btn = e.target.closest("button.copy-leave-btn");
+  if (!btn) return;
+  copyPredictionLeaveText(btn.dataset.copy ?? "", btn);
 });
 
 syncHourButtons(el.rangeButtons, state.rangeHours);

@@ -2,11 +2,11 @@
 export const MIN_OUTLIER_SAMPLES = 5;
 
 /**
- * Modified Z-score cutoff. Lower than the textbook 3.5 so a tight cluster
- * (e.g. 55–65m) also drops near-misses like 44m or 50m — including the
- * "ten records at ~55m, one at 50m" case.
+ * Modified Z-score cutoff. Below the textbook 3.5 so tight clusters still
+ * drop clear misses (e.g. ~44m vs 55–65m), but high enough that near-cluster
+ * values like ~1h 3m beside a ~57m median are kept.
  */
-export const MAD_THRESHOLD = 1.5;
+export const MAD_THRESHOLD = 2.5;
 
 /**
  * Floor for MAD so a nearly-flat cluster does not treat normal poll jitter

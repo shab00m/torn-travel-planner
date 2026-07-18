@@ -103,7 +103,7 @@ Mark a restock cycle as ignored (excluded from averages).
 
 ### `POST /api/restocks/:country/:itemId/flag-outliers`
 
-Scan completed cycles for this item and set `ignored` on empty-for outliers (typically from snapshot gaps). Uses an iterative robust modified Z-score (median/MAD, threshold 1.5) so each item’s own cluster defines the band — extreme gaps are removed first, then nearer misses (e.g. ~44m / ~50m next to a 55–65m group). The normal-range baseline uses only cycles that still have Count checked; already-unchecked rows are never included. Rate averages follow automatically because ignored cycles are excluded from rate windows too. Does not re-include cycles that were already ignored.
+Scan completed cycles for this item and set `ignored` on empty-for outliers (typically from snapshot gaps). Uses an iterative robust modified Z-score (median/MAD, threshold 2.5) so each item’s own cluster defines the band — extreme gaps are removed first, then clearer misses (e.g. ~44m next to a 55–65m group), without dropping near-cluster values. The normal-range baseline uses only cycles that still have Count checked; already-unchecked rows are never included. Rate averages follow automatically because ignored cycles are excluded from rate windows too. Does not re-include cycles that were already ignored.
 
 New cycles are also checked automatically when YATA polling closes an empty period.
 
