@@ -11,7 +11,7 @@ A web app that displays live foreign stock data for [Torn](https://www.torn.com)
 - Restock tracking: depletion (stock hits 0) and refill events are detected on every poll and stored in a `restocks` table. The item popup shades out-of-stock periods on the graph with the restock duration, lists the last 5 restock times, and shows an average over the last 1 / 3 / 5 / 10 / 20 samples
 - Depletion rate per in-stock window (restock -> last snapshot before stock hits 0, or -> now while stock lasts) in items/minute, with the same sample-average selector and dashed trend lines overlaid on the graph
 - Search filter for items, dropdown filter for countries, and an "in stock only" toggle
-- Log in with a Torn API key (public access level is enough) to see your alias, travel type (Standard / Airstrip / Private) and total travel item capacity in the header. Capacity is derived from your perks (base capacity + suitcase/faction/book/job bonuses). Business Class Ticket access is not detectable via the API since inventory data is no longer exposed. The key is stored only in your browser's localStorage and relayed to the Torn API per login; the server never persists it.
+- Log in with a Torn API key (**Minimal** access level or higher) to see your alias, travel type (Standard / Airstrip / Private) and total travel item capacity in the header. Capacity is derived from your perks (base capacity + suitcase/faction/book/job bonuses). Business Class Ticket access is not detectable via the API since inventory data is no longer exposed. The key is stored only in your browser's localStorage and relayed to the Torn API per login; the server never persists it. Public keys are not enough — login needs `user` selections `basic` and `perks`.
 
 ## Requirements
 

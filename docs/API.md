@@ -314,7 +314,9 @@ These relay requests to the Torn API. The server does not store API keys.
 
 ### `POST /api/login`
 
-Validate a Torn API key against the Torn API, then check the local whitelist.
+Validate a Torn API key against the Torn API (`user/?selections=basic,perks`), then check the local whitelist.
+
+Requires a Torn API key with **Minimal** access (or a Custom key that includes `user: basic` and `user: perks`). Public keys return Torn error 16.
 
 **Body:** `{ "apiKey": "..." }`
 
@@ -352,7 +354,9 @@ Admins cannot demote, disallow, or delete their own account. The last remaining 
 
 ### `POST /api/travel`
 
-Check if the player is currently flying to a country.
+Check if the player is currently flying to a country (`user/?selections=travel`).
+
+Requires **Minimal** access (or Custom with `user: travel`).
 
 **Body:** `{ "apiKey": "...", "country": "uni" }`
 
