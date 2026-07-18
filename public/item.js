@@ -16,6 +16,7 @@ const el = {
   restockAvg: document.getElementById("restock-avg"),
   cycleOpenNote: document.getElementById("cycle-open-note"),
   cycleHistoryBody: document.getElementById("cycle-history-body"),
+  cycleHistoryTable: document.getElementById("cycle-history-table"),
   cycleHistoryPager: document.getElementById("cycle-history-pager"),
   cycleHistoryPrev: document.getElementById("cycle-history-prev"),
   cycleHistoryNext: document.getElementById("cycle-history-next"),
@@ -991,17 +992,20 @@ function buildAnnotations(restocks, rates, timeline) {
 function getCycleHistoryRows() {
   const completed = getAdjustedCompletedRestocks();
   const adjustedRates = getAdjustedRates();
-  return completed.map((r) => {
-    const origIdx = state.rates.findIndex((w) => w.start_ts === r.restocked_ts);
-    const rate = origIdx >= 0 ? adjustedRates[origIdx]?.rate : null;
-    return {
-      depleted_ts: r.depleted_ts,
-      restocked_ts: r.adjusted_restocked_ts,
-      rate,
-      emptyForSec: r.adjusted_duration,
-      ignored: Boolean(r.ignored),
-    };
-  });
+  const includeIgnored = isAdminUser();
+  return completed
+    .filter((r) => includeIgnored || !r.ignored)
+    .map((r) => {
+      const origIdx = state.rates.findIndex((w) => w.start_ts === r.restocked_ts);
+      const rate = origIdx >= 0 ? adjustedRates[origIdx]?.rate : null;
+      return {
+        depleted_ts: r.depleted_ts,
+        restocked_ts: r.adjusted_restocked_ts,
+        rate,
+        emptyForSec: r.adjusted_duration,
+        ignored: Boolean(r.ignored),
+      };
+    });
 }
 
 function getCycleHistoryPageCount(rowCount) {
@@ -1079,6 +1083,9 @@ function renderCycleHistory() {
     el.rateAvg.textContent = "no samples yet";
   }
 
+  const showCount = isAdminUser();
+  el.cycleHistoryTable?.classList.toggle("cycle-history-with-count", showCount);
+
   if (!rows.length) {
     el.cycleHistoryBody.innerHTML =
       `<tr><td colspan="5" class="empty-note">No depletion/restock cycles observed yet.</td></tr>`;
@@ -1091,23 +1098,30 @@ function renderCycleHistory() {
   renderCycleHistoryPager(rows.length);
 
   el.cycleHistoryBody.innerHTML = pageRows
-    .map(
-      (r) => `<tr class="${r.ignored ? "cycle-ignored" : ""}" data-depleted-ts="${r.depleted_ts}">
-        <td class="cycle-count-cell">
-          <input
-            type="checkbox"
-            class="cycle-count"
-            data-depleted-ts="${r.depleted_ts}"
-            ${r.ignored ? "" : "checked"}
-            title="${r.ignored ? "Excluded from averages — click to include" : "Included in averages — click to exclude"}"
-          />
-        </td>
+    .map((r) => {
+      const countCell = showCount
+        ? `<td class="cycle-count-cell">
+            <input
+              type="checkbox"
+              class="cycle-count"
+              data-depleted-ts="${r.depleted_ts}"
+              ${r.ignored ? "" : "checked"}
+              title="${
+                r.ignored
+                  ? "Excluded from averages — click to include"
+                  : "Included in averages — click to exclude"
+              }"
+            />
+          </td>`
+        : `<td class="cycle-count-cell"></td>`;
+      return `<tr class="${r.ignored ? "cycle-ignored" : ""}" data-depleted-ts="${r.depleted_ts}">
+        ${countCell}
         <td>${fmtTime(r.restocked_ts)}</td>
         <td>${fmtTime(r.depleted_ts)}</td>
         <td class="rate-cell">${r.rate != null ? `${fmtRate(r.rate)}/min` : "—"}</td>
         <td class="duration-cell">${fmtDuration(r.emptyForSec)}</td>
-      </tr>`
-    )
+      </tr>`;
+    })
     .join("");
 }
 
@@ -2047,11 +2061,16 @@ function isAdminUser() {
   return Boolean(window.getCurrentUser?.()?.isAdmin);
 }
 
-/** Show Data Inspector only for admins; turn it off on logout/demotion. */
+/** Show admin-only controls; turn them off on logout/demotion. */
 function syncInspectAdminAccess() {
   const allowed = isAdminUser();
   el.inspectControls?.classList.toggle("hidden", !allowed);
-  if (!allowed && snapshotInspector.enabled) setInspectMode(false);
+  el.flagOutliersBtn?.classList.toggle("hidden", !allowed);
+  if (!allowed) {
+    if (el.flagOutliersStatus) el.flagOutliersStatus.textContent = "";
+    if (snapshotInspector.enabled) setInspectMode(false);
+  }
+  if (state.item) renderCycleHistory();
 }
 
 async function saveSnapshotRow(originalTs) {
@@ -2404,6 +2423,9 @@ function refreshRestockViews() {
 }
 
 async function setCycleIgnored(depletedTs, ignored) {
+  if (!isAdminUser()) {
+    throw new Error("Admin access required.");
+  }
   const { country, itemId } = state.item;
   const row = state.restocks.find((r) => r.depleted_ts === depletedTs);
   if (!row) return;
@@ -2414,7 +2436,7 @@ async function setCycleIgnored(depletedTs, ignored) {
   try {
     const data = await fetchJsonWithBody(
       `/api/restocks/${country}/${itemId}/${depletedTs}`,
-      { method: "PATCH", body: { ignored } }
+      { method: "PATCH", body: { ignored }, headers: adminApiHeaders() }
     );
     loadRestockData(data);
     refreshRestockViews();
@@ -2428,6 +2450,11 @@ async function setCycleIgnored(depletedTs, ignored) {
 el.cycleHistoryBody.addEventListener("change", async (e) => {
   const input = e.target.closest("input.cycle-count");
   if (!input || !state.item) return;
+  if (!isAdminUser()) {
+    input.checked = !input.checked;
+    alert("Admin access required.");
+    return;
+  }
   const depletedTs = Number.parseInt(input.dataset.depletedTs, 10);
   if (!Number.isInteger(depletedTs)) return;
   const ignored = !input.checked;
@@ -2457,12 +2484,16 @@ el.cycleHistoryNext?.addEventListener("click", () => {
 async function flagOutlierCycles() {
   const item = state.item;
   if (!item || !el.flagOutliersBtn) return;
+  if (!isAdminUser()) {
+    alert("Admin access required.");
+    return;
+  }
   el.flagOutliersBtn.disabled = true;
   if (el.flagOutliersStatus) el.flagOutliersStatus.textContent = "Scanning…";
   try {
     const data = await fetchJsonWithBody(
       `/api/restocks/${item.country}/${item.itemId}/flag-outliers`,
-      { method: "POST", body: {} }
+      { method: "POST", body: {}, headers: adminApiHeaders() }
     );
     loadRestockData(data);
     refreshRestockViews();

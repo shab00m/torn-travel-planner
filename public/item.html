@@ -256,23 +256,23 @@
 					<button
 						type="button"
 						id="flag-outliers-btn"
-						class="cycle-history-action"
+						class="cycle-history-action hidden"
 						title="Uncheck Count on cycles whose empty-for sits outside this item’s usual cluster (iterative median/MAD check)"
 					>
 						Exclude outliers
 					</button>
 					<span id="flag-outliers-status" class="cycle-history-action-status" aria-live="polite"></span>
 				</div>
-				<table class="cycle-history">
+				<table id="cycle-history-table" class="cycle-history">
 					<colgroup>
-						<col style="width: 2.5rem" />
+						<col class="cycle-count-col" style="width: 2.5rem" />
 						<col span="2" />
 						<col style="width: 7rem" />
 						<col style="width: 7rem" />
 					</colgroup>
 					<thead>
 						<tr>
-							<th title="Include in averages, min/max, and predictions">Count</th>
+							<th class="cycle-count-header" title="Include in averages, min/max, and predictions">Count</th>
 							<th>Restocked</th>
 							<th>Depleted</th>
 							<th>Rate</th>

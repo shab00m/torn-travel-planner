@@ -1130,6 +1130,7 @@ body.page-item {
 
 .cycle-history-action:hover { border-color: var(--accent); }
 .cycle-history-action:disabled { opacity: 0.5; cursor: not-allowed; }
+.cycle-history-action.hidden { display: none; }
 
 .cycle-history-action-status {
   color: var(--text-dim);
@@ -1142,6 +1143,12 @@ body.page-item {
   border-collapse: collapse;
   font-size: 0.84rem;
   table-layout: fixed;
+}
+
+.cycle-history:not(.cycle-history-with-count) .cycle-count-col,
+.cycle-history:not(.cycle-history-with-count) .cycle-count-header,
+.cycle-history:not(.cycle-history-with-count) .cycle-count-cell {
+  display: none;
 }
 
 .cycle-history th,

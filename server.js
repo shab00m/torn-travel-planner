@@ -349,7 +349,7 @@ function parseDepletedTs(req, res) {
   return depletedTs;
 }
 
-app.patch("/api/restocks/:country/:itemId/:depletedTs", (req, res) => {
+app.patch("/api/restocks/:country/:itemId/:depletedTs", requireAdmin, (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const depletedTs = parseDepletedTs(req, res);
@@ -372,7 +372,7 @@ app.patch("/api/restocks/:country/:itemId/:depletedTs", (req, res) => {
 });
 
 /** Exclude outlier cycles from averages for one item. */
-app.post("/api/restocks/:country/:itemId/flag-outliers", (req, res) => {
+app.post("/api/restocks/:country/:itemId/flag-outliers", requireAdmin, (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   try {
