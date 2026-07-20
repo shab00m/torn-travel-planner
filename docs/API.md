@@ -363,6 +363,31 @@ Admins cannot demote, disallow, or delete their own account. The last remaining 
 
 ---
 
+### Analytics
+
+### `POST /api/page-views`
+
+Record a page load. Called automatically from the client after auth resolves. IP is taken from the request (supports `X-Forwarded-For` behind a proxy).
+
+**Body:** `{ "url": "/item/uni/206", "playerId"?: 123 }`
+
+If `playerId` is present and matches a whitelist user, their current username is stored. Anonymous loads omit `playerId`.
+
+**Response:** created page-view object (201).
+
+### `GET /api/page-views` (admin only)
+
+| Query param | Type | Default | Description |
+|-------------|------|---------|-------------|
+| `limit` | number | `100` | Max rows (1–500). |
+| `offset` | number | `0` | Pagination offset. |
+
+**Response:** `{ views: [{ id, createdAt, url, ipAddress, playerId, name }] }` ordered newest first.
+
+Requires `X-Api-Key` of a whitelisted admin.
+
+---
+
 ### `POST /api/travel`
 
 Check if the player is currently flying to a country (`user/?selections=travel`).

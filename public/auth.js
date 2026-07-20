@@ -72,14 +72,14 @@ function showLoggedIn(player) {
   const capacityTitle =
     `Base ${player.baseCapacity} (${player.travelType})` +
     (player.capacityPerks.length ? `\n${player.capacityPerks.join("\n")}` : "");
-  const usersLink = player.isAdmin
-    ? `<a href="/users" class="users-link">Users</a>`
+  const adminLinks = player.isAdmin
+    ? `<span class="admin-links"><a href="/users" class="users-link">Users</a><a href="/analytics" class="users-link">Analytics</a></span>`
     : "";
   authEl.playerInfo.innerHTML = `
     <span class="player-name">${player.name} <span class="player-id">[${player.playerId}]</span></span>
     <span class="player-stat" title="Travel type">${icon} ${player.travelType}</span>
     <span class="player-stat" title="${capacityTitle}">🧳 ${player.capacity} slots</span>
-    ${usersLink}
+    ${adminLinks}
     <button id="logout-btn" class="logout-btn" title="Log out">Log out</button>
   `;
   authEl.playerInfo.classList.remove("hidden");
@@ -183,6 +183,21 @@ authEl.form.addEventListener("submit", async (e) => {
 initGuestTravelControls();
 syncGuestTravelControls();
 
+/** Fire-and-forget page load beacon (user id/name when logged in; IP captured server-side). */
+function recordPageView() {
+  const payload = { url: `${location.pathname}${location.search}` };
+  const user = getCurrentUser();
+  if (user) payload.playerId = user.playerId;
+  fetch("/api/page-views", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    keepalive: true,
+  }).catch(() => {});
+}
+
 window.getStoredApiKey = getStoredApiKey;
 window.getCurrentUser = getCurrentUser;
-window.authReady = autoLogin();
+window.authReady = autoLogin().finally(() => {
+  recordPageView();
+});

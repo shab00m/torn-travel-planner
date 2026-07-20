@@ -1313,6 +1313,44 @@ body.page-item {
 }
 .users-link:hover { text-decoration: underline; }
 
+.admin-links {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.analytics-toolbar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.analytics-refresh-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.analytics-refresh-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.analytics-url {
+  word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}
+
+.analytics-empty {
+  color: var(--text-dim);
+  text-align: center;
+}
+
 .users-main {
   max-width: 960px;
   margin: 0 auto;

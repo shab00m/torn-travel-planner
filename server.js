@@ -32,10 +32,14 @@ import {
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
 import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
 import { listUsers, createUser, updateUser, deleteUser, seedBootstrapAdmin } from "./src/users.js";
+import { recordPageView, listPageViews, getClientIp } from "./src/analytics.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Railway (and other reverse proxies) set X-Forwarded-For; needed for real client IPs.
+app.set("trust proxy", 1);
 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
@@ -103,6 +107,31 @@ app.patch("/api/users/:playerId", requireAdmin, async (req, res) => {
   } catch (err) {
     const status = err.message === "User not found" ? 404 : 400;
     res.status(status).json({ error: err.message });
+  }
+});
+
+app.post("/api/page-views", async (req, res) => {
+  try {
+    const view = await recordPageView({
+      url: req.body?.url,
+      ipAddress: getClientIp(req),
+      playerId: req.body?.playerId,
+    });
+    res.status(201).json(view);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get("/api/page-views", requireAdmin, async (req, res) => {
+  try {
+    const views = await listPageViews({
+      limit: req.query.limit,
+      offset: req.query.offset,
+    });
+    res.json({ views });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 
@@ -542,6 +571,10 @@ app.delete("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, async (req, 
 
 app.get("/users", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "users.html"));
+});
+
+app.get("/analytics", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "analytics.html"));
 });
 
 app.get("/item/:country/:itemId(\\d+)", (_req, res) => {
