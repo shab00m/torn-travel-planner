@@ -224,9 +224,9 @@ Batch safe-window lookup (used by the favorites list).
   "predictionHours": 24,
   "safeWindowUseRateSelection": true,
   "travelType": "Airstrip",
-  "flightTimeVariance": false,
+  "flightTimeVariance": true,
   "avgSamples": 5,
-  "avgRateSamples": 5,
+  "avgRateSamples": 3,
   "stockoutTiming": "avg",
   "rateTiming": "avg"
 }
@@ -258,12 +258,12 @@ Used as query params on `GET /api/safe-window/...` or as JSON body fields on `PO
 | `restockAmount` | integer | DB value | Full quantity when the item restocks. Overrides the stored value for this request. |
 | `predictionHours` | number | `24` | How far ahead (hours) to predict restock/stockout events. |
 | `travelType` | string | `"Standard"` | `"Standard"`, `"Airstrip"`, `"Private"`, or `"Business"`. Affects one-way flight time used for leave-by times. |
-| `flightTimeVariance` | boolean | `false` | If `true`, apply ±3% flight-time variance (fast for earliest leave, slow for latest). |
-| `safeWindowUseRateSelection` | boolean | `false` | If `true`, use the selected historical depletion rate for safe-window bounds. If `false`, use the fastest (`max`) historical rate (shorter, pessimistic window). Matches the item page checkbox **“Use for safe window”**. |
+| `flightTimeVariance` | boolean | `true` | If `true`, apply ±3% flight-time variance (fast for earliest leave, slow for latest). |
+| `safeWindowUseRateSelection` | boolean | `true` | If `true`, use the selected historical depletion rate for safe-window bounds. If `false`, use the fastest (`max`) historical rate (shorter, pessimistic window). Matches the item page checkbox **“Use for safe window”**. |
 | `stockoutTiming` | string | `"avg"` | How to pick empty-for duration from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the most recent `avgSamples` restock cycles. Matches **“Avg empty for”** on the item page. |
 | `rateTiming` | string | `"avg"` | How to pick depletion rate from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the most recent `avgRateSamples` in-stock windows. Matches **“Rate avg”** on the item page. |
 | `avgSamples` | integer | `5` | Number of recent out-of-stock periods to average when `stockoutTiming` is `"avg"`. |
-| `avgRateSamples` | integer | `5` | Number of recent in-stock windows to average when `rateTiming` is `"avg"`. |
+| `avgRateSamples` | integer | `3` | Number of recent in-stock windows to average when `rateTiming` is `"avg"`. |
 
 **Matching the web UI**
 

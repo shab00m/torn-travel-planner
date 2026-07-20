@@ -130,11 +130,11 @@
 				<div class="control-group">
 					<span class="control-group-title">Prediction Time Range</span>
 					<div class="range-buttons" id="prediction-buttons">
-						<button data-hours="0" class="active">Off</button>
+						<button data-hours="0">Off</button>
 						<button data-hours="1">+1h</button>
 						<button data-hours="2">+2h</button>
 						<button data-hours="3">+3h</button>
-						<button data-hours="6">+6h</button>
+						<button data-hours="6" class="active">+6h</button>
 						<button data-hours="12">+12h</button>
 						<button data-hours="24">+24h</button>
 					</div>
@@ -164,7 +164,7 @@
 				<div class="control-group">
 					<span class="control-group-title">Settings</span>
 					<label class="checkbox" for="flight-variance-toggle">
-						<input id="flight-variance-toggle" type="checkbox" />
+						<input id="flight-variance-toggle" type="checkbox" checked />
 						Account for 3% flight time variance
 					</label>
 				</div>
@@ -248,7 +248,7 @@
 						<span id="rate-avg" class="restock-avg"></span>
 					</div>
 					<label class="checkbox rate-safe-window-toggle" for="safe-window-use-rate">
-						<input id="safe-window-use-rate" type="checkbox" />
+						<input id="safe-window-use-rate" type="checkbox" checked />
 						Use for safe window
 					</label>
 				</div>

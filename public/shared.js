@@ -10,15 +10,15 @@ const state = {
   restocks: [],
   rates: [],
   avgSamples: 5,
-  avgRateSamples: 5,
+  avgRateSamples: 3,
   stockoutTiming: "avg", // "avg" | "min" | "max"
   rateTiming: "avg", // "avg" | "min" | "max"
-  safeWindowUseRateSelection: false,
+  safeWindowUseRateSelection: true,
   item: null, // { country, itemId, name } on the item detail page
   rangeHours: 24,
-  predictionHours: 0,
+  predictionHours: 6,
   timeFormat: "european",
-  flightTimeVariance: false,
+  flightTimeVariance: true,
   predictedEvents: [],
   chartOffsetSec: 0,
   chartScale: 1,
@@ -74,19 +74,19 @@ function applyStoredPrefs() {
   const prefs = loadPrefs();
   applyTravelSettings(prefs);
   state.rangeHours = pickOption(prefs.rangeHours, RANGE_HOURS_OPTIONS, 24);
-  state.predictionHours = pickOption(prefs.predictionHours, PREDICTION_HOURS_OPTIONS, 0);
+  state.predictionHours = pickOption(prefs.predictionHours, PREDICTION_HOURS_OPTIONS, 6);
   state.avgSamples = pickOption(prefs.avgSamples, SAMPLE_OPTIONS, 5);
-  state.avgRateSamples = pickOption(prefs.avgRateSamples, SAMPLE_OPTIONS, 5);
+  state.avgRateSamples = pickOption(prefs.avgRateSamples, SAMPLE_OPTIONS, 3);
   state.stockoutTiming = ["avg", "min", "max"].includes(prefs.stockoutTiming)
     ? prefs.stockoutTiming
     : "avg";
   state.rateTiming = ["avg", "min", "max"].includes(prefs.rateTiming) ? prefs.rateTiming : "avg";
-  state.safeWindowUseRateSelection = prefs.safeWindowUseRateSelection === true;
+  state.safeWindowUseRateSelection = prefs.safeWindowUseRateSelection !== false;
   state.search = typeof prefs.search === "string" ? prefs.search : "";
   state.countryFilter = typeof prefs.countryFilter === "string" ? prefs.countryFilter : "";
   state.inStockOnly = prefs.inStockOnly === true;
   state.timeFormat = TIME_FORMATS.includes(prefs.timeFormat) ? prefs.timeFormat : "european";
-  state.flightTimeVariance = prefs.flightTimeVariance === true;
+  state.flightTimeVariance = prefs.flightTimeVariance !== false;
   if (
     prefs.favoritesSort &&
     ["item", "stock", "cost", "profit", "safeWindow", "leaveBy"].includes(prefs.favoritesSort.column) &&
