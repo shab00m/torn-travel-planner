@@ -17,13 +17,13 @@ export function getApiKeyFromRequest(req) {
  */
 export async function resolveAllowedUser(apiKey) {
   const player = await getPlayerInfo(apiKey);
-  const user = getUser(player.playerId);
+  const user = await getUser(player.playerId);
   if (!user?.isAllowed) {
     const err = new Error("Access denied: your Torn account is not whitelisted");
     err.statusCode = 403;
     throw err;
   }
-  return { player, user: recordLogin(player.playerId, player.name) };
+  return { player, user: await recordLogin(player.playerId, player.name) };
 }
 
 /** Express middleware: require a whitelisted admin (via X-Api-Key or body.apiKey). */

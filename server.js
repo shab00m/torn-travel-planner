@@ -3,13 +3,35 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COUNTRIES } from "./src/countries.js";
 import { getFlightMatrix } from "./src/flight-times.js";
-import { getHistory, getRestocks, getDepletionRates, getSnapshot, updateSnapshot, deleteSnapshot, deleteSnapshots, backfillRestocks, setRestockIgnored, flagOutlierRestocks, getRestockAmount, getAllRestockAmounts, setRestockAmount, deleteRestockAmount } from "./src/db.js";
+import {
+  initDb,
+  getHistory,
+  getRestocks,
+  getDepletionRates,
+  getSnapshot,
+  updateSnapshot,
+  deleteSnapshot,
+  deleteSnapshots,
+  backfillRestocks,
+  setRestockIgnored,
+  flagOutlierRestocks,
+  getRestockAmount,
+  getAllRestockAmounts,
+  setRestockAmount,
+  deleteRestockAmount,
+} from "./src/db.js";
 import { startPolling, getLatest } from "./src/yata.js";
 import { getTravelStatus } from "./src/torn.js";
-import { getMarketPrice, getCachedMarketPrices, enqueueStaleMarketRefresh, startMarketRefresh, CACHE_TTL_SEC } from "./src/market.js";
+import {
+  getMarketPrice,
+  getCachedMarketPrices,
+  enqueueStaleMarketRefresh,
+  startMarketRefresh,
+  CACHE_TTL_SEC,
+} from "./src/market.js";
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
 import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
-import { listUsers, createUser, updateUser, deleteUser } from "./src/users.js";
+import { listUsers, createUser, updateUser, deleteUser, seedBootstrapAdmin } from "./src/users.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -39,14 +61,14 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-app.get("/api/users", requireAdmin, (_req, res) => {
-  res.json({ users: listUsers() });
+app.get("/api/users", requireAdmin, async (_req, res) => {
+  res.json({ users: await listUsers() });
 });
 
-app.post("/api/users", requireAdmin, (req, res) => {
+app.post("/api/users", requireAdmin, async (req, res) => {
   try {
     const playerId = Number.parseInt(req.body?.playerId, 10);
-    const user = createUser({
+    const user = await createUser({
       playerId,
       name: req.body?.name,
       isAdmin: Boolean(req.body?.isAdmin),
@@ -59,7 +81,7 @@ app.post("/api/users", requireAdmin, (req, res) => {
   }
 });
 
-app.patch("/api/users/:playerId", requireAdmin, (req, res) => {
+app.patch("/api/users/:playerId", requireAdmin, async (req, res) => {
   const playerId = Number.parseInt(req.params.playerId, 10);
   if (!Number.isInteger(playerId) || playerId <= 0) {
     res.status(400).json({ error: "playerId must be a positive integer" });
@@ -77,14 +99,14 @@ app.patch("/api/users/:playerId", requireAdmin, (req, res) => {
         return;
       }
     }
-    res.json(updateUser(playerId, fields));
+    res.json(await updateUser(playerId, fields));
   } catch (err) {
     const status = err.message === "User not found" ? 404 : 400;
     res.status(status).json({ error: err.message });
   }
 });
 
-app.delete("/api/users/:playerId", requireAdmin, (req, res) => {
+app.delete("/api/users/:playerId", requireAdmin, async (req, res) => {
   const playerId = Number.parseInt(req.params.playerId, 10);
   if (!Number.isInteger(playerId) || playerId <= 0) {
     res.status(400).json({ error: "playerId must be a positive integer" });
@@ -95,7 +117,7 @@ app.delete("/api/users/:playerId", requireAdmin, (req, res) => {
     return;
   }
   try {
-    deleteUser(playerId);
+    await deleteUser(playerId);
     res.json({ ok: true });
   } catch (err) {
     const status = err.message === "User not found" ? 404 : 400;
@@ -120,9 +142,9 @@ app.post("/api/market", async (req, res) => {
   }
 });
 
-app.get("/api/markets", (_req, res) => {
-  const { prices, fetchedAt } = getCachedMarketPrices();
-  enqueueStaleMarketRefresh();
+app.get("/api/markets", async (_req, res) => {
+  const { prices, fetchedAt } = await getCachedMarketPrices();
+  void enqueueStaleMarketRefresh();
   res.json({ prices, fetchedAt, cacheTtlSec: CACHE_TTL_SEC });
 });
 
@@ -192,7 +214,7 @@ function parseItemParams(req, res) {
 
 // Snapshot history for one item in one country.
 // Query params: hours (default 24, 0 = everything)
-app.get("/api/history/:country/:itemId", (req, res) => {
+app.get("/api/history/:country/:itemId", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const hours = Number.parseFloat(req.query.hours ?? "24");
@@ -201,37 +223,45 @@ app.get("/api/history/:country/:itemId", (req, res) => {
     return;
   }
   const since = hours === 0 ? 0 : Math.floor(Date.now() / 1000) - hours * 3600;
-  res.json({ country: params.country, itemId: params.id, points: getHistory(params.country, params.id, since) });
+  res.json({
+    country: params.country,
+    itemId: params.id,
+    points: await getHistory(params.country, params.id, since),
+  });
 });
 
 // Recent out-of-stock periods and in-stock depletion-rate windows for one
 // item (newest first). 50 = enough history for cycle table (10 rows) and
 // sample averages.
-app.get("/api/restocks/:country/:itemId", (req, res) => {
+app.get("/api/restocks/:country/:itemId", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   res.json({
-    restocks: getRestocks(params.country, params.id, 50),
-    rates: getDepletionRates(params.country, params.id, 50),
+    restocks: await getRestocks(params.country, params.id, 50),
+    rates: await getDepletionRates(params.country, params.id, 50),
   });
 });
 
-app.get("/api/restock-amounts", (_req, res) => {
-  res.json({ amounts: getAllRestockAmounts() });
+app.get("/api/restock-amounts", async (_req, res) => {
+  res.json({ amounts: await getAllRestockAmounts() });
 });
 
-app.get("/api/restock-amounts/:country/:itemId", (req, res) => {
+app.get("/api/restock-amounts/:country/:itemId", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
-  res.json({ country: params.country, itemId: params.id, amount: getRestockAmount(params.country, params.id) });
+  res.json({
+    country: params.country,
+    itemId: params.id,
+    amount: await getRestockAmount(params.country, params.id),
+  });
 });
 
-app.put("/api/restock-amounts/:country/:itemId", (req, res) => {
+app.put("/api/restock-amounts/:country/:itemId", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const amount = req.body?.amount;
   if (amount == null) {
-    deleteRestockAmount(params.country, params.id);
+    await deleteRestockAmount(params.country, params.id);
     res.json({ country: params.country, itemId: params.id, amount: null });
     return;
   }
@@ -241,7 +271,7 @@ app.put("/api/restock-amounts/:country/:itemId", (req, res) => {
     return;
   }
   try {
-    setRestockAmount(params.country, params.id, parsed);
+    await setRestockAmount(params.country, params.id, parsed);
     res.json({ country: params.country, itemId: params.id, amount: parsed });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -292,18 +322,18 @@ function parseSafeWindowOptions(query = {}, body = {}) {
   return opts;
 }
 
-app.get("/api/safe-window/:country/:itemId", (req, res) => {
+app.get("/api/safe-window/:country/:itemId", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   try {
     const opts = parseSafeWindowOptions(req.query);
-    res.json(computeNextSafeWindow(params.country, params.id, opts));
+    res.json(await computeNextSafeWindow(params.country, params.id, opts));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.post("/api/safe-windows", (req, res) => {
+app.post("/api/safe-windows", async (req, res) => {
   const items = req.body?.items;
   if (!Array.isArray(items) || !items.length) {
     res.status(400).json({ error: "items array is required" });
@@ -334,7 +364,7 @@ app.post("/api/safe-windows", (req, res) => {
   }
   try {
     const opts = parseSafeWindowOptions({}, req.body);
-    res.json({ windows: computeSafeWindowsBatch(parsed, opts) });
+    res.json({ windows: await computeSafeWindowsBatch(parsed, opts) });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -349,7 +379,7 @@ function parseDepletedTs(req, res) {
   return depletedTs;
 }
 
-app.patch("/api/restocks/:country/:itemId/:depletedTs", requireAdmin, (req, res) => {
+app.patch("/api/restocks/:country/:itemId/:depletedTs", requireAdmin, async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const depletedTs = parseDepletedTs(req, res);
@@ -360,11 +390,11 @@ app.patch("/api/restocks/:country/:itemId/:depletedTs", requireAdmin, (req, res)
     return;
   }
   try {
-    setRestockIgnored(params.country, params.id, depletedTs, ignored);
+    await setRestockIgnored(params.country, params.id, depletedTs, ignored);
     res.json({
       ok: true,
-      restocks: getRestocks(params.country, params.id, 50),
-      rates: getDepletionRates(params.country, params.id, 50),
+      restocks: await getRestocks(params.country, params.id, 50),
+      rates: await getDepletionRates(params.country, params.id, 50),
     });
   } catch (err) {
     res.status(err.message === "Restock cycle not found" ? 404 : 400).json({ error: err.message });
@@ -372,17 +402,17 @@ app.patch("/api/restocks/:country/:itemId/:depletedTs", requireAdmin, (req, res)
 });
 
 /** Exclude outlier cycles from averages for one item. */
-app.post("/api/restocks/:country/:itemId/flag-outliers", requireAdmin, (req, res) => {
+app.post("/api/restocks/:country/:itemId/flag-outliers", requireAdmin, async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   try {
-    const result = flagOutlierRestocks(params.country, params.id);
+    const result = await flagOutlierRestocks(params.country, params.id);
     res.json({
       ok: true,
       flagged: result.flagged,
       depletedTs: result.depletedTs,
-      restocks: getRestocks(params.country, params.id, 50),
-      rates: getDepletionRates(params.country, params.id, 50),
+      restocks: await getRestocks(params.country, params.id, 50),
+      rates: await getDepletionRates(params.country, params.id, 50),
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -398,15 +428,15 @@ function parseYataTs(req, res) {
   return yataTs;
 }
 
-function rerunRestocks(country, itemId) {
-  backfillRestocks();
+async function rerunRestocks(country, itemId) {
+  await backfillRestocks();
   return {
-    restocks: getRestocks(country, itemId, 50),
-    rates: getDepletionRates(country, itemId, 50),
+    restocks: await getRestocks(country, itemId, 50),
+    rates: await getDepletionRates(country, itemId, 50),
   };
 }
 
-app.post("/api/snapshots/:country/:itemId/delete", requireAdmin, (req, res) => {
+app.post("/api/snapshots/:country/:itemId/delete", requireAdmin, async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const list = req.body?.yata_ts;
@@ -419,20 +449,20 @@ app.post("/api/snapshots/:country/:itemId/delete", requireAdmin, (req, res) => {
     return;
   }
   try {
-    const deleted = deleteSnapshots(params.country, params.id, list);
-    const { restocks, rates } = rerunRestocks(params.country, params.id);
+    const deleted = await deleteSnapshots(params.country, params.id, list);
+    const { restocks, rates } = await rerunRestocks(params.country, params.id);
     res.json({ ok: true, deleted, restocks, rates });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-app.get("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
+app.get("/api/snapshots/:country/:itemId/:yataTs", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const yataTs = parseYataTs(req, res);
   if (yataTs == null) return;
-  const row = getSnapshot(params.country, params.id, yataTs);
+  const row = await getSnapshot(params.country, params.id, yataTs);
   if (!row) {
     res.status(404).json({ error: "Snapshot not found" });
     return;
@@ -440,7 +470,7 @@ app.get("/api/snapshots/:country/:itemId/:yataTs", (req, res) => {
   res.json({ country: params.country, itemId: params.id, ...row });
 });
 
-app.patch("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, (req, res) => {
+app.patch("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const yataTs = parseYataTs(req, res);
@@ -459,22 +489,22 @@ app.patch("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, (req, res) =>
     return;
   }
   try {
-    const updated = updateSnapshot(params.country, params.id, yataTs, body);
-    const { restocks, rates } = rerunRestocks(params.country, params.id);
+    const updated = await updateSnapshot(params.country, params.id, yataTs, body);
+    const { restocks, rates } = await rerunRestocks(params.country, params.id);
     res.json({ ok: true, snapshot: updated, restocks, rates });
   } catch (err) {
     res.status(err.message === "Snapshot not found" ? 404 : 400).json({ error: err.message });
   }
 });
 
-app.delete("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, (req, res) => {
+app.delete("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   const yataTs = parseYataTs(req, res);
   if (yataTs == null) return;
   try {
-    deleteSnapshot(params.country, params.id, yataTs);
-    const { restocks, rates } = rerunRestocks(params.country, params.id);
+    await deleteSnapshot(params.country, params.id, yataTs);
+    const { restocks, rates } = await rerunRestocks(params.country, params.id);
     res.json({ ok: true, restocks, rates });
   } catch (err) {
     res.status(err.message === "Snapshot not found" ? 404 : 400).json({ error: err.message });
@@ -492,6 +522,9 @@ app.get("/item/:country/:itemId(\\d+)", (_req, res) => {
 app.get("/item/:country/:itemId(\\d+)/price", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "item-price.html"));
 });
+
+await initDb();
+await seedBootstrapAdmin();
 
 app.listen(PORT, () => {
   console.log(`Torn Travel Planner running at http://localhost:${PORT}`);

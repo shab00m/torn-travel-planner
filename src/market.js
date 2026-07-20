@@ -76,8 +76,8 @@ class MinuteRateLimiter {
 
 const rateLimiter = new MinuteRateLimiter(CALLS_PER_MINUTE);
 
-function storeMarketPrice(itemId, marketPrice, fetchedAt = Math.floor(Date.now() / 1000)) {
-  upsertMarketPrice(itemId, marketPrice, fetchedAt);
+async function storeMarketPrice(itemId, marketPrice, fetchedAt = Math.floor(Date.now() / 1000)) {
+  await upsertMarketPrice(itemId, marketPrice, fetchedAt);
 }
 
 async function fetchAndStoreMarketPrice(itemId, apiKey) {
@@ -85,16 +85,16 @@ async function fetchAndStoreMarketPrice(itemId, apiKey) {
   try {
     const data = await fetchItemMarket(apiKey, itemId);
     const marketPrice = averageMarketPrice(data);
-    storeMarketPrice(itemId, marketPrice, fetchedAt);
+    await storeMarketPrice(itemId, marketPrice, fetchedAt);
     return marketPrice;
   } catch (err) {
-    storeMarketPrice(itemId, null, fetchedAt);
+    await storeMarketPrice(itemId, null, fetchedAt);
     throw err;
   }
 }
 
-function readCachedMarketPrice(itemId) {
-  const row = getMarketPriceRow(itemId);
+async function readCachedMarketPrice(itemId) {
+  const row = await getMarketPriceRow(itemId);
   if (!row) return null;
   return {
     marketPrice: row.market_price,
@@ -103,10 +103,10 @@ function readCachedMarketPrice(itemId) {
   };
 }
 
-export function getCachedMarketPrices() {
+export async function getCachedMarketPrices() {
   const prices = {};
   const fetchedAt = {};
-  for (const row of getAllMarketPriceRows()) {
+  for (const row of await getAllMarketPriceRows()) {
     prices[row.item_id] = row.market_price;
     fetchedAt[row.item_id] = row.fetched_at;
   }
@@ -118,12 +118,12 @@ function scheduleMarketRefresh(itemIds) {
   void runRefreshQueue();
 }
 
-export function enqueueStaleMarketRefresh(limit = REFRESH_BATCH_SIZE) {
+export async function enqueueStaleMarketRefresh(limit = REFRESH_BATCH_SIZE) {
   const apiKey = resolveApiKey(null);
   if (!apiKey) return false;
 
   const staleBeforeTs = Math.floor(Date.now() / 1000) - CACHE_TTL_SEC;
-  const itemIds = getStaleMarketItemIds(staleBeforeTs, limit);
+  const itemIds = await getStaleMarketItemIds(staleBeforeTs, limit);
   if (!itemIds.length) return false;
 
   scheduleMarketRefresh(itemIds);
@@ -142,7 +142,7 @@ async function runRefreshQueue() {
       const itemId = refreshQueue.values().next().value;
       refreshQueue.delete(itemId);
 
-      const cached = readCachedMarketPrice(itemId);
+      const cached = await readCachedMarketPrice(itemId);
       if (cached?.fresh) continue;
 
       await rateLimiter.acquire();
@@ -159,7 +159,7 @@ async function runRefreshQueue() {
 
 /** Item market average price; reads DB cache first, then rate-limited Torn fetch. */
 export async function getMarketPrice(itemId, userApiKey) {
-  const cached = readCachedMarketPrice(itemId);
+  const cached = await readCachedMarketPrice(itemId);
   if (cached?.fresh && cached.marketPrice != null) {
     return cached.marketPrice;
   }
@@ -186,7 +186,7 @@ export function startMarketRefresh() {
   if (refreshTimer) return;
 
   const tick = () => {
-    enqueueStaleMarketRefresh();
+    void enqueueStaleMarketRefresh();
   };
 
   tick();

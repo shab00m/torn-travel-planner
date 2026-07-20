@@ -6,12 +6,16 @@
   "type": "module",
   "scripts": {
     "start": "node scripts/start.mjs",
-    "backfill": "node scripts/backfill-restocks.mjs"
+    "migrate": "node scripts/migrate.mjs",
+    "backfill": "node scripts/backfill-restocks.mjs",
+    "import-sqlite": "node scripts/import-sqlite-to-postgres.mjs",
+    "db-counts": "node scripts/db-counts.mjs"
   },
   "engines": {
-    "node": ">=23.4.0"
+    "node": ">=20"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "pg": "^8.22.0"
   }
 }

@@ -1,22 +1,10 @@
-import db from "./db.js";
+import { query } from "./pg.js";
 
 /** Bootstrap admin — always ensured present on startup. */
 export const BOOTSTRAP_ADMIN = {
   playerId: 4166571,
   name: "CptSpork",
 };
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    player_id     INTEGER PRIMARY KEY,
-    name          TEXT    NOT NULL,
-    is_admin      INTEGER NOT NULL DEFAULT 0,
-    is_allowed    INTEGER NOT NULL DEFAULT 0,
-    created_at    INTEGER NOT NULL,
-    updated_at    INTEGER NOT NULL,
-    last_login_at INTEGER
-  );
-`);
 
 function nowTs() {
   return Math.floor(Date.now() / 1000);
@@ -35,57 +23,36 @@ function mapUser(row) {
   };
 }
 
-const getUserStmt = db.prepare(`SELECT * FROM users WHERE player_id = ?`);
-const listUsersStmt = db.prepare(
-  `SELECT * FROM users ORDER BY is_admin DESC, name COLLATE NOCASE ASC`
-);
-const insertUserStmt = db.prepare(
-  `INSERT INTO users (player_id, name, is_admin, is_allowed, created_at, updated_at)
-   VALUES (?, ?, ?, ?, ?, ?)`
-);
-const updateUserStmt = db.prepare(
-  `UPDATE users
-   SET name = ?, is_admin = ?, is_allowed = ?, updated_at = ?
-   WHERE player_id = ?`
-);
-const deleteUserStmt = db.prepare(`DELETE FROM users WHERE player_id = ?`);
-const touchLoginStmt = db.prepare(
-  `UPDATE users SET name = ?, last_login_at = ?, updated_at = ? WHERE player_id = ?`
-);
-const adminCountStmt = db.prepare(
-  `SELECT COUNT(*) AS n FROM users WHERE is_admin = 1 AND is_allowed = 1`
-);
-
 /** Ensure the bootstrap admin exists (insert only; never overwrite flags). */
-export function seedBootstrapAdmin() {
-  const existing = getUserStmt.get(BOOTSTRAP_ADMIN.playerId);
-  if (existing) return mapUser(existing);
+export async function seedBootstrapAdmin() {
+  const existing = await getUser(BOOTSTRAP_ADMIN.playerId);
+  if (existing) return existing;
   const ts = nowTs();
-  insertUserStmt.run(
-    BOOTSTRAP_ADMIN.playerId,
-    BOOTSTRAP_ADMIN.name,
-    1,
-    1,
-    ts,
-    ts
+  await query(
+    `INSERT INTO users (player_id, name, is_admin, is_allowed, created_at, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (player_id) DO NOTHING`,
+    [BOOTSTRAP_ADMIN.playerId, BOOTSTRAP_ADMIN.name, 1, 1, ts, ts]
   );
   return getUser(BOOTSTRAP_ADMIN.playerId);
 }
 
-seedBootstrapAdmin();
-
-export function getUser(playerId) {
-  return mapUser(getUserStmt.get(playerId));
+export async function getUser(playerId) {
+  const { rows } = await query(`SELECT * FROM users WHERE player_id = $1`, [playerId]);
+  return mapUser(rows[0]);
 }
 
-export function listUsers() {
-  return listUsersStmt.all().map(mapUser);
+export async function listUsers() {
+  const { rows } = await query(
+    `SELECT * FROM users ORDER BY is_admin DESC, lower(name) ASC`
+  );
+  return rows.map(mapUser);
 }
 
 /**
  * @param {{ playerId: number, name: string, isAdmin?: boolean, isAllowed?: boolean }} fields
  */
-export function createUser(fields) {
+export async function createUser(fields) {
   const playerId = fields.playerId;
   if (!Number.isInteger(playerId) || playerId <= 0) {
     throw new Error("playerId must be a positive integer");
@@ -98,9 +65,13 @@ export function createUser(fields) {
   const ts = nowTs();
 
   try {
-    insertUserStmt.run(playerId, name, isAdmin ? 1 : 0, isAllowed ? 1 : 0, ts, ts);
+    await query(
+      `INSERT INTO users (player_id, name, is_admin, is_allowed, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [playerId, name, isAdmin ? 1 : 0, isAllowed ? 1 : 0, ts, ts]
+    );
   } catch (err) {
-    if (String(err?.message ?? "").includes("UNIQUE")) {
+    if (err?.code === "23505") {
       throw new Error("User already exists");
     }
     throw err;
@@ -112,14 +83,12 @@ export function createUser(fields) {
  * @param {number} playerId
  * @param {{ name?: string, isAdmin?: boolean, isAllowed?: boolean }} fields
  */
-export function updateUser(playerId, fields) {
-  const existing = getUser(playerId);
+export async function updateUser(playerId, fields) {
+  const existing = await getUser(playerId);
   if (!existing) throw new Error("User not found");
 
   const name =
-    fields.name !== undefined
-      ? String(fields.name).trim()
-      : existing.name;
+    fields.name !== undefined ? String(fields.name).trim() : existing.name;
   if (!name) throw new Error("name is required");
 
   const isAdmin =
@@ -128,33 +97,46 @@ export function updateUser(playerId, fields) {
     fields.isAllowed !== undefined ? Boolean(fields.isAllowed) : existing.isAllowed;
 
   if (existing.isAdmin && existing.isAllowed && (!isAdmin || !isAllowed)) {
-    const admins = adminCountStmt.get().n;
-    if (admins <= 1) {
+    const { rows } = await query(
+      `SELECT COUNT(*)::int AS n FROM users WHERE is_admin = 1 AND is_allowed = 1`
+    );
+    if (rows[0].n <= 1) {
       throw new Error("Cannot demote or disallow the last admin");
     }
   }
 
-  updateUserStmt.run(name, isAdmin ? 1 : 0, isAllowed ? 1 : 0, nowTs(), playerId);
+  await query(
+    `UPDATE users
+     SET name = $1, is_admin = $2, is_allowed = $3, updated_at = $4
+     WHERE player_id = $5`,
+    [name, isAdmin ? 1 : 0, isAllowed ? 1 : 0, nowTs(), playerId]
+  );
   return getUser(playerId);
 }
 
-export function deleteUser(playerId) {
-  const existing = getUser(playerId);
+export async function deleteUser(playerId) {
+  const existing = await getUser(playerId);
   if (!existing) throw new Error("User not found");
 
   if (existing.isAdmin && existing.isAllowed) {
-    const admins = adminCountStmt.get().n;
-    if (admins <= 1) {
+    const { rows } = await query(
+      `SELECT COUNT(*)::int AS n FROM users WHERE is_admin = 1 AND is_allowed = 1`
+    );
+    if (rows[0].n <= 1) {
       throw new Error("Cannot delete the last admin");
     }
   }
 
-  const res = deleteUserStmt.run(playerId);
-  if (res.changes === 0) throw new Error("User not found");
+  const res = await query(`DELETE FROM users WHERE player_id = $1`, [playerId]);
+  if (res.rowCount === 0) throw new Error("User not found");
 }
 
 /** Sync display name and last login after a successful whitelist check. */
-export function recordLogin(playerId, name) {
-  touchLoginStmt.run(name, nowTs(), nowTs(), playerId);
+export async function recordLogin(playerId, name) {
+  const ts = nowTs();
+  await query(
+    `UPDATE users SET name = $1, last_login_at = $2, updated_at = $3 WHERE player_id = $4`,
+    [name, ts, ts, playerId]
+  );
   return getUser(playerId);
 }

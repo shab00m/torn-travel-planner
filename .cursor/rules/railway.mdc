@@ -1,0 +1,24 @@
+---
+description: Railway deployment project IDs and how to manage infra for this app
+alwaysApply: true
+---
+
+# Railway
+
+This app is already deployed on Railway. **Do not create a new Railway project.**
+
+| Field | Value |
+| --- | --- |
+| Project name | torn.automagical.click |
+| Project URL | https://railway.com/project/18b99ba3-c5d4-42a3-a572-4342dca87fd9 |
+| Project ID | `18b99ba3-c5d4-42a3-a572-4342dca87fd9` |
+| Environment | production (`7cae12f4-51c9-43d0-b65b-a0a810d8f83d`) |
+| App service | torn-travel-planner (`8daf31fe-ce79-4d68-bd2d-3e813ad431a4`) |
+| Postgres service | Postgres (`8cbfa40a-04c3-4c31-9308-612200e19bf1`) |
+
+## When using the Railway MCP
+
+1. Always target project ID `18b99ba3-c5d4-42a3-a572-4342dca87fd9`.
+2. Never call `project_create` for this app.
+3. Add databases/services to this existing project, then wire vars into `torn-travel-planner` (e.g. `DATABASE_URL=${{Postgres.DATABASE_URL}}`).
+4. Prefer Railway MCP tools (`service_list`, `variable_set` / `variable_bulk_set`, `template_deploy`, etc.) over inventing a second project.

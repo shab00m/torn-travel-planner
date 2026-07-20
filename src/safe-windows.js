@@ -414,7 +414,7 @@ function safeWindowResponse(fields, restockAmount) {
   return { ...fields, restockAmount: restockAmount ?? null };
 }
 
-export function computeNextSafeWindow(country, itemId, userOpts = {}) {
+export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
   const opts = {
     restockAmount: null,
     avgSamples: 5,
@@ -428,11 +428,12 @@ export function computeNextSafeWindow(country, itemId, userOpts = {}) {
     wallTs: Math.floor(Date.now() / 1000),
     ...userOpts,
   };
-  const restockAmount = opts.restockAmount ?? getStoredRestockAmount(country, itemId);
+  const restockAmount =
+    opts.restockAmount ?? (await getStoredRestockAmount(country, itemId));
 
-  const restocks = getRestocks(country, itemId, 50);
-  const rates = getDepletionRates(country, itemId, 50);
-  const chartPoints = getHistory(country, itemId, 0);
+  const restocks = await getRestocks(country, itemId, 50);
+  const rates = await getDepletionRates(country, itemId, 50);
+  const chartPoints = await getHistory(country, itemId, 0);
 
   const current = resolveCurrentStock(chartPoints);
   if (!current) {
@@ -540,13 +541,17 @@ export function computeNextSafeWindow(country, itemId, userOpts = {}) {
   );
 }
 
-export function computeSafeWindowsBatch(items, opts = {}) {
+export async function computeSafeWindowsBatch(items, opts = {}) {
   const windows = {};
   for (const item of items) {
     const key = `${item.country}:${item.itemId}`;
-    windows[key] = computeNextSafeWindow(item.country, item.itemId, {
+    const restockAmount =
+      item.restockAmount ??
+      opts.restockAmount ??
+      (await getStoredRestockAmount(item.country, item.itemId));
+    windows[key] = await computeNextSafeWindow(item.country, item.itemId, {
       ...opts,
-      restockAmount: item.restockAmount ?? opts.restockAmount ?? getStoredRestockAmount(item.country, item.itemId),
+      restockAmount,
     });
   }
   return windows;

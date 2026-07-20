@@ -21,7 +21,7 @@ async function fetchOnce() {
 async function poll() {
 	try {
 		const payload = await fetchOnce();
-		const inserted = saveSnapshot(payload.stocks);
+		const inserted = await saveSnapshot(payload.stocks);
 		latest = payload;
 		lastError = null;
 		console.log(
