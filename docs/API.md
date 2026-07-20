@@ -367,7 +367,7 @@ Admins cannot demote, disallow, or delete their own account. The last remaining 
 
 ### `POST /api/page-views`
 
-Record a page load. Called automatically from the client after auth resolves. IP is taken from the request (supports `X-Forwarded-For` behind a proxy).
+Record a page load. Called automatically from the client after auth resolves. IP is taken from `X-Real-IP` when present (Railway edge), otherwise `req.ip` / the socket address.
 
 **Body:** `{ "url": "/item/uni/206", "playerId"?: 123 }`
 

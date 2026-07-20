@@ -94,10 +94,20 @@ export async function listPageViews(options = {}) {
   return rows.map(mapPageView);
 }
 
-/** Client IP from Express (requires `trust proxy` behind Railway/reverse proxies). */
+/**
+ * Client IP for analytics.
+ * On Railway, `X-Real-IP` is the edge-set connecting IP (overwritten by the proxy).
+ * Locally (no proxy headers), fall through to the socket address.
+ */
 export function getClientIp(req) {
-  const ip = req.ip || req.socket?.remoteAddress;
-  if (typeof ip !== "string" || !ip.trim()) return null;
-  // Express may return IPv4-mapped IPv6 (:ffff:x.x.x.x)
+  const realIp = req.get("x-real-ip");
+  const raw =
+    (typeof realIp === "string" && realIp.trim()) ||
+    req.ip ||
+    req.socket?.remoteAddress ||
+    null;
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  const ip = raw.trim();
+  // Express / Node may return IPv4-mapped IPv6 (:ffff:x.x.x.x)
   return ip.startsWith("::ffff:") ? ip.slice(7) : ip;
 }
