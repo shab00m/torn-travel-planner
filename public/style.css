@@ -284,15 +284,20 @@ h1 { margin: 0; font-size: 1.35rem; }
   padding: 16px 24px;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 12px 24px;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   font-size: 0.85rem;
 }
+
+.site-footer-status:empty { display: none; }
+
+.site-footer-status.error { color: var(--red); }
 
 .site-footer a {
   color: var(--text-dim);
   text-decoration: none;
+  margin-left: auto;
 }
 
 .site-footer a:hover { color: var(--accent); }

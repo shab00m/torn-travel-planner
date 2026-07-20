@@ -131,6 +131,7 @@ function injectSiteFooter() {
   footer.className = "site-footer";
   footer.innerHTML = `
     <div class="site-footer-inner">
+      <span id="status" class="status site-footer-status"></span>
       <a href="/tos">API Terms of Service</a>
     </div>
   `;
