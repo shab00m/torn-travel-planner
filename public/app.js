@@ -1,10 +1,21 @@
 const el = {
   status: document.getElementById("status"),
+  pageError: document.getElementById("page-error"),
   countries: document.getElementById("countries"),
   search: document.getElementById("item-search"),
   countryFilter: document.getElementById("country-filter"),
   inStockOnly: document.getElementById("in-stock-only"),
 };
+
+function clearPageError() {
+  el.pageError.textContent = "";
+  el.pageError.classList.add("hidden");
+}
+
+function showPageError(message) {
+  el.pageError.textContent = message;
+  el.pageError.classList.remove("hidden");
+}
 
 const escapeHtml = (s) =>
   s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -294,13 +305,13 @@ async function loadStocks() {
     state.stocks = data.stocks;
     lastStockTimestamp = data.timestamp;
     noteStockTimestamp(data.timestamp);
+    clearPageError();
     el.status.textContent = `Last update: ${fmtTime(data.timestamp)} — updates when YATA polls (~every minute)`;
-    el.status.classList.remove("error");
     render();
     await loadSafeWindows();
   } catch (err) {
-    el.status.textContent = `Error: ${err.message}`;
-    el.status.classList.add("error");
+    el.status.textContent = "Unable to load stocks";
+    showPageError(`Error: ${err.message}`);
     if (!stocksRetryTimer) {
       stocksRetryTimer = setTimeout(() => {
         stocksRetryTimer = null;

@@ -311,8 +311,12 @@ export async function saveSnapshot(stocks) {
     }
 
     if (itemEntries.length) {
-      const ids = itemEntries.map((e) => e.id);
-      const names = itemEntries.map((e) => e.name);
+      // Same item can appear in multiple countries; Postgres rejects
+      // ON CONFLICT DO UPDATE when a row is proposed twice in one INSERT.
+      const byId = new Map();
+      for (const entry of itemEntries) byId.set(entry.id, entry.name);
+      const ids = [...byId.keys()];
+      const names = [...byId.values()];
       await client.query(
         `INSERT INTO items (item_id, name)
          SELECT * FROM UNNEST($1::int[], $2::text[])
