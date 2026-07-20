@@ -151,7 +151,7 @@ document.getElementById("users-tbody").addEventListener("click", async (e) => {
 window.authReady.then(async () => {
   const user = window.getCurrentUser?.();
   if (!user) {
-    showGate("Log in with a whitelisted admin account to manage users.");
+    showGate("Log in with an admin account to manage users.");
     return;
   }
   if (!user.isAdmin) {

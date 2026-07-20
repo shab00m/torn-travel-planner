@@ -42,6 +42,27 @@ export async function getUser(playerId) {
   return mapUser(rows[0]);
 }
 
+/**
+ * Return the user row, creating one with isAllowed=true (non-admin) if missing.
+ * Existing rows are never overwritten — use this for first-login allow-by-default.
+ */
+export async function ensureUser(playerId, name) {
+  const existing = await getUser(playerId);
+  if (existing) return existing;
+
+  const trimmed = typeof name === "string" ? name.trim() : "";
+  if (!trimmed) throw new Error("name is required");
+
+  const ts = nowTs();
+  await query(
+    `INSERT INTO users (player_id, name, is_admin, is_allowed, created_at, updated_at)
+     VALUES ($1, $2, 0, 1, $3, $4)
+     ON CONFLICT (player_id) DO NOTHING`,
+    [playerId, trimmed, ts, ts]
+  );
+  return getUser(playerId);
+}
+
 export async function listUsers() {
   const { rows } = await query(
     `SELECT * FROM users ORDER BY is_admin DESC, lower(name) ASC`
@@ -131,7 +152,7 @@ export async function deleteUser(playerId) {
   if (res.rowCount === 0) throw new Error("User not found");
 }
 
-/** Sync display name and last login after a successful whitelist check. */
+/** Sync display name and last login after a successful allow check. */
 export async function recordLogin(playerId, name) {
   const ts = nowTs();
   await query(

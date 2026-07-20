@@ -325,7 +325,9 @@ These relay requests to the Torn API. The server does not store API keys.
 
 ### `POST /api/login`
 
-Validate a Torn API key against the Torn API (`user/?selections=basic,perks`), then check the local whitelist.
+Validate a Torn API key against the Torn API (`user/?selections=basic,perks`), then ensure a local user row.
+
+Missing accounts are auto-created with `is_allowed = true` (and `is_admin = false`). Uncheck Allowed in the users admin UI to blacklist someone.
 
 Requires a Torn API key with **Minimal** access (or a Custom key that includes `user: basic` and `user: perks`). Public keys return Torn error 16.
 
@@ -333,13 +335,13 @@ Requires a Torn API key with **Minimal** access (or a Custom key that includes `
 
 **Response:** `{ name, playerId, level, travelType, capacity, baseCapacity, bonusCapacity, capacityPerks, isAdmin, isAllowed }`
 
-Returns **403** if the Torn account is not in the `users` table with `is_allowed`.
+Returns **403** if the Torn account exists in `users` with `is_allowed` false.
 
 ---
 
 ### Users (admin only)
 
-All `/api/users` routes require a whitelisted admin. Pass the Torn API key as `X-Api-Key` (or `apiKey` in the JSON body for mutating requests).
+All `/api/users` routes require an allowed admin. Pass the Torn API key as `X-Api-Key` (or `apiKey` in the JSON body for mutating requests).
 
 ### `GET /api/users`
 

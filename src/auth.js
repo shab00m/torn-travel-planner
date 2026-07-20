@@ -1,5 +1,5 @@
 import { getPlayerInfo } from "./torn.js";
-import { getUser, recordLogin } from "./users.js";
+import { ensureUser, recordLogin } from "./users.js";
 
 /** Read Torn API key from X-Api-Key header or JSON body. */
 export function getApiKeyFromRequest(req) {
@@ -12,21 +12,22 @@ export function getApiKeyFromRequest(req) {
 }
 
 /**
- * Validate API key with Torn and return the local user row if whitelisted.
+ * Validate API key with Torn and return the local user row if allowed.
+ * Missing users are auto-created with isAllowed=true (blacklist by unchecking Allowed).
  * @returns {Promise<{ player: object, user: object }>}
  */
 export async function resolveAllowedUser(apiKey) {
   const player = await getPlayerInfo(apiKey);
-  const user = await getUser(player.playerId);
+  const user = await ensureUser(player.playerId, player.name);
   if (!user?.isAllowed) {
-    const err = new Error("Access denied: your Torn account is not whitelisted");
+    const err = new Error("Access denied: your Torn account is not allowed");
     err.statusCode = 403;
     throw err;
   }
   return { player, user: await recordLogin(player.playerId, player.name) };
 }
 
-/** Express middleware: require a whitelisted admin (via X-Api-Key or body.apiKey). */
+/** Express middleware: require an allowed admin (via X-Api-Key or body.apiKey). */
 export async function requireAdmin(req, res, next) {
   const apiKey = getApiKeyFromRequest(req);
   if (!apiKey) {

@@ -44,7 +44,7 @@ app.set("trust proxy", 1);
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 
-// Validate a Torn API key, enforce whitelist, return player + role flags.
+// Validate a Torn API key, auto-allow new accounts, return player + role flags.
 // The key is only relayed to the Torn API, never stored server-side.
 app.post("/api/login", async (req, res) => {
   const apiKey = req.body?.apiKey;

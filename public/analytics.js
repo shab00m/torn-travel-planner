@@ -82,7 +82,7 @@ document.getElementById("analytics-refresh").addEventListener("click", async () 
 window.authReady.then(async () => {
   const user = window.getCurrentUser?.();
   if (!user) {
-    showGate("Log in with a whitelisted admin account to view analytics.");
+    showGate("Log in with an admin account to view analytics.");
     return;
   }
   if (!user.isAdmin) {
