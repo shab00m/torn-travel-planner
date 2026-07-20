@@ -39,7 +39,18 @@ header {
 
 h1 { margin: 0; font-size: 1.35rem; }
 
-.status { color: var(--text-dim); font-size: 0.85rem; }
+.header-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.status {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
 
 .page-error {
   max-width: 720px;
@@ -120,7 +131,7 @@ h1 { margin: 0; font-size: 1.35rem; }
   gap: 14px;
   font-size: 0.88rem;
 }
-.player-info.hidden, .login-form.hidden, .guest-travel.hidden { display: none; }
+.player-info.hidden, .login-form.hidden { display: none; }
 .login-form.hidden + .api-tos { display: none; }
 
 .api-tos {
@@ -286,12 +297,57 @@ h1 { margin: 0; font-size: 1.35rem; }
 
 .site-footer a:hover { color: var(--accent); }
 
-.guest-travel {
+.settings-toggle {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 8px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-toggle:hover { color: var(--text); }
+.settings-toggle.active {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.settings-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-panel.hidden { display: none; }
+
+.settings-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-group-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.settings-group-controls {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
+
+.guest-travel.hidden { display: none; }
 
 .guest-travel-field {
   display: flex;
@@ -364,9 +420,6 @@ h1 { margin: 0; font-size: 1.35rem; }
 }
 
 .time-format-setting {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   color: var(--text-dim);
   font-size: 0.9rem;
 }

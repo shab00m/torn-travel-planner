@@ -8,11 +8,13 @@ const authEl = {
   playerInfo: document.getElementById("player-info"),
 };
 
-const guestEl = {
-  wrap: document.getElementById("guest-travel"),
-  travelType: document.getElementById("guest-travel-type"),
-  capacity: document.getElementById("guest-capacity"),
-};
+function guestEl() {
+  return {
+    wrap: document.getElementById("guest-travel"),
+    travelType: document.getElementById("guest-travel-type"),
+    capacity: document.getElementById("guest-capacity"),
+  };
+}
 
 const TRAVEL_TYPE_ICONS = {
   Standard: "🎫",
@@ -33,22 +35,25 @@ function getCurrentUser() {
 }
 
 function setGuestTravelVisible(visible) {
-  if (guestEl.wrap) guestEl.wrap.classList.toggle("hidden", !visible);
+  const el = guestEl();
+  if (el.wrap) el.wrap.classList.toggle("hidden", !visible);
 }
 
 function syncGuestTravelControls() {
-  if (!guestEl.travelType || !guestEl.capacity) return;
-  guestEl.travelType.value = state.travelType;
-  guestEl.capacity.value = String(state.travelCapacity);
+  const el = guestEl();
+  if (!el.travelType || !el.capacity) return;
+  el.travelType.value = state.travelType;
+  el.capacity.value = String(state.travelCapacity);
 }
 
 function onGuestTravelChange() {
-  const type = guestEl.travelType.value;
+  const el = guestEl();
+  const type = el.travelType.value;
   if (!TRAVEL_TYPES.includes(type)) return;
 
-  const cap = Number.parseInt(guestEl.capacity.value, 10);
+  const cap = Number.parseInt(el.capacity.value, 10);
   if (!Number.isInteger(cap) || cap < 1) {
-    guestEl.capacity.value = String(state.travelCapacity);
+    el.capacity.value = String(state.travelCapacity);
     return;
   }
 
@@ -61,10 +66,11 @@ function onGuestTravelChange() {
 }
 
 function initGuestTravelControls() {
-  if (!guestEl.travelType || guestEl.travelType.dataset.bound) return;
-  guestEl.travelType.dataset.bound = "1";
-  guestEl.travelType.addEventListener("change", onGuestTravelChange);
-  guestEl.capacity.addEventListener("change", onGuestTravelChange);
+  const el = guestEl();
+  if (!el.travelType || el.travelType.dataset.bound) return;
+  el.travelType.dataset.bound = "1";
+  el.travelType.addEventListener("change", onGuestTravelChange);
+  el.capacity.addEventListener("change", onGuestTravelChange);
 }
 
 function showLoggedIn(player) {

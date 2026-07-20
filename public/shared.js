@@ -170,10 +170,93 @@ function initTimeFormatControls() {
   });
 }
 
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", initTimeFormatControls);
-} else {
+const SETTINGS_OPEN_KEY = "plannerSettingsOpen";
+
+function isSettingsOpen() {
+  return localStorage.getItem(SETTINGS_OPEN_KEY) === "1";
+}
+
+function setSettingsOpen(open) {
+  localStorage.setItem(SETTINGS_OPEN_KEY, open ? "1" : "0");
+  const panel = document.getElementById("settings-panel");
+  const toggle = document.getElementById("settings-toggle");
+  if (panel) panel.classList.toggle("hidden", !open);
+  if (toggle) {
+    toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    toggle.classList.toggle("active", open);
+  }
+}
+
+function siteSettingsPanelHtml() {
+  return `
+    <div id="settings-panel" class="settings-panel hidden">
+      <div id="guest-travel" class="guest-travel settings-group">
+        <span class="settings-group-title">Travel (guest)</span>
+        <div class="settings-group-controls">
+          <label class="guest-travel-field" title="Flight travel type">
+            <span class="guest-travel-label">Flight</span>
+            <select id="guest-travel-type">
+              <option value="Standard">🎫 Standard</option>
+              <option value="Airstrip">🛩️ Airstrip</option>
+              <option value="Private">✈️ Private</option>
+              <option value="Business">💼 Business</option>
+            </select>
+          </label>
+          <label class="guest-travel-field" title="Travel item inventory slots">
+            <span class="guest-travel-label">🧳</span>
+            <input id="guest-capacity" type="number" min="1" max="50" step="1" />
+            <span class="guest-travel-suffix">slots</span>
+          </label>
+        </div>
+      </div>
+      <div class="time-format-setting settings-group">
+        <span class="settings-group-title">Time format</span>
+        <div class="settings-group-controls">
+          <div class="range-buttons time-format-buttons">
+            <button type="button" data-time-format="european">24h</button>
+            <button type="button" data-time-format="us">12h</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function injectSiteSettings() {
+  const header = document.querySelector("header");
+  const headerMeta = document.querySelector(".header-meta");
+  if (!header || !headerMeta || document.getElementById("settings-toggle")) return;
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.id = "settings-toggle";
+  toggle.className = "settings-toggle";
+  toggle.setAttribute("aria-controls", "settings-panel");
+  toggle.setAttribute("aria-expanded", "false");
+  toggle.textContent = "Settings";
+  headerMeta.appendChild(toggle);
+
+  const wrap = document.createElement("div");
+  wrap.innerHTML = siteSettingsPanelHtml().trim();
+  const panel = wrap.firstElementChild;
+  header.appendChild(panel);
+
+  toggle.addEventListener("click", () => {
+    setSettingsOpen(!isSettingsOpen());
+  });
+
+  setSettingsOpen(isSettingsOpen());
+}
+
+function initSharedUi() {
+  injectSiteSettings();
   initTimeFormatControls();
+}
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", initSharedUi);
+} else {
+  initSharedUi();
 }
 
 async function fetchJson(url) {
