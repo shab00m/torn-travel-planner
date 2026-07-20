@@ -114,6 +114,17 @@ New cycles are also checked automatically when YATA polling closes an empty peri
 
 ---
 
+### `POST /api/restocks/:country/:itemId/backfill`
+
+Admin only. Rebuild restock cycles for this item by replaying its snapshot history through the depletion/restock transition logic. Clears that item’s existing restock rows first; previously ignored cycles are restored onto covering cycles when possible.
+
+**Response:** `{ ok, opened, closed, restocks, rates }`
+
+- `opened` — depletion transitions recorded
+- `closed` — restock closes recorded
+
+---
+
 ## Restock amounts (database)
 
 Per-item “full restock quantity” used for safe-window prediction. Stored server-side; the web UI reads/writes these endpoints.

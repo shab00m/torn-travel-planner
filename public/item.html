@@ -262,7 +262,15 @@
 					>
 						Exclude outliers
 					</button>
-					<span id="flag-outliers-status" class="cycle-history-action-status" aria-live="polite"></span>
+					<button
+						type="button"
+						id="backfill-restocks-btn"
+						class="cycle-history-action hidden"
+						title="Rebuild this item’s restock cycles from snapshot history (fixes missing restock closes and overlapping depleted ranges)"
+					>
+						Rebuild restocks
+					</button>
+					<span id="cycle-history-action-status" class="cycle-history-action-status" aria-live="polite"></span>
 				</div>
 				<table id="cycle-history-table" class="cycle-history">
 					<colgroup>

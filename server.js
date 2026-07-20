@@ -12,7 +12,7 @@ import {
   updateSnapshot,
   deleteSnapshot,
   deleteSnapshots,
-  backfillRestocks,
+  backfillRestocksForItem,
   setRestockIgnored,
   flagOutlierRestocks,
   getRestockAmount,
@@ -425,6 +425,28 @@ app.post("/api/restocks/:country/:itemId/flag-outliers", requireAdmin, async (re
   }
 });
 
+/** Rebuild restock cycles for one item from its snapshot history. */
+app.post("/api/restocks/:country/:itemId/backfill", requireAdmin, async (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  try {
+    const result = await backfillRestocksForItem(params.country, params.id);
+    const [restocks, rates] = await Promise.all([
+      getRestocks(params.country, params.id, 50),
+      getDepletionRates(params.country, params.id, 50),
+    ]);
+    res.json({
+      ok: true,
+      opened: result.opened,
+      closed: result.closed,
+      restocks,
+      rates,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 function parseYataTs(req, res) {
   const yataTs = Number.parseInt(req.params.yataTs, 10);
   if (!Number.isInteger(yataTs) || yataTs <= 0) {
@@ -435,7 +457,7 @@ function parseYataTs(req, res) {
 }
 
 async function rerunRestocks(country, itemId) {
-  await backfillRestocks();
+  await backfillRestocksForItem(country, itemId);
   const [restocks, rates] = await Promise.all([
     getRestocks(country, itemId, 50),
     getDepletionRates(country, itemId, 50),

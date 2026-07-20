@@ -22,7 +22,8 @@ const el = {
   cycleHistoryNext: document.getElementById("cycle-history-next"),
   cycleHistoryPageInfo: document.getElementById("cycle-history-page-info"),
   flagOutliersBtn: document.getElementById("flag-outliers-btn"),
-  flagOutliersStatus: document.getElementById("flag-outliers-status"),
+  backfillRestocksBtn: document.getElementById("backfill-restocks-btn"),
+  cycleHistoryActionStatus: document.getElementById("cycle-history-action-status"),
   rateAvgButtons: document.getElementById("rate-avg-buttons"),
   rateAvg: document.getElementById("rate-avg"),
   safeWindowUseRate: document.getElementById("safe-window-use-rate"),
@@ -2066,8 +2067,9 @@ function syncInspectAdminAccess() {
   const allowed = isAdminUser();
   el.inspectControls?.classList.toggle("hidden", !allowed);
   el.flagOutliersBtn?.classList.toggle("hidden", !allowed);
+  el.backfillRestocksBtn?.classList.toggle("hidden", !allowed);
   if (!allowed) {
-    if (el.flagOutliersStatus) el.flagOutliersStatus.textContent = "";
+    if (el.cycleHistoryActionStatus) el.cycleHistoryActionStatus.textContent = "";
     if (snapshotInspector.enabled) setInspectMode(false);
   }
   if (state.item) renderCycleHistory();
@@ -2541,6 +2543,15 @@ el.cycleHistoryNext?.addEventListener("click", () => {
   renderCycleHistory();
 });
 
+function setCycleHistoryActionStatus(text) {
+  if (el.cycleHistoryActionStatus) el.cycleHistoryActionStatus.textContent = text ?? "";
+}
+
+function setCycleHistoryActionsDisabled(disabled) {
+  if (el.flagOutliersBtn) el.flagOutliersBtn.disabled = disabled;
+  if (el.backfillRestocksBtn) el.backfillRestocksBtn.disabled = disabled;
+}
+
 async function flagOutlierCycles() {
   const item = state.item;
   if (!item || !el.flagOutliersBtn) return;
@@ -2548,8 +2559,8 @@ async function flagOutlierCycles() {
     alert("Admin access required.");
     return;
   }
-  el.flagOutliersBtn.disabled = true;
-  if (el.flagOutliersStatus) el.flagOutliersStatus.textContent = "Scanning…";
+  setCycleHistoryActionsDisabled(true);
+  setCycleHistoryActionStatus("Scanning…");
   try {
     const data = await fetchJsonWithBody(
       `/api/restocks/${item.country}/${item.itemId}/flag-outliers`,
@@ -2558,20 +2569,57 @@ async function flagOutlierCycles() {
     loadRestockData(data);
     refreshRestockViews();
     const n = data.flagged ?? 0;
-    if (el.flagOutliersStatus) {
-      el.flagOutliersStatus.textContent =
-        n === 0 ? "No outliers found" : `Excluded ${n} outlier${n === 1 ? "" : "s"}`;
-    }
+    setCycleHistoryActionStatus(
+      n === 0 ? "No outliers found" : `Excluded ${n} outlier${n === 1 ? "" : "s"}`
+    );
   } catch (err) {
-    if (el.flagOutliersStatus) el.flagOutliersStatus.textContent = "";
+    setCycleHistoryActionStatus("");
     alert(err.message || "Failed to flag outliers");
   } finally {
-    el.flagOutliersBtn.disabled = false;
+    setCycleHistoryActionsDisabled(false);
+  }
+}
+
+async function backfillItemRestocks() {
+  const item = state.item;
+  if (!item || !el.backfillRestocksBtn) return;
+  if (!isAdminUser()) {
+    alert("Admin access required.");
+    return;
+  }
+  if (
+    !confirm(
+      "Rebuild restock cycles for this item from snapshot history? Ignored (unchecked) cycles are preserved when possible."
+    )
+  ) {
+    return;
+  }
+  setCycleHistoryActionsDisabled(true);
+  setCycleHistoryActionStatus("Rebuilding…");
+  try {
+    const data = await fetchJsonWithBody(
+      `/api/restocks/${item.country}/${item.itemId}/backfill`,
+      { method: "POST", body: {}, headers: adminApiHeaders() }
+    );
+    loadRestockData(data);
+    refreshRestockViews();
+    setCycleHistoryActionStatus(
+      `Rebuilt: ${data.opened ?? 0} depleted, ${data.closed ?? 0} restocked`
+    );
+  } catch (err) {
+    setCycleHistoryActionStatus("");
+    alert(err.message || "Failed to rebuild restocks");
+  } finally {
+    setCycleHistoryActionsDisabled(false);
   }
 }
 
 el.flagOutliersBtn?.addEventListener("click", () => {
   flagOutlierCycles();
+});
+
+el.backfillRestocksBtn?.addEventListener("click", () => {
+  backfillItemRestocks();
 });
 
 el.restockAmount.addEventListener("change", async () => {

@@ -225,71 +225,106 @@ async function trackRestock(client, country, itemId, ts, quantity, prevHint) {
 }
 
 /**
- * Replay the whole snapshot history through the transition logic.
- * Clears existing restock rows first so logic fixes take effect on rerun.
+ * Replay snapshot history through transition logic.
+ * @param {import("pg").PoolClient} client
+ * @param {{ country?: string, itemId?: number }} [scope]
+ *   When set, only that country/item is rebuilt.
  */
-export async function backfillRestocks() {
-  return withTransaction(async (client) => {
-    const ignoredRows = await many(
-      client,
-      `SELECT country, item_id, depleted_ts FROM restocks WHERE ignored = 1`
-    );
-
-    await client.query("DELETE FROM restocks");
-    let opened = 0;
-    let closed = 0;
-    let key = null;
-    let prevTs = null;
-    let prevQuantity = null;
-
-    const snapshots = await many(
-      client,
-      `SELECT country, item_id, yata_ts, quantity
-       FROM snapshots
-       ORDER BY country, item_id, yata_ts ASC`
-    );
-
-    for (const row of snapshots) {
-      const rowKey = `${row.country}:${row.item_id}`;
-      if (rowKey === key) {
-        const result = await applyTransition(
-          client,
-          row.country,
-          row.item_id,
-          row.yata_ts,
-          prevTs,
-          prevQuantity,
-          row.quantity
-        );
-        if (result === "depleted") opened += 1;
-        else if (result === "restocked") closed += 1;
-      }
-      key = rowKey;
-      prevTs = row.yata_ts;
-      prevQuantity = row.quantity;
-    }
-
-    for (const row of ignoredRows) {
-      const match = await one(
+async function replayRestocks(client, scope = {}) {
+  const scoped = scope.country != null && scope.itemId != null;
+  const ignoredRows = scoped
+    ? await many(
         client,
-        `SELECT depleted_ts FROM restocks
-         WHERE country = $1 AND item_id = $2
-           AND depleted_ts <= $3
-           AND (restocked_ts IS NULL OR restocked_ts > $3)
-         ORDER BY depleted_ts DESC LIMIT 1`,
-        [row.country, row.item_id, row.depleted_ts]
+        `SELECT country, item_id, depleted_ts FROM restocks
+         WHERE ignored = 1 AND country = $1 AND item_id = $2`,
+        [scope.country, scope.itemId]
+      )
+    : await many(
+        client,
+        `SELECT country, item_id, depleted_ts FROM restocks WHERE ignored = 1`
       );
-      if (match) {
-        await client.query(
-          `UPDATE restocks SET ignored = 1
-           WHERE country = $1 AND item_id = $2 AND depleted_ts = $3`,
-          [row.country, row.item_id, match.depleted_ts]
-        );
-      }
-    }
 
-    return { opened, closed };
-  });
+  if (scoped) {
+    await client.query(`DELETE FROM restocks WHERE country = $1 AND item_id = $2`, [
+      scope.country,
+      scope.itemId,
+    ]);
+  } else {
+    await client.query("DELETE FROM restocks");
+  }
+
+  let opened = 0;
+  let closed = 0;
+  let key = null;
+  let prevTs = null;
+  let prevQuantity = null;
+
+  const snapshots = scoped
+    ? await many(
+        client,
+        `SELECT country, item_id, yata_ts, quantity
+         FROM snapshots
+         WHERE country = $1 AND item_id = $2
+         ORDER BY yata_ts ASC`,
+        [scope.country, scope.itemId]
+      )
+    : await many(
+        client,
+        `SELECT country, item_id, yata_ts, quantity
+         FROM snapshots
+         ORDER BY country, item_id, yata_ts ASC`
+      );
+
+  for (const row of snapshots) {
+    const rowKey = `${row.country}:${row.item_id}`;
+    if (rowKey === key) {
+      const result = await applyTransition(
+        client,
+        row.country,
+        row.item_id,
+        row.yata_ts,
+        prevTs,
+        prevQuantity,
+        row.quantity
+      );
+      if (result === "depleted") opened += 1;
+      else if (result === "restocked") closed += 1;
+    }
+    key = rowKey;
+    prevTs = row.yata_ts;
+    prevQuantity = row.quantity;
+  }
+
+  for (const row of ignoredRows) {
+    const match = await one(
+      client,
+      `SELECT depleted_ts FROM restocks
+       WHERE country = $1 AND item_id = $2
+         AND depleted_ts <= $3
+         AND (restocked_ts IS NULL OR restocked_ts > $3)
+       ORDER BY depleted_ts DESC LIMIT 1`,
+      [row.country, row.item_id, row.depleted_ts]
+    );
+    if (match) {
+      await client.query(
+        `UPDATE restocks SET ignored = 1
+         WHERE country = $1 AND item_id = $2 AND depleted_ts = $3`,
+        [row.country, row.item_id, match.depleted_ts]
+      );
+    }
+  }
+
+  return { opened, closed };
+}
+
+/** Replay all items' snapshot history into restocks. */
+export async function backfillRestocks() {
+  return withTransaction((client) => replayRestocks(client));
+}
+
+/** Replay one country/item's snapshot history into restocks. */
+export async function backfillRestocksForItem(country, itemId) {
+  return withTransaction((client) => replayRestocks(client, { country, itemId }));
 }
 
 /**
