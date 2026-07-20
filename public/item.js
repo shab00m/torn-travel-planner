@@ -1648,7 +1648,12 @@ function chartOptions(timeline) {
           stepSize: timeUnit === "minute" ? 1 : undefined,
           displayFormats: chartTimeDisplayFormats(),
         },
-        ticks: { color: "#8b96a8", maxTicksLimit: 14, source: "auto" },
+        ticks: {
+          color: "#8b96a8",
+          maxTicksLimit: 14,
+          source: "auto",
+          callback: chartTimeTickCallback,
+        },
         grid: { color: "#2a3345" },
       },
       y: {

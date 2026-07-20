@@ -18,6 +18,7 @@ const state = {
   rangeHours: 24,
   predictionHours: 6,
   timeFormat: "european",
+  timeZone: "local", // "local" | "tct" (Torn City Time = UTC)
   flightTimeVariance: true,
   predictedEvents: [],
   chartOffsetSec: 0,
@@ -44,6 +45,7 @@ const SAMPLE_OPTIONS = [1, 3, 5, 10, 20];
 const RANGE_HOURS_OPTIONS = [1, 6, 24, 168, 0];
 const PREDICTION_HOURS_OPTIONS = [0, 1, 2, 3, 6, 12, 24];
 const TIME_FORMATS = ["european", "us"];
+const TIME_ZONES = ["local", "tct"];
 const FLIGHT_TIME_VARIANCE = 0.03;
 
 function loadPrefs() {
@@ -86,6 +88,7 @@ function applyStoredPrefs() {
   state.countryFilter = typeof prefs.countryFilter === "string" ? prefs.countryFilter : "";
   state.inStockOnly = prefs.inStockOnly === true;
   state.timeFormat = TIME_FORMATS.includes(prefs.timeFormat) ? prefs.timeFormat : "european";
+  state.timeZone = TIME_ZONES.includes(prefs.timeZone) ? prefs.timeZone : "local";
   state.flightTimeVariance = prefs.flightTimeVariance !== false;
   if (
     prefs.favoritesSort &&
@@ -109,24 +112,40 @@ function timeLocale() {
   return state.timeFormat === "us" ? "en-US" : "en-GB";
 }
 
+/** Intl timeZone option: UTC for TCT, omit for browser local. */
+function displayTimeZone() {
+  return state.timeZone === "tct" ? "UTC" : undefined;
+}
+
+function withDisplayTimeZone(options) {
+  const timeZone = displayTimeZone();
+  return timeZone ? { ...options, timeZone } : options;
+}
+
 const fmtNum = (n) => n.toLocaleString("en-US");
 const fmtMoney = (n) => "$" + fmtNum(n);
 const fmtTime = (ts) =>
-  new Date(ts * 1000).toLocaleString(timeLocale(), {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  new Date(ts * 1000).toLocaleString(
+    timeLocale(),
+    withDisplayTimeZone({
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    })
+  );
 const fmtTimeShort = (ts) =>
-  new Date(ts * 1000).toLocaleTimeString(timeLocale(), {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: state.timeFormat === "us",
-  });
+  new Date(ts * 1000).toLocaleTimeString(
+    timeLocale(),
+    withDisplayTimeZone({
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: state.timeFormat === "us",
+    })
+  );
 
 function chartTimeDisplayFormats() {
   if (state.timeFormat === "us") {
@@ -143,12 +162,56 @@ function chartTimeDisplayFormats() {
   };
 }
 
+/** Format a chart axis tick in the selected display timezone. */
+function formatChartTick(ms, unit) {
+  const date = new Date(ms);
+  if (unit === "minute") {
+    return date.toLocaleTimeString(
+      timeLocale(),
+      withDisplayTimeZone({
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: state.timeFormat === "us",
+      })
+    );
+  }
+  if (unit === "day") {
+    return date.toLocaleDateString(
+      timeLocale(),
+      withDisplayTimeZone({
+        month: "short",
+        day: "numeric",
+      })
+    );
+  }
+  return date.toLocaleString(
+    timeLocale(),
+    withDisplayTimeZone({
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: state.timeFormat === "us",
+    })
+  );
+}
+
+/** Chart.js tick callback; reads current time.unit so pan/zoom stays correct. */
+function chartTimeTickCallback(value) {
+  const unit = this.options?.time?.unit || "hour";
+  return formatChartTick(value, unit);
+}
+
+function notifyTimeDisplayChange() {
+  window.dispatchEvent(new CustomEvent("timeformatchange"));
+}
+
 function setTimeFormat(format) {
   if (!TIME_FORMATS.includes(format) || state.timeFormat === format) return;
   state.timeFormat = format;
   savePrefs({ timeFormat: format });
   syncTimeFormatButtons();
-  window.dispatchEvent(new CustomEvent("timeformatchange"));
+  notifyTimeDisplayChange();
 }
 
 function syncTimeFormatButtons() {
@@ -166,6 +229,33 @@ function initTimeFormatControls() {
       const btn = e.target.closest("[data-time-format]");
       if (!btn) return;
       setTimeFormat(btn.dataset.timeFormat);
+    });
+  });
+}
+
+function setTimeZone(zone) {
+  if (!TIME_ZONES.includes(zone) || state.timeZone === zone) return;
+  state.timeZone = zone;
+  savePrefs({ timeZone: zone });
+  syncTimeZoneButtons();
+  notifyTimeDisplayChange();
+}
+
+function syncTimeZoneButtons() {
+  document.querySelectorAll(".time-zone-buttons [data-time-zone]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.timeZone === state.timeZone);
+  });
+}
+
+function initTimeZoneControls() {
+  syncTimeZoneButtons();
+  document.querySelectorAll(".time-zone-buttons").forEach((container) => {
+    if (container.dataset.bound) return;
+    container.dataset.bound = "1";
+    container.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-time-zone]");
+      if (!btn) return;
+      setTimeZone(btn.dataset.timeZone);
     });
   });
 }
@@ -218,6 +308,15 @@ function siteSettingsPanelHtml() {
           </div>
         </div>
       </div>
+      <div class="time-format-setting settings-group">
+        <span class="settings-group-title">Time zone</span>
+        <div class="settings-group-controls">
+          <div class="range-buttons time-zone-buttons">
+            <button type="button" data-time-zone="local" title="Your device's local time">Local</button>
+            <button type="button" data-time-zone="tct" title="Torn City Time (UTC)">TCT</button>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -256,6 +355,7 @@ function injectSiteSettings() {
 function initSharedUi() {
   injectSiteSettings();
   initTimeFormatControls();
+  initTimeZoneControls();
 }
 
 if (document.readyState === "loading") {
