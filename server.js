@@ -577,6 +577,10 @@ app.get("/analytics", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "analytics.html"));
 });
 
+app.get("/tos", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "tos.html"));
+});
+
 app.get("/item/:country/:itemId(\\d+)", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "item.html"));
 });

@@ -123,6 +123,109 @@ h1 { margin: 0; font-size: 1.35rem; }
   font-size: 0.88rem;
 }
 .player-info.hidden, .login-form.hidden, .guest-travel.hidden { display: none; }
+.login-form.hidden + .api-tos { display: none; }
+
+.api-tos {
+  flex: 1 1 100%;
+  max-width: 100%;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.api-tos > summary {
+  cursor: pointer;
+  color: var(--accent);
+  list-style-position: outside;
+  user-select: none;
+}
+
+.api-tos > summary a.api-tos-full-link {
+  margin-left: 10px;
+  color: var(--text-dim);
+  text-decoration: underline;
+  font-weight: 400;
+}
+
+.api-tos > summary a.api-tos-full-link:hover { color: var(--accent); }
+
+.api-tos-body {
+  margin-top: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+}
+
+.api-tos-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.api-tos-table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  table-layout: fixed;
+}
+
+.api-tos-table th,
+.api-tos-table td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+  word-wrap: break-word;
+}
+
+.api-tos-table th {
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.api-tos-table tr.api-tos-questions th {
+  font-weight: 400;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+}
+
+.api-tos-prose {
+  margin-top: 14px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.api-tos-prose p { margin: 0 0 10px; }
+.api-tos-prose ul { margin: 0; padding-left: 1.2rem; }
+.api-tos-prose a { color: var(--accent); }
+.api-tos-prose code {
+  font-size: 0.8em;
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.tos-main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.api-tos-page .api-tos-lead {
+  margin: 0 0 18px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+
+.api-tos-page .api-tos-lead a { color: var(--accent); }
+
+.api-tos-page .api-tos-table {
+  font-size: 0.85rem;
+}
 
 .guest-travel {
   display: flex;

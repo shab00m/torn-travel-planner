@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>API Terms of Service — Torn Travel Planner</title>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+			rel="stylesheet"
+		/>
+		<link rel="stylesheet" href="/style.css" />
+	</head>
+	<body class="page-tos">
+		<header>
+			<div class="header-inner">
+				<div class="item-heading">
+					<a href="/" class="back-link">← Stock overview</a>
+					<h1>API Terms of Service</h1>
+					<span class="item-subtitle">Torn API key usage</span>
+				</div>
+			</div>
+		</header>
+
+		<main id="tos-main" class="tos-main"></main>
+
+		<script src="/api-tos.js"></script>
+		<script>
+			document.getElementById("tos-main").innerHTML = apiTosPageHtml();
+		</script>
+	</body>
+</html>
