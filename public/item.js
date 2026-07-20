@@ -2363,51 +2363,89 @@ function redrawPrediction() {
   refreshChart(timeline);
 }
 
-/** Advance NOW/ARRIVE and refresh predictions as wall time moves (no page reload). */
-function tickLiveChart() {
-  updateCurrentDepletionCountdown();
-  if (!state.chart || !state.lastTimeline || !state.chartPoints?.length) return;
-  if (chartPan.active || snapshotInspector.drag) return;
+/**
+ * Move NOW/ARRIVE chart lines without rebuilding datasets/predictions.
+ * Full rebuilds stay on data refresh / user actions — not on the 1s ticker.
+ */
+function patchLiveChartTime(wallTs) {
+  const timeline = state.lastTimeline;
+  if (!state.chart || !timeline) return;
 
-  const wallTs = Math.floor(Date.now() / 1000);
-  if (wallTs === state.lastTimeline.wallTs) return;
+  const prevWallMs = tsMs(timeline.wallTs);
+  timeline.wallTs = wallTs;
+  if (tsMs(wallTs) > timeline.xMax) timeline.xMax = tsMs(wallTs);
 
   const followingLive =
-    state.chartOffsetSec >= getMaxChartOffsetSec(state.lastTimeline) - 0.5;
-
-  if (state.predictionHours > 0) {
-    const next = buildTimeline(state.chartPoints, state.predictionHours);
-    if (followingLive) state.chartOffsetSec = getMaxChartOffsetSec(next);
-    refreshChart(next);
-    return;
+    state.chartOffsetSec >= getMaxChartOffsetSec(timeline) - 0.5;
+  if (followingLive) {
+    state.chartOffsetSec = getMaxChartOffsetSec(timeline);
+    const { visMin, visMax } = getVisibleChartRange(
+      timeline,
+      state.chartOffsetSec,
+      state.chartScale
+    );
+    state.chart.options.scales.x.min = visMin;
+    state.chart.options.scales.x.max = visMax;
   }
 
-  state.lastTimeline.wallTs = wallTs;
-  if (tsMs(wallTs) > state.lastTimeline.xMax) state.lastTimeline.xMax = tsMs(wallTs);
-  if (followingLive) state.chartOffsetSec = getMaxChartOffsetSec(state.lastTimeline);
-  applyChartView(state.lastTimeline);
+  const anns = state.chart.options.plugins?.annotation?.annotations;
+  if (anns) {
+    if (anns.now) {
+      anns.now.xMin = tsMs(wallTs);
+      anns.now.xMax = tsMs(wallTs);
+    }
+    const arriveTs = getArriveTs(wallTs, state.item?.country);
+    if (arriveTs != null) {
+      if (!anns.arrive) {
+        anns.arrive = {
+          type: "line",
+          borderColor: "#ff9800",
+          borderWidth: 2,
+          borderDash: [4, 4],
+        };
+      }
+      anns.arrive.xMin = tsMs(arriveTs);
+      anns.arrive.xMax = tsMs(arriveTs);
+    } else {
+      delete anns.arrive;
+    }
+    // Open out-of-stock boxes that were pinned to the previous "now".
+    for (const [key, ann] of Object.entries(anns)) {
+      if (!key.startsWith("restock") || ann?.type !== "box") continue;
+      if (ann.xMax === prevWallMs) ann.xMax = tsMs(wallTs);
+    }
+  }
+
+  state.chart.update("none");
+  updateTimeMarkers(state.chart);
 }
 
-/** Schedule live chart work outside setInterval so Chrome doesn't flag long handlers. */
+/** Cheap 1s UI tick; chart geometry at most every CHART_LIVE_PATCH_MS. */
+const CHART_LIVE_PATCH_MS = 15_000;
+
 function startLiveChartTicker() {
-  let pending = false;
+  let lastPatchMs = 0;
 
-  function run() {
-    pending = false;
+  setInterval(() => {
     if (document.hidden) return;
-    tickLiveChart();
-  }
+    updateCurrentDepletionCountdown();
 
-  function schedule() {
-    if (pending || document.hidden) return;
-    pending = true;
-    requestAnimationFrame(run);
-  }
+    if (!state.chart || !state.lastTimeline || !state.chartPoints?.length) return;
+    if (chartPan.active || snapshotInspector.drag) return;
 
-  setInterval(schedule, 1000);
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) schedule();
-  });
+    const wallTs = Math.floor(Date.now() / 1000);
+    if (wallTs === state.lastTimeline.wallTs) return;
+
+    const now = Date.now();
+    if (now - lastPatchMs < CHART_LIVE_PATCH_MS) {
+      // Labels only — avoids Chart.js update() every second.
+      state.lastTimeline.wallTs = wallTs;
+      updateTimeMarkers(state.chart);
+      return;
+    }
+    lastPatchMs = now;
+    patchLiveChartTime(wallTs);
+  }, 1000);
 }
 
 function parseItemFromUrl() {
