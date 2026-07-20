@@ -214,39 +214,81 @@ async function loadCountries() {
 
 let lastKnownStockTimestamp = null;
 
+/** YATA export cadence — matches server poll interval in src/yata.js. */
+const STOCK_UPDATE_PERIOD_SEC = 60;
+const STOCK_UPDATE_SLACK_SEC = 1;
+const STOCK_UPDATE_FAST_POLL_MS = 5000;
+
 function noteStockTimestamp(timestamp) {
   if (Number.isInteger(timestamp) && timestamp > 0) {
     lastKnownStockTimestamp = timestamp;
   }
 }
 
-// Poll for new YATA snapshots and run onUpdate when the server timestamp changes.
-// Much faster than a blind 60s refresh because it tracks actual poll times.
-function startStockUpdateWatcher(onUpdate, { intervalMs = 5000 } = {}) {
+/** Ms until shortly after the next expected YATA timestamp (period + slack). */
+function msUntilExpectedStockUpdate(timestamp) {
+  const nextAtMs = (timestamp + STOCK_UPDATE_PERIOD_SEC + STOCK_UPDATE_SLACK_SEC) * 1000;
+  return Math.max(0, nextAtMs - Date.now());
+}
+
+/**
+ * Watch for new YATA snapshots and run onUpdate when the server timestamp changes.
+ * After a fresh timestamp, sleep until ~period+1s later; if the update is late,
+ * poll every 5s until it arrives, then sleep again.
+ */
+function startStockUpdateWatcher(onUpdate) {
   let busy = false;
+  let timer = null;
+  let stopped = false;
+
+  function schedule(delayMs) {
+    if (stopped) return;
+    if (timer != null) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      void check();
+    }, delayMs);
+  }
 
   async function check() {
-    if (busy) return;
+    if (busy || stopped) return;
     busy = true;
     try {
       const data = await fetchJson("/api/stocks/status");
-      if (!data.ready || !Number.isInteger(data.timestamp)) return;
-      if (lastKnownStockTimestamp === null) {
-        noteStockTimestamp(data.timestamp);
+      if (!data.ready || !Number.isInteger(data.timestamp)) {
+        schedule(STOCK_UPDATE_FAST_POLL_MS);
         return;
       }
-      if (lastKnownStockTimestamp === data.timestamp) return;
+
+      if (lastKnownStockTimestamp === null) {
+        noteStockTimestamp(data.timestamp);
+        schedule(msUntilExpectedStockUpdate(data.timestamp));
+        return;
+      }
+
+      if (lastKnownStockTimestamp === data.timestamp) {
+        // Expected refresh not in yet — poll quickly until it appears.
+        schedule(STOCK_UPDATE_FAST_POLL_MS);
+        return;
+      }
+
       lastKnownStockTimestamp = data.timestamp;
       await onUpdate(data.timestamp);
+      schedule(msUntilExpectedStockUpdate(data.timestamp));
     } catch {
-      // Keep polling through transient errors.
+      // Transient errors: retry soon.
+      schedule(STOCK_UPDATE_FAST_POLL_MS);
     } finally {
       busy = false;
     }
   }
 
-  check();
-  return setInterval(check, intervalMs);
+  void check();
+  return () => {
+    stopped = true;
+    if (timer != null) clearTimeout(timer);
+    timer = null;
+  };
 }
 
 function itemUrl(country, itemId, name) {
