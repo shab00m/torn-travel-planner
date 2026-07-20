@@ -234,7 +234,12 @@ function injectSiteSettings() {
   toggle.setAttribute("aria-controls", "settings-panel");
   toggle.setAttribute("aria-expanded", "false");
   toggle.textContent = "Settings";
-  headerMeta.appendChild(toggle);
+  const auth = headerMeta.querySelector("#auth");
+  if (auth) {
+    auth.insertAdjacentElement("afterend", toggle);
+  } else {
+    headerMeta.appendChild(toggle);
+  }
 
   const wrap = document.createElement("div");
   wrap.innerHTML = siteSettingsPanelHtml().trim();

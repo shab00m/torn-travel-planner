@@ -189,10 +189,6 @@ authEl.form.addEventListener("submit", async (e) => {
 initGuestTravelControls();
 syncGuestTravelControls();
 
-if (typeof injectApiTosDisclosure === "function") {
-  injectApiTosDisclosure();
-}
-
 /** Fire-and-forget page load beacon (user id/name when logged in; IP captured server-side). */
 function recordPageView() {
   const payload = { url: `${location.pathname}${location.search}` };

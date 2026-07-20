@@ -91,39 +91,6 @@ function apiTosPageHtml() {
   `;
 }
 
-/** Collapsed disclosure shown next to every API key login form. */
-function apiTosDisclosureHtml() {
-  return `
-    <details class="api-tos">
-      <summary>
-        API Terms of Service
-        <a class="api-tos-full-link" href="/tos">Full page</a>
-      </summary>
-      <div class="api-tos-body">
-        ${apiTosTableHtml()}
-        ${apiTosProseHtml()}
-      </div>
-    </details>
-  `;
-}
-
-function injectApiTosDisclosure() {
-  const form = document.getElementById("login-form");
-  if (!form || form.parentElement?.querySelector(":scope > .api-tos")) return;
-
-  const wrap = document.createElement("div");
-  wrap.innerHTML = apiTosDisclosureHtml().trim();
-  const details = wrap.firstElementChild;
-  if (!details) return;
-
-  const fullLink = details.querySelector(".api-tos-full-link");
-  if (fullLink) {
-    fullLink.addEventListener("click", (e) => e.stopPropagation());
-  }
-
-  form.insertAdjacentElement("afterend", details);
-}
-
 function injectSiteFooter() {
   if (document.querySelector(".site-footer")) return;
 

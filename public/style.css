@@ -73,7 +73,7 @@ h1 { margin: 0; font-size: 1.35rem; }
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 16px;
+  gap: 8px;
   flex-wrap: wrap;
   margin-left: auto;
 }
@@ -105,16 +105,24 @@ h1 { margin: 0; font-size: 1.35rem; }
 }
 .login-form input:focus { outline: 1px solid var(--accent); }
 
-.login-form button, .logout-btn {
-  background: var(--accent);
-  border: none;
-  color: #fff;
+.login-form button, .logout-btn, .settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
   border-radius: 8px;
-  padding: 7px 14px;
+  padding: 0 14px;
   font: inherit;
   font-size: 0.85rem;
   font-weight: 500;
   cursor: pointer;
+  box-sizing: border-box;
+}
+
+.login-form button {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #fff;
 }
 .login-form button:disabled { opacity: 0.6; cursor: wait; }
 
@@ -132,43 +140,6 @@ h1 { margin: 0; font-size: 1.35rem; }
   font-size: 0.88rem;
 }
 .player-info.hidden, .login-form.hidden { display: none; }
-.login-form.hidden + .api-tos { display: none; }
-
-.api-tos {
-  flex: 1 1 100%;
-  max-width: 100%;
-  min-width: 0;
-  font-size: 0.78rem;
-  color: var(--text-dim);
-  text-align: right;
-}
-
-.api-tos > summary {
-  cursor: pointer;
-  color: var(--accent);
-  list-style-position: outside;
-  user-select: none;
-}
-
-.api-tos > summary a.api-tos-full-link {
-  margin-left: 10px;
-  color: var(--text-dim);
-  text-decoration: underline;
-  font-weight: 400;
-}
-
-.api-tos > summary a.api-tos-full-link:hover { color: var(--accent); }
-
-.api-tos-body {
-  min-width: 0;
-  margin-top: 10px;
-  padding: 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  text-align: left;
-}
 
 .api-tos-table-wrap {
   width: 100%;
@@ -306,12 +277,6 @@ h1 { margin: 0; font-size: 1.35rem; }
   background: var(--surface-2);
   border: 1px solid var(--border);
   color: var(--text-dim);
-  border-radius: 8px;
-  padding: 7px 14px;
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 500;
-  cursor: pointer;
 }
 
 .settings-toggle:hover { color: var(--text); }
