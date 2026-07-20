@@ -31,10 +31,10 @@ header {
 
 .header-inner {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 8px 16px;
 }
 
 h1 { margin: 0; font-size: 1.35rem; }
@@ -61,27 +61,25 @@ h1 { margin: 0; font-size: 1.35rem; }
 .header-meta {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 16px;
   flex-wrap: wrap;
+  margin-left: auto;
 }
 
 .auth {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
 }
 
 .login-form {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
-}
-
-.login-hint {
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  white-space: nowrap;
 }
 
 .login-form input {
@@ -92,7 +90,7 @@ h1 { margin: 0; font-size: 1.35rem; }
   padding: 7px 10px;
   font: inherit;
   font-size: 0.85rem;
-  width: 200px;
+  width: 210px;
 }
 .login-form input:focus { outline: 1px solid var(--accent); }
 
@@ -131,6 +129,7 @@ h1 { margin: 0; font-size: 1.35rem; }
   min-width: 0;
   font-size: 0.78rem;
   color: var(--text-dim);
+  text-align: right;
 }
 
 .api-tos > summary {
@@ -157,6 +156,7 @@ h1 { margin: 0; font-size: 1.35rem; }
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--text);
+  text-align: left;
 }
 
 .api-tos-table-wrap {
