@@ -230,6 +230,7 @@ function startStockUpdateWatcher(onUpdate, { intervalMs = 5000 } = {}) {
     busy = true;
     try {
       const data = await fetchJson("/api/stocks/status");
+      if (!data.ready || !Number.isInteger(data.timestamp)) return;
       if (lastKnownStockTimestamp === null) {
         noteStockTimestamp(data.timestamp);
         return;

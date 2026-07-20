@@ -187,13 +187,14 @@ app.get("/api/stocks", (_req, res) => {
 
 // Lightweight poll probe so clients can detect new YATA snapshots without
 // downloading the full stocks payload on every check.
+// Returns 200 even while warming up so the status watcher does not spam 503s.
 app.get("/api/stocks/status", (_req, res) => {
   const { payload, lastError } = getLatest();
-  if (!payload) {
-    res.status(503).json({ error: lastError || "No data fetched from YATA yet" });
-    return;
-  }
-  res.json({ timestamp: payload.timestamp, lastError });
+  res.json({
+    ready: Boolean(payload),
+    timestamp: payload?.timestamp ?? null,
+    lastError,
+  });
 });
 
 // Shared validation for routes with :country/:itemId params.

@@ -5,6 +5,7 @@ const POLL_INTERVAL_MS = 60_000;
 
 let latest = null; // last successful payload, served to the frontend
 let lastError = null;
+let pollInFlight = false;
 
 async function fetchOnce() {
 	const res = await fetch(YATA_URL, { signal: AbortSignal.timeout(15_000) });
@@ -19,17 +20,31 @@ async function fetchOnce() {
 }
 
 async function poll() {
+	if (pollInFlight) {
+		console.warn("[yata] skipping poll — previous poll still in flight");
+		return;
+	}
+	pollInFlight = true;
 	try {
 		const payload = await fetchOnce();
-		const inserted = await saveSnapshot(payload.stocks);
+		// Serve live stocks immediately; DB persistence must not block the API.
 		latest = payload;
 		lastError = null;
-		console.log(
-			`[yata] fetched OK at ${new Date().toISOString()}, ${inserted} new snapshot rows`,
-		);
+
+		try {
+			const inserted = await saveSnapshot(payload.stocks);
+			console.log(
+				`[yata] fetched OK at ${new Date().toISOString()}, ${inserted} new snapshot rows`,
+			);
+		} catch (err) {
+			lastError = err.message;
+			console.error(`[yata] saveSnapshot failed: ${err.message}`);
+		}
 	} catch (err) {
 		lastError = err.message;
 		console.error(`[yata] fetch failed: ${err.message}`);
+	} finally {
+		pollInFlight = false;
 	}
 }
 

@@ -194,15 +194,20 @@ async function applyTransition(client, country, itemId, ts, prevTs, prevQuantity
 
 /**
  * @param {import("pg").PoolClient} client
+ * @param {{ yata_ts: number, quantity: number } | null | undefined} [prevHint]
+ *   Optional preloaded previous snapshot; when omitted, loads from DB.
  */
-async function trackRestock(client, country, itemId, ts, quantity) {
-  const prev = await one(
-    client,
-    `SELECT yata_ts, quantity FROM snapshots
-     WHERE country = $1 AND item_id = $2 AND yata_ts < $3
-     ORDER BY yata_ts DESC LIMIT 1`,
-    [country, itemId, ts]
-  );
+async function trackRestock(client, country, itemId, ts, quantity, prevHint) {
+  const prev =
+    prevHint !== undefined
+      ? prevHint
+      : await one(
+          client,
+          `SELECT yata_ts, quantity FROM snapshots
+           WHERE country = $1 AND item_id = $2 AND yata_ts < $3
+           ORDER BY yata_ts DESC LIMIT 1`,
+          [country, itemId, ts]
+        );
   if (!prev) return null;
   const result = await applyTransition(
     client,
@@ -325,8 +330,44 @@ export async function saveSnapshot(stocks) {
       );
     }
 
+    // One query for prior quantities instead of per-item lookups.
+    const prevByKey = new Map();
+    if (snapshotEntries.length) {
+      const countries = snapshotEntries.map((e) => e.country);
+      const itemIds = snapshotEntries.map((e) => e.itemId);
+      const yataTs = snapshotEntries.map((e) => e.yataTs);
+      const { rows } = await client.query(
+        `WITH req AS (
+           SELECT * FROM UNNEST($1::text[], $2::int[], $3::bigint[])
+             AS t(country, item_id, yata_ts)
+         )
+         SELECT req.country, req.item_id, p.yata_ts, p.quantity
+         FROM req
+         JOIN LATERAL (
+           SELECT yata_ts, quantity FROM snapshots
+           WHERE country = req.country AND item_id = req.item_id AND yata_ts < req.yata_ts
+           ORDER BY yata_ts DESC LIMIT 1
+         ) p ON true`,
+        [countries, itemIds, yataTs]
+      );
+      for (const row of rows) {
+        prevByKey.set(`${row.country}:${row.item_id}`, {
+          yata_ts: row.yata_ts,
+          quantity: row.quantity,
+        });
+      }
+    }
+
     for (const entry of snapshotEntries) {
-      await trackRestock(client, entry.country, entry.itemId, entry.yataTs, entry.quantity);
+      const prev = prevByKey.get(`${entry.country}:${entry.itemId}`) ?? null;
+      await trackRestock(
+        client,
+        entry.country,
+        entry.itemId,
+        entry.yataTs,
+        entry.quantity,
+        prev
+      );
     }
 
     if (snapshotEntries.length) {
