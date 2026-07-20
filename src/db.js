@@ -570,29 +570,61 @@ export async function deleteSnapshots(country, itemId, yataTsList) {
 }
 
 /**
+ * Last snapshot with quantity > 0 and yata_ts < beforeTs.
+ * @param {{ yata_ts: number, quantity: number }[]} snapshots ascending by yata_ts
+ */
+function lastPositiveBefore(snapshots, beforeTs) {
+  let lo = 0;
+  let hi = snapshots.length - 1;
+  let idx = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (snapshots[mid].yata_ts < beforeTs) {
+      idx = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  for (let i = idx; i >= 0; i--) {
+    if (snapshots[i].quantity > 0) return snapshots[i];
+  }
+  return null;
+}
+
+/**
  * In-stock windows with their depletion rate, newest first.
+ * Loads restocks + snapshots in two queries (avoids per-cycle round trips).
  */
 export async function getDepletionRates(country, itemId, limit) {
   const pool = getPool();
-  const events = await many(
-    pool,
-    `SELECT depleted_ts, restocked_ts, ignored FROM restocks
-     WHERE country = $1 AND item_id = $2
-     ORDER BY depleted_ts ASC`,
-    [country, itemId]
-  );
+  const [events, snapshots] = await Promise.all([
+    many(
+      pool,
+      `SELECT depleted_ts, restocked_ts, ignored FROM restocks
+       WHERE country = $1 AND item_id = $2
+       ORDER BY depleted_ts ASC`,
+      [country, itemId]
+    ),
+    many(
+      pool,
+      `SELECT yata_ts, quantity FROM snapshots
+       WHERE country = $1 AND item_id = $2
+       ORDER BY yata_ts ASC`,
+      [country, itemId]
+    ),
+  ]);
+
+  const qtyAt = new Map();
+  for (const row of snapshots) qtyAt.set(row.yata_ts, row.quantity);
+  const latest = snapshots.length ? snapshots[snapshots.length - 1] : null;
 
   const windows = [];
   for (let i = 0; i < events.length; i++) {
     if (events[i].ignored) continue;
     const startTs = events[i].restocked_ts;
     if (startTs == null) continue;
-    const startRow = await one(
-      pool,
-      `SELECT quantity FROM snapshots WHERE country = $1 AND item_id = $2 AND yata_ts = $3`,
-      [country, itemId, startTs]
-    );
-    const startQty = startRow?.quantity;
+    const startQty = qtyAt.get(startTs);
     if (!startQty) continue;
 
     let endTs;
@@ -600,13 +632,7 @@ export async function getDepletionRates(country, itemId, limit) {
     let open = false;
     const nextDepletion = events[i + 1]?.depleted_ts;
     if (nextDepletion != null) {
-      const lastPositive = await one(
-        pool,
-        `SELECT yata_ts, quantity FROM snapshots
-         WHERE country = $1 AND item_id = $2 AND yata_ts < $3 AND quantity > 0
-         ORDER BY yata_ts DESC LIMIT 1`,
-        [country, itemId, nextDepletion]
-      );
+      const lastPositive = lastPositiveBefore(snapshots, nextDepletion);
       if (lastPositive && lastPositive.yata_ts > startTs) {
         endTs = lastPositive.yata_ts;
         endQty = lastPositive.quantity;
@@ -615,13 +641,6 @@ export async function getDepletionRates(country, itemId, limit) {
         endQty = 0;
       }
     } else {
-      const latest = await one(
-        pool,
-        `SELECT yata_ts, quantity FROM snapshots
-         WHERE country = $1 AND item_id = $2
-         ORDER BY yata_ts DESC LIMIT 1`,
-        [country, itemId]
-      );
       if (!latest || latest.quantity === 0) continue;
       endTs = latest.yata_ts;
       endQty = latest.quantity;

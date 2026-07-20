@@ -9,6 +9,7 @@
     "migrate": "node scripts/migrate.mjs",
     "backfill": "node scripts/backfill-restocks.mjs",
     "import-sqlite": "node scripts/import-sqlite-to-postgres.mjs",
+    "pull-railway-sqlite": "node scripts/pull-railway-sqlite.mjs",
     "db-counts": "node scripts/db-counts.mjs"
   },
   "engines": {

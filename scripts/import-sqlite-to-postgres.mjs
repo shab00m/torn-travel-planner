@@ -1,5 +1,6 @@
 /**
- * One-shot copy from a SQLite travel.db into Postgres (DATABASE_URL).
+ * Copy from a SQLite travel.db into Postgres (DATABASE_URL).
+ * Safe to re-run: inserts missing rows; upserts restocks/users/market/amounts.
  * Usage: npm run import-sqlite -- data/travel.db
  */
 import { DatabaseSync } from "node:sqlite";
@@ -59,7 +60,10 @@ await withTransaction(async (client) => {
     await client.query(
       `INSERT INTO restocks (country, item_id, depleted_ts, restocked_ts, duration, ignored)
        VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT DO NOTHING`,
+       ON CONFLICT (country, item_id, depleted_ts) DO UPDATE SET
+         restocked_ts = COALESCE(EXCLUDED.restocked_ts, restocks.restocked_ts),
+         duration = COALESCE(EXCLUDED.duration, restocks.duration),
+         ignored = EXCLUDED.ignored`,
       [
         row.country,
         row.item_id,
@@ -101,7 +105,12 @@ await withTransaction(async (client) => {
     await client.query(
       `INSERT INTO users (player_id, name, is_admin, is_allowed, created_at, updated_at, last_login_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (player_id) DO NOTHING`,
+       ON CONFLICT (player_id) DO UPDATE SET
+         name = EXCLUDED.name,
+         is_admin = EXCLUDED.is_admin,
+         is_allowed = EXCLUDED.is_allowed,
+         updated_at = GREATEST(users.updated_at, EXCLUDED.updated_at),
+         last_login_at = COALESCE(EXCLUDED.last_login_at, users.last_login_at)`,
       [
         row.player_id,
         row.name,

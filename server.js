@@ -236,10 +236,11 @@ app.get("/api/history/:country/:itemId", async (req, res) => {
 app.get("/api/restocks/:country/:itemId", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
-  res.json({
-    restocks: await getRestocks(params.country, params.id, 50),
-    rates: await getDepletionRates(params.country, params.id, 50),
-  });
+  const [restocks, rates] = await Promise.all([
+    getRestocks(params.country, params.id, 50),
+    getDepletionRates(params.country, params.id, 50),
+  ]);
+  res.json({ restocks, rates });
 });
 
 app.get("/api/restock-amounts", async (_req, res) => {
@@ -391,11 +392,11 @@ app.patch("/api/restocks/:country/:itemId/:depletedTs", requireAdmin, async (req
   }
   try {
     await setRestockIgnored(params.country, params.id, depletedTs, ignored);
-    res.json({
-      ok: true,
-      restocks: await getRestocks(params.country, params.id, 50),
-      rates: await getDepletionRates(params.country, params.id, 50),
-    });
+    const [restocks, rates] = await Promise.all([
+      getRestocks(params.country, params.id, 50),
+      getDepletionRates(params.country, params.id, 50),
+    ]);
+    res.json({ ok: true, restocks, rates });
   } catch (err) {
     res.status(err.message === "Restock cycle not found" ? 404 : 400).json({ error: err.message });
   }
@@ -407,12 +408,16 @@ app.post("/api/restocks/:country/:itemId/flag-outliers", requireAdmin, async (re
   if (!params) return;
   try {
     const result = await flagOutlierRestocks(params.country, params.id);
+    const [restocks, rates] = await Promise.all([
+      getRestocks(params.country, params.id, 50),
+      getDepletionRates(params.country, params.id, 50),
+    ]);
     res.json({
       ok: true,
       flagged: result.flagged,
       depletedTs: result.depletedTs,
-      restocks: await getRestocks(params.country, params.id, 50),
-      rates: await getDepletionRates(params.country, params.id, 50),
+      restocks,
+      rates,
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -430,10 +435,11 @@ function parseYataTs(req, res) {
 
 async function rerunRestocks(country, itemId) {
   await backfillRestocks();
-  return {
-    restocks: await getRestocks(country, itemId, 50),
-    rates: await getDepletionRates(country, itemId, 50),
-  };
+  const [restocks, rates] = await Promise.all([
+    getRestocks(country, itemId, 50),
+    getDepletionRates(country, itemId, 50),
+  ]);
+  return { restocks, rates };
 }
 
 app.post("/api/snapshots/:country/:itemId/delete", requireAdmin, async (req, res) => {

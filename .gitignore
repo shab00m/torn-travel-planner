@@ -1,5 +1,8 @@
 node_modules/
 data_bkp/
-data/*.db
-data/*.db-*
-data/*.db.gz
+
+# SQLite / local DB artifacts (including nested extract dirs)
+data/**/*.db
+data/**/*.db-*
+data/**/*.db.gz
+data/.railway-sqlite-extract/
