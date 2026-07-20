@@ -2388,6 +2388,28 @@ function tickLiveChart() {
   applyChartView(state.lastTimeline);
 }
 
+/** Schedule live chart work outside setInterval so Chrome doesn't flag long handlers. */
+function startLiveChartTicker() {
+  let pending = false;
+
+  function run() {
+    pending = false;
+    if (document.hidden) return;
+    tickLiveChart();
+  }
+
+  function schedule() {
+    if (pending || document.hidden) return;
+    pending = true;
+    requestAnimationFrame(run);
+  }
+
+  setInterval(schedule, 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) schedule();
+  });
+}
+
 function parseItemFromUrl() {
   const parsed = parseItemFromPath();
   if (!parsed || parsed.view !== "stock") return null;
@@ -2645,7 +2667,7 @@ window.addEventListener("travelsettingschange", () => {
     loadCurrentStock(),
     refreshTravelStatus(),
   ]);
-  setInterval(tickLiveChart, 1000);
+  startLiveChartTicker();
   startStockUpdateWatcher(async () => {
     await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);
   });
