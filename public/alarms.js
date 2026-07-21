@@ -157,17 +157,35 @@ function playAlarmBeep() {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
     const ctx = new Ctx();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = "sine";
-    osc.frequency.value = 880;
-    gain.gain.value = 0.08;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.45);
-    osc.stop(ctx.currentTime + 0.5);
-    setTimeout(() => ctx.close().catch(() => {}), 600);
+    // Square + dual pitch cuts through better than a soft sine.
+    const master = ctx.createGain();
+    master.gain.value = 0.35;
+    master.connect(ctx.destination);
+
+    const beeps = [
+      { t: 0, freq: 880, dur: 0.16 },
+      { t: 0.2, freq: 1175, dur: 0.16 },
+      { t: 0.4, freq: 880, dur: 0.16 },
+      { t: 0.7, freq: 880, dur: 0.16 },
+      { t: 0.9, freq: 1175, dur: 0.16 },
+      { t: 1.1, freq: 880, dur: 0.22 },
+    ];
+    for (const { t, freq, dur } of beeps) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "square";
+      osc.frequency.value = freq;
+      const start = ctx.currentTime + t;
+      const end = start + dur;
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(1, start + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, end);
+      osc.connect(gain);
+      gain.connect(master);
+      osc.start(start);
+      osc.stop(end + 0.02);
+    }
+    setTimeout(() => ctx.close().catch(() => {}), 1600);
   } catch {
     /* ignore */
   }
