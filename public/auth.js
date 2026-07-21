@@ -186,8 +186,16 @@ authEl.form.addEventListener("submit", async (e) => {
   }
 });
 
-initGuestTravelControls();
-syncGuestTravelControls();
+// Settings panel (with guest travel controls) is injected on DOMContentLoaded by shared.js.
+function bootGuestTravelControls() {
+  initGuestTravelControls();
+  syncGuestTravelControls();
+}
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootGuestTravelControls);
+} else {
+  bootGuestTravelControls();
+}
 
 /** Fire-and-forget page load beacon (user id/name when logged in; IP captured server-side). */
 function recordPageView() {
