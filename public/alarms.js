@@ -336,6 +336,9 @@ async function toggleArrivalAlarm({ country, itemId, itemName, arriveTs, destina
   });
 }
 
+/** Favorites dashboard "next safe leave" alarms use this index (not item prediction #). */
+const FAVORITE_NEXT_WINDOW_INDEX = -1;
+
 /**
  * Update leave alarm event times from latest predictions; drop missed/stale.
  * windows: [{ windowIndex, type, leaveEarliest, leaveLatest, missed }]
@@ -357,6 +360,11 @@ function syncLeaveAlarmsForItem(country, itemId, windows) {
       next.push(alarm);
       continue;
     }
+    // Kept in sync from the favorites safe-window API, not item predictions.
+    if (Number(alarm.windowIndex) === FAVORITE_NEXT_WINDOW_INDEX) {
+      next.push(alarm);
+      continue;
+    }
     const w = byKey.get(`${alarm.type}:${alarm.windowIndex}`);
     if (!w || w.missed || w.leaveEarliest == null) {
       changed = true;
@@ -364,6 +372,45 @@ function syncLeaveAlarmsForItem(country, itemId, windows) {
     }
     if (alarm.eventTs !== w.leaveEarliest) {
       alarm.eventTs = w.leaveEarliest;
+      changed = true;
+    }
+    next.push(alarm);
+  }
+  if (changed) {
+    alarmState.alarms = next;
+    persistAlarms();
+    renderAlarmsPanel();
+    window.dispatchEvent(new CustomEvent("alarmschange"));
+  }
+}
+
+/**
+ * Update favorites "next safe leave" alarms from /api/safe-windows results.
+ * windowsByKey: { "country:itemId": { available, safeWindow, reason } }
+ */
+function syncFavoriteNextLeaveAlarms(windowsByKey) {
+  if (!windowsByKey || typeof windowsByKey !== "object") return;
+  const now = Math.floor(Date.now() / 1000);
+  let changed = false;
+  const next = [];
+  for (const alarm of alarmState.alarms) {
+    if (
+      alarm.firedAt ||
+      alarm.type !== "leave_safe" ||
+      Number(alarm.windowIndex) !== FAVORITE_NEXT_WINDOW_INDEX
+    ) {
+      next.push(alarm);
+      continue;
+    }
+    const key = `${alarm.country}:${alarm.itemId}`;
+    const data = windowsByKey[key];
+    const sw = data?.available ? data.safeWindow : null;
+    if (!sw || sw.leaveEarliest == null || sw.leaveLatest <= now) {
+      changed = true;
+      continue;
+    }
+    if (alarm.eventTs !== sw.leaveEarliest) {
+      alarm.eventTs = sw.leaveEarliest;
       changed = true;
     }
     next.push(alarm);

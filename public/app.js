@@ -166,7 +166,7 @@ function favoriteRowHtml(country, item) {
           <td>${fmtMoney(item.cost)}</td>
           ${profitHrCell(country, item)}
           ${safeWindowCell(country, item.id)}
-          ${leaveByCell(country, item.id)}
+          ${leaveByCell(country, item.id, item.name)}
         </tr>`;
 }
 
@@ -212,9 +212,33 @@ function safeWindowCell(country, itemId) {
   });
 }
 
-function leaveByCell(country, itemId) {
+function leaveByCell(country, itemId, itemName) {
   return safeWindowStatusCell(country, itemId, "leave-by-cell", (sw, stale) => {
-    const label = `${fmtTimeShort(sw.leaveEarliest)} – ${fmtTimeShort(sw.leaveLatest)}`;
+    const wallTs = Math.floor(Date.now() / 1000);
+    const canAlarm =
+      sw.leaveEarliest != null &&
+      sw.leaveEarliest > wallTs &&
+      typeof alarmButtonHtml === "function";
+    const windowIndex =
+      typeof FAVORITE_NEXT_WINDOW_INDEX === "number" ? FAVORITE_NEXT_WINDOW_INDEX : -1;
+    const armed =
+      canAlarm &&
+      typeof hasLeaveAlarm === "function" &&
+      hasLeaveAlarm("leave_safe", country, itemId, windowIndex);
+    const btn = canAlarm
+      ? ` ${alarmButtonHtml({
+          armed,
+          attrs: {
+            "data-alarm-type": "leave_safe",
+            "data-window-index": windowIndex,
+            "data-leave-earliest": sw.leaveEarliest,
+            "data-country": country,
+            "data-item-id": itemId,
+            "data-item-name": itemName ?? "",
+          },
+        })}`
+      : "";
+    const label = `${fmtTimeShort(sw.leaveEarliest)}${btn} – ${fmtTimeShort(sw.leaveLatest)}`;
     const title = `Leave ${fmtTime(sw.leaveEarliest)} – ${fmtTime(sw.leaveLatest)} · Safe ${fmtTime(sw.safeStart)} – ${fmtTime(sw.safeEnd)}${stale ? " (updating…)" : ""}`;
     const staleCls = stale ? " safe-window-stale" : "";
     return `<td class="leave-by-cell leave-by-ok${staleCls}" title="${escapeHtml(title)}">${label}</td>`;
@@ -356,6 +380,9 @@ async function loadSafeWindows() {
     state.safeWindows = { ...state.safeWindows, ...windows };
     saveSafeWindowsCache(windows);
     state.safeWindowsStatus = "ready";
+    if (typeof syncFavoriteNextLeaveAlarms === "function") {
+      syncFavoriteNextLeaveAlarms(state.safeWindows);
+    }
   } catch {
     state.safeWindowsStatus = Object.keys(state.safeWindows).length ? "ready" : "error";
   }
@@ -499,7 +526,7 @@ window.addEventListener("travelsettingschange", () => {
   loadSafeWindows();
 });
 
-el.countries.addEventListener("click", (e) => {
+el.countries.addEventListener("click", async (e) => {
   const sortBtn = e.target.closest(".favorites-sort");
   if (sortBtn) {
     e.stopPropagation();
@@ -516,6 +543,29 @@ el.countries.addEventListener("click", (e) => {
     } else {
       render();
     }
+    return;
+  }
+  const alarmBtn = e.target.closest("button.alarm-set-btn");
+  if (alarmBtn) {
+    e.stopPropagation();
+    e.preventDefault();
+    if (typeof toggleLeaveAlarm !== "function") return;
+    const country = alarmBtn.dataset.country;
+    const itemId = Number.parseInt(alarmBtn.dataset.itemId, 10);
+    const windowIndex = Number(alarmBtn.dataset.windowIndex);
+    const leaveEarliest = Number(alarmBtn.dataset.leaveEarliest);
+    if (!country || !Number.isInteger(itemId) || !Number.isFinite(windowIndex) || !Number.isFinite(leaveEarliest)) {
+      return;
+    }
+    await toggleLeaveAlarm({
+      type: alarmBtn.dataset.alarmType || "leave_safe",
+      country,
+      itemId,
+      itemName: alarmBtn.dataset.itemName || null,
+      windowIndex,
+      leaveEarliest,
+    });
+    renderFavoritesOnly();
     return;
   }
   const favBtn = e.target.closest(".favorite-btn");
@@ -541,6 +591,10 @@ window.addEventListener("favoriteschange", () => {
 
 window.addEventListener("restockamountchange", () => {
   loadSafeWindows();
+});
+
+window.addEventListener("alarmschange", () => {
+  if (el.countries.querySelector(".favorites-card")) renderFavoritesOnly();
 });
 
 (async () => {

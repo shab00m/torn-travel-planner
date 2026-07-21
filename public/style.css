@@ -665,7 +665,7 @@ th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
 }
 
 .favorites-card .col-safe-window { width: 10.5rem; }
-.favorites-card .col-leave-by { width: 10.5rem; }
+.favorites-card .col-leave-by { width: 12.5rem; }
 
 .favorites-card thead th {
   padding: 7px 10px;
@@ -699,6 +699,10 @@ th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
 .leave-by-cell {
   font-variant-numeric: tabular-nums;
   font-size: 0.82rem;
+}
+
+.leave-by-cell .alarm-set-btn {
+  vertical-align: text-bottom;
 }
 
 .safe-window-ok,
