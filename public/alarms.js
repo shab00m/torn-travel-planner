@@ -504,6 +504,47 @@ function notificationBannerHtml() {
   return "";
 }
 
+function alarmWhenText(alarm, now = Math.floor(Date.now() / 1000)) {
+  const eventLabel = typeof fmtTimeShort === "function" ? fmtTimeShort(alarm.eventTs) : "";
+  return `${eventLabel} · fires in ${formatCountdown(fireAt(alarm) - now)}`;
+}
+
+function syncAlarmsToggleLabel() {
+  const toggle = document.getElementById("alarms-toggle");
+  if (!toggle) return;
+  const n = activeAlarms().length;
+  toggle.textContent = n ? `Alarms (${n})` : "Alarms";
+}
+
+/** Update countdown labels in place so offset inputs keep focus. */
+function updateAlarmsCountdowns() {
+  const list = document.getElementById("alarms-list");
+  if (!list || !isAlarmsOpen()) {
+    syncAlarmsToggleLabel();
+    return;
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const alarms = activeAlarms();
+  const ids = new Set(alarms.map((a) => a.id));
+  // Structure changed (alarm added/removed/fired) — full rebuild needed.
+  const rows = [...list.querySelectorAll(".alarms-item[data-alarm-id]")];
+  if (
+    list.querySelector(".alarms-empty") ||
+    rows.length !== alarms.length ||
+    rows.some((row) => !ids.has(row.dataset.alarmId))
+  ) {
+    renderAlarmsPanel();
+    return;
+  }
+  for (const alarm of alarms) {
+    const when = list.querySelector(
+      `.alarms-item[data-alarm-id="${alarm.id}"] .alarms-item-when`
+    );
+    if (when) when.textContent = alarmWhenText(alarm, now);
+  }
+  syncAlarmsToggleLabel();
+}
+
 function renderAlarmsPanel() {
   const list = document.getElementById("alarms-list");
   if (!list) return;
@@ -514,10 +555,16 @@ function renderAlarmsPanel() {
   }
 
   const alarms = activeAlarms();
-  const toggle = document.getElementById("alarms-toggle");
-  if (toggle) {
-    toggle.textContent = alarms.length ? `Alarms (${alarms.length})` : "Alarms";
-  }
+  syncAlarmsToggleLabel();
+
+  const activeEl = document.activeElement;
+  const focusedAlarmId =
+    activeEl?.classList?.contains("alarms-offset-input") && list.contains(activeEl)
+      ? activeEl.dataset.alarmId
+      : null;
+  const focusedValue = focusedAlarmId != null ? activeEl.value : null;
+  const selectionStart = focusedAlarmId != null ? activeEl.selectionStart : null;
+  const selectionEnd = focusedAlarmId != null ? activeEl.selectionEnd : null;
 
   if (!alarms.length) {
     list.innerHTML = `<li class="alarms-empty">No alarms set.</li>`;
@@ -533,15 +580,13 @@ function renderAlarmsPanel() {
         a.type === "arrival"
           ? a.destination || meta?.name || a.country || "Travel"
           : `${flag}${a.itemName || a.itemId}${meta ? ` · ${meta.name}` : a.country ? ` · ${a.country}` : ""}`;
-      const eventLabel = typeof fmtTimeShort === "function" ? fmtTimeShort(a.eventTs) : "";
       const offsetMin = Math.round((a.offsetSec / 60) * 10) / 10;
-      const until = formatCountdown(fireAt(a) - now);
       const auto = a.auto ? `<span class="alarms-auto-tag">auto</span>` : "";
       return `<li class="alarms-item" data-alarm-id="${a.id}">
         <div class="alarms-item-main">
           <span class="alarms-item-type">${alarmTypeLabel(a.type)}${auto}</span>
           <span class="alarms-item-place">${place}</span>
-          <span class="alarms-item-when">${eventLabel} · fires in ${until}</span>
+          <span class="alarms-item-when">${alarmWhenText(a, now)}</span>
         </div>
         <label class="alarms-offset-field" title="Minutes before event">
           <span>Offset</span>
@@ -552,6 +597,23 @@ function renderAlarmsPanel() {
       </li>`;
     })
     .join("");
+
+  if (focusedAlarmId) {
+    const input = list.querySelector(
+      `.alarms-offset-input[data-alarm-id="${focusedAlarmId}"]`
+    );
+    if (input) {
+      input.value = focusedValue;
+      input.focus();
+      if (selectionStart != null && selectionEnd != null) {
+        try {
+          input.setSelectionRange(selectionStart, selectionEnd);
+        } catch {
+          /* number inputs may not support selection in all browsers */
+        }
+      }
+    }
+  }
 }
 
 function isAlarmsOpen() {
@@ -627,7 +689,10 @@ function injectAlarmsPanel() {
     }
     alarm.offsetSec = Math.round(min * 60);
     persistAlarms();
-    renderAlarmsPanel();
+    const when = panel.querySelector(
+      `.alarms-item[data-alarm-id="${alarm.id}"] .alarms-item-when`
+    );
+    if (when) when.textContent = alarmWhenText(alarm);
   });
 
   setAlarmsOpen(isAlarmsOpen());
@@ -704,13 +769,9 @@ function injectAlarmSettings() {
 
 function tickAlarms() {
   const now = Math.floor(Date.now() / 1000);
-  let fired = false;
   for (const alarm of alarmState.alarms) {
     if (alarm.firedAt) continue;
-    if (fireAt(alarm) <= now) {
-      fireAlarm(alarm);
-      fired = true;
-    }
+    if (fireAt(alarm) <= now) fireAlarm(alarm);
   }
   // Prune old fired alarms (keep list clean)
   const cutoff = now - 3600;
@@ -719,15 +780,7 @@ function tickAlarms() {
     alarmState.alarms = pruned;
     persistAlarms();
   }
-  if (!fired) {
-    const list = document.getElementById("alarms-list");
-    if (list && isAlarmsOpen()) renderAlarmsPanel();
-    else {
-      const toggle = document.getElementById("alarms-toggle");
-      const n = activeAlarms().length;
-      if (toggle) toggle.textContent = n ? `Alarms (${n})` : "Alarms";
-    }
-  }
+  updateAlarmsCountdowns();
 }
 
 async function refreshTravelForAlarms() {
