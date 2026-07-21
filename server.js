@@ -184,12 +184,12 @@ app.post("/api/travel", async (req, res) => {
     res.status(400).json({ error: "apiKey is required" });
     return;
   }
-  if (typeof country !== "string" || !COUNTRIES[country]) {
-    res.status(400).json({ error: "country is required" });
+  if (country != null && (typeof country !== "string" || !COUNTRIES[country])) {
+    res.status(400).json({ error: "country is invalid" });
     return;
   }
   try {
-    res.json(await getTravelStatus(apiKey.trim(), country));
+    res.json(await getTravelStatus(apiKey.trim(), country ?? null));
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

@@ -85,23 +85,50 @@ export async function getPlayerInfo(apiKey) {
 }
 
 /**
- * Return in-flight travel to a specific country, if any.
+ * Return in-flight travel, if any.
  * travel.timestamp is the landing time while en route.
  */
-export function parseTravelToCountry(travel, countryCode) {
+export function parseActiveTravel(travel) {
   if (!travel?.destination || travel.timestamp == null) return null;
-  if (countryCodeFromTornDestination(travel.destination) !== countryCode) return null;
   const nowTs = Math.floor(Date.now() / 1000);
   if (travel.timestamp <= nowTs) return null;
-  return { arriveTs: travel.timestamp };
+  return {
+    arriveTs: travel.timestamp,
+    destination: travel.destination,
+    country: countryCodeFromTornDestination(travel.destination),
+  };
 }
 
-/** Check whether the key owner is currently flying to countryCode. */
-export async function getTravelStatus(apiKey, countryCode) {
+/**
+ * Return in-flight travel to a specific country, if any.
+ */
+export function parseTravelToCountry(travel, countryCode) {
+  const active = parseActiveTravel(travel);
+  if (!active || active.country !== countryCode) return null;
+  return { arriveTs: active.arriveTs };
+}
+
+/**
+ * Travel status for the key owner.
+ * When countryCode is set, flyingToCountry is true only if flying to that country.
+ * When omitted, returns any active flight (for arrival alarms).
+ */
+export async function getTravelStatus(apiKey, countryCode = null) {
   const data = await fetchTornUser(apiKey, "travel");
-  const active = parseTravelToCountry(data.travel, countryCode);
+  const active = parseActiveTravel(data.travel);
+  if (!active) {
+    return {
+      flyingToCountry: false,
+      arriveTs: null,
+      destination: null,
+      country: null,
+    };
+  }
+  const flyingToCountry = countryCode != null && active.country === countryCode;
   return {
-    flyingToCountry: active != null,
-    arriveTs: active?.arriveTs ?? null,
+    flyingToCountry,
+    arriveTs: countryCode != null && !flyingToCountry ? null : active.arriveTs,
+    destination: active.destination,
+    country: active.country,
   };
 }

@@ -1257,7 +1257,7 @@ function formatRestockLabel(e, i, averages, events, segments, predictionCtx) {
   return `#${i + 1}: Window between ${fmtTimeShort(restockEarliest)} → ${fmtTimeShort(restockLatest)}`;
 }
 
-/** @returns {{ text: string, missed: boolean } | null} */
+/** @returns {{ text: string, missed: boolean, leaveEarliest?: number, leaveLatest?: number } | null} */
 function leaveWindowInfo(restockEarliest, restockLatest, flightSec, wallTs) {
   if (flightSec == null || restockEarliest == null || restockLatest == null) return null;
   const leaveEarliest = restockEarliest - flightSec;
@@ -1266,15 +1266,19 @@ function leaveWindowInfo(restockEarliest, restockLatest, flightSec, wallTs) {
     return {
       text: `Missed window by ${fmtDuration(wallTs - leaveLatest)}`,
       missed: true,
+      leaveEarliest,
+      leaveLatest,
     };
   }
   return {
     text: `Leave between ${fmtTimeShort(leaveEarliest)} and ${fmtTimeShort(leaveLatest)}`,
     missed: false,
+    leaveEarliest,
+    leaveLatest,
   };
 }
 
-/** @returns {{ text: string, missed: boolean } | null} */
+/** @returns {{ text: string, missed: boolean, leaveEarliest?: number, leaveLatest?: number } | null} */
 function safeLeaveWindowInfo(bounds, flightSec, wallTs) {
   if (!bounds || flightSec == null) return null;
 
@@ -1289,12 +1293,43 @@ function safeLeaveWindowInfo(bounds, flightSec, wallTs) {
     return {
       text: `Missed window by ${fmtDuration(wallTs - leaveLatest)}`,
       missed: true,
+      leaveEarliest,
+      leaveLatest,
     };
   }
   return {
     text: `Leave between ${fmtTimeShort(leaveEarliest)} and ${fmtTimeShort(leaveLatest)}`,
     missed: false,
+    leaveEarliest,
+    leaveLatest,
   };
+}
+
+function leaveBetweenHtml(leave, { type, windowIndex, className }) {
+  if (!leave) return "";
+  if (leave.missed) {
+    return `<span class="prediction-right ${className}">${leave.text}</span>`;
+  }
+  const country = state.item?.country ?? "";
+  const itemId = state.item?.itemId ?? "";
+  const armed =
+    typeof hasLeaveAlarm === "function" &&
+    hasLeaveAlarm(type, country, itemId, windowIndex);
+  const btn =
+    typeof alarmButtonHtml === "function"
+      ? alarmButtonHtml({
+          armed,
+          attrs: {
+            "data-alarm-type": type,
+            "data-window-index": windowIndex,
+            "data-leave-earliest": leave.leaveEarliest,
+            "data-leave-latest": leave.leaveLatest ?? "",
+          },
+        })
+      : "";
+  return `<span class="prediction-right ${className}">Leave between ${fmtTimeShort(
+    leave.leaveEarliest
+  )} ${btn} and ${fmtTimeShort(leave.leaveLatest)}</span>`;
 }
 
 function escapeAttr(value) {
@@ -1326,8 +1361,17 @@ function renderPredictionPanel(events, segments) {
   const restocks = events.filter((e) => e.type === "restock" && e.ts >= dataTs);
   if (!restocks.length) {
     el.predictionList.innerHTML = `<li class="prediction-item prediction-empty">Not enough data to predict restocks.</li>`;
+    if (country && state.item && typeof syncLeaveAlarmsForItem === "function") {
+      syncLeaveAlarmsForItem(country, state.item.itemId, []);
+    }
+    if (country && state.item && typeof syncAutoSafeAlarms === "function") {
+      syncAutoSafeAlarms(country, state.item.itemId, state.item.name, []);
+    }
     return;
   }
+
+  const leaveSyncWindows = [];
+  const safeAutoWindows = [];
 
   el.predictionList.innerHTML = restocks
     .map((e, i) => {
@@ -1339,21 +1383,52 @@ function renderPredictionPanel(events, segments) {
         predictionCtx
       );
       const leave = leaveWindowInfo(restockEarliest, restockLatest, flightSec, wallTs);
-      const leaveHtml = leave
-        ? `<span class="prediction-right ${leave.missed ? "leave-missed" : "leave-by"}">${leave.text}</span>`
-        : "";
+      if (leave) {
+        leaveSyncWindows.push({
+          windowIndex: i,
+          type: "leave_regular",
+          leaveEarliest: leave.leaveEarliest,
+          leaveLatest: leave.leaveLatest,
+          missed: leave.missed,
+        });
+      }
+      const leaveHtml = leaveBetweenHtml(leave, {
+        type: "leave_regular",
+        windowIndex: i,
+        className: leave?.missed ? "leave-missed" : "leave-by",
+      });
 
       const safe = safeWindowBoundsForEvent(i);
       let safeHtml = "";
       if (safe) {
         const safeLeave = safeLeaveWindowInfo(safe, flightSec, wallTs);
+        if (safeLeave) {
+          leaveSyncWindows.push({
+            windowIndex: i,
+            type: "leave_safe",
+            leaveEarliest: safeLeave.leaveEarliest,
+            leaveLatest: safeLeave.leaveLatest,
+            missed: safeLeave.missed,
+          });
+          safeAutoWindows.push({
+            windowIndex: i,
+            leaveEarliest: safeLeave.leaveEarliest,
+            leaveLatest: safeLeave.leaveLatest,
+            missed: safeLeave.missed,
+          });
+        }
         const copyBtn =
           safeLeave && !safeLeave.missed
             ? `<button type="button" class="copy-leave-btn" data-copy="${escapeAttr(safeLeave.text)}" title="Copy leave window">Copy</button>`
             : "";
+        const leaveSafeHtml = leaveBetweenHtml(safeLeave, {
+          type: "leave_safe",
+          windowIndex: i,
+          className: safeLeave?.missed ? "safe-leave-missed" : "safe-leave-by",
+        });
         const right = safeLeave
           ? `<span class="prediction-right-group">
-              <span class="prediction-right ${safeLeave.missed ? "safe-leave-missed" : "safe-leave-by"}">${safeLeave.text}</span>
+              ${leaveSafeHtml}
               ${copyBtn}
             </span>`
           : "";
@@ -1372,6 +1447,13 @@ function renderPredictionPanel(events, segments) {
       </li>`;
     })
     .join("");
+
+  if (country && state.item && flightSec != null && typeof syncLeaveAlarmsForItem === "function") {
+    syncLeaveAlarmsForItem(country, state.item.itemId, leaveSyncWindows);
+  }
+  if (country && state.item && flightSec != null && typeof syncAutoSafeAlarms === "function") {
+    syncAutoSafeAlarms(country, state.item.itemId, state.item.name, safeAutoWindows);
+  }
 }
 
 async function copyPredictionLeaveText(text, button) {
@@ -1474,6 +1556,7 @@ async function refreshTravelStatus() {
   const apiKey = typeof getStoredApiKey === "function" ? getStoredApiKey() : null;
   if (!apiKey) {
     state.activeTravel = null;
+    if (typeof syncArrivalFromTravel === "function") syncArrivalFromTravel(null);
     if (state.chartPoints.length) redrawPrediction();
     return;
   }
@@ -1486,6 +1569,17 @@ async function refreshTravelStatus() {
     const body = await res.json();
     if (!res.ok) throw new Error(body.error);
     state.activeTravel = body;
+    if (typeof syncArrivalFromTravel === "function") {
+      if (body.flyingToCountry && body.arriveTs != null) {
+        syncArrivalFromTravel({
+          arriveTs: body.arriveTs,
+          country: body.country ?? state.item.country,
+          destination: body.destination ?? null,
+        });
+      } else if (typeof refreshTravelForAlarms === "function") {
+        refreshTravelForAlarms();
+      }
+    }
   } catch {
     state.activeTravel = null;
   }
@@ -1723,13 +1817,18 @@ function updateTimeMarkers(chart) {
   const xMin = chart.options.scales.x.min;
   const xMax = chart.options.scales.x.max;
   const nowLabel = isFlyingToItem() ? "✈️ NOW" : "NOW";
-  const markers = [{ ts: nowTs, label: nowLabel, color: "#ffea00" }];
+  const markers = [{ ts: nowTs, label: nowLabel, color: "#ffea00", showAlarm: false }];
   const arriveTs = getArriveTs(nowTs, state.item?.country);
   if (arriveTs != null) {
-    markers.push({ ts: arriveTs, label: "ARRIVE", color: "#ff9800" });
+    markers.push({
+      ts: arriveTs,
+      label: "ARRIVE",
+      color: "#ff9800",
+      showAlarm: isFlyingToItem(),
+    });
   }
 
-  markers.forEach(({ ts, label, color }) => {
+  markers.forEach(({ ts, label, color, showAlarm }) => {
     const xMs = tsMs(ts);
     if (xMs < xMin || xMs > xMax) return;
 
@@ -1741,7 +1840,18 @@ function updateTimeMarkers(chart) {
     markerLabel.style.left = `${x}px`;
     markerLabel.style.top = `${chartMarkerTop(chart, chartArea, CHART_TIME_MARKER_LABEL_Y_ADJUST)}px`;
     markerLabel.style.color = color;
-    markerLabel.innerHTML = `${label}<br>${fmtTimeShort(ts)}`;
+    let alarmBtn = "";
+    if (showAlarm && typeof alarmButtonHtml === "function") {
+      const armed = typeof hasArrivalAlarm === "function" && hasArrivalAlarm();
+      alarmBtn = ` ${alarmButtonHtml({
+        armed,
+        attrs: {
+          "data-alarm-type": "arrival",
+          "data-arrive-ts": ts,
+        },
+      })}`;
+    }
+    markerLabel.innerHTML = `${label}${alarmBtn}<br>${fmtTimeShort(ts)}`;
     el.timeMarkers.appendChild(markerLabel);
   });
 }
@@ -2467,6 +2577,10 @@ function setupItemPage(item) {
   setupItemHeader(item, "stock");
   const savedAmount = getRestockAmount(item.country, item.itemId);
   el.restockAmount.value = savedAmount ?? "";
+  const autoSafe = document.getElementById("auto-safe-alarms-toggle");
+  if (autoSafe && typeof isAutoSafeAlarmsEnabled === "function") {
+    autoSafe.checked = isAutoSafeAlarmsEnabled(item.country, item.itemId);
+  }
 }
 
 function refreshRestockAdjustments() {
@@ -2670,10 +2784,42 @@ el.predictionButtons.addEventListener("click", (e) => {
   redrawPrediction();
 });
 
-el.predictionList?.addEventListener("click", (e) => {
-  const btn = e.target.closest("button.copy-leave-btn");
-  if (!btn) return;
-  copyPredictionLeaveText(btn.dataset.copy ?? "", btn);
+el.predictionList?.addEventListener("click", async (e) => {
+  const copyBtn = e.target.closest("button.copy-leave-btn");
+  if (copyBtn) {
+    copyPredictionLeaveText(copyBtn.dataset.copy ?? "", copyBtn);
+    return;
+  }
+  const alarmBtn = e.target.closest("button.alarm-set-btn");
+  if (!alarmBtn || !state.item || typeof toggleLeaveAlarm !== "function") return;
+  const type = alarmBtn.dataset.alarmType;
+  const windowIndex = Number(alarmBtn.dataset.windowIndex);
+  const leaveEarliest = Number(alarmBtn.dataset.leaveEarliest);
+  if (!type || !Number.isFinite(windowIndex) || !Number.isFinite(leaveEarliest)) return;
+  await toggleLeaveAlarm({
+    type,
+    country: state.item.country,
+    itemId: state.item.itemId,
+    itemName: state.item.name,
+    windowIndex,
+    leaveEarliest,
+  });
+  redrawPrediction();
+});
+
+el.timeMarkers?.addEventListener("click", async (e) => {
+  const alarmBtn = e.target.closest("button.alarm-set-btn[data-alarm-type='arrival']");
+  if (!alarmBtn || !state.item || typeof toggleArrivalAlarm !== "function") return;
+  const arriveTs = Number(alarmBtn.dataset.arriveTs);
+  if (!Number.isFinite(arriveTs)) return;
+  await toggleArrivalAlarm({
+    country: state.item.country,
+    itemId: state.item.itemId,
+    itemName: state.item.name,
+    arriveTs,
+    destination: state.activeTravel?.destination ?? state.countries[state.item.country]?.name,
+  });
+  if (state.chart) updateTimeMarkers(state.chart);
 });
 
 syncHourButtons(el.rangeButtons, state.rangeHours);
@@ -2687,6 +2833,26 @@ if (el.flightVarianceToggle) {
     redrawPrediction();
   });
 }
+
+const autoSafeAlarmToggle = document.getElementById("auto-safe-alarms-toggle");
+if (autoSafeAlarmToggle) {
+  autoSafeAlarmToggle.addEventListener("change", async () => {
+    if (!state.item || typeof setAutoSafeAlarmsEnabled !== "function") return;
+    setAutoSafeAlarmsEnabled(state.item.country, state.item.itemId, autoSafeAlarmToggle.checked);
+    if (autoSafeAlarmToggle.checked && typeof ensureNotificationPermission === "function") {
+      await ensureNotificationPermission();
+    }
+    redrawPrediction();
+  });
+}
+
+window.addEventListener("alarmautosettingchange", () => {
+  if (state.item) redrawPrediction();
+});
+
+window.addEventListener("alarmschange", () => {
+  if (state.chart) updateTimeMarkers(state.chart);
+});
 
 if (el.safeWindowUseRate) {
   el.safeWindowUseRate.checked = state.safeWindowUseRateSelection;

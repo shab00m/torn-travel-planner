@@ -142,6 +142,10 @@
 						<input id="flight-variance-toggle" type="checkbox" checked />
 						Account for 3% flight time variance
 					</label>
+					<label class="checkbox" for="auto-safe-alarms-toggle">
+						<input id="auto-safe-alarms-toggle" type="checkbox" />
+						Auto-alarm all safe leave windows
+					</label>
 				</div>
 				<div id="inspect-controls" class="control-group hidden">
 					<span class="control-group-title">Data Inspector</span>
@@ -274,6 +278,7 @@
 		</main>
 
 		<script src="/shared.js"></script>
+		<script src="/alarms.js"></script>
 		<script src="/api-tos.js"></script>
 		<script src="/auth.js"></script>
 		<script src="/item.js"></script>
