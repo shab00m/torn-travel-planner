@@ -22,7 +22,7 @@ const ALARM_BEEP_PATTERN = [
 ];
 const ALARM_BEEP_PATTERN_MS = 1320;
 const ALARM_BEEP_PAUSE_MS = 2000;
-const ALARM_BEEP_REPEATS = 3;
+const ALARM_BEEP_MAX_MS = 5 * 60 * 1000;
 
 function defaultAlarmPrefs() {
   return {
@@ -201,7 +201,7 @@ function scheduleBeepPattern(ctx, master, offsetSec) {
   }
 }
 
-/** Play the beep pattern 3 times with a 2s pause between; cancellable via stopAlarmSound. */
+/** Repeat the beep pattern (2s pause between) for up to 5 minutes or until dismissed. */
 function playAlarmBeep(alarmId) {
   stopAlarmSound();
   try {
@@ -214,21 +214,26 @@ function playAlarmBeep(alarmId) {
 
     const sound = { ctx, timers: [], alarmId };
     alarmState.sound = sound;
+    const startedAt = Date.now();
+    const cycleMs = ALARM_BEEP_PATTERN_MS + ALARM_BEEP_PAUSE_MS;
 
-    const cycleSec = (ALARM_BEEP_PATTERN_MS + ALARM_BEEP_PAUSE_MS) / 1000;
-    for (let i = 0; i < ALARM_BEEP_REPEATS; i++) {
-      scheduleBeepPattern(ctx, master, i * cycleSec);
-    }
+    const playCycle = () => {
+      if (alarmState.sound !== sound) return;
+      if (Date.now() - startedAt >= ALARM_BEEP_MAX_MS) {
+        stopAlarmSound(alarmId);
+        return;
+      }
+      scheduleBeepPattern(ctx, master, 0);
+      const timer = setTimeout(playCycle, cycleMs);
+      sound.timers.push(timer);
+    };
 
-    const totalMs =
-      (ALARM_BEEP_REPEATS - 1) * (ALARM_BEEP_PATTERN_MS + ALARM_BEEP_PAUSE_MS) +
-      ALARM_BEEP_PATTERN_MS +
-      100;
-    const closeTimer = setTimeout(() => {
+    const maxTimer = setTimeout(() => {
       if (alarmState.sound !== sound) return;
       stopAlarmSound(alarmId);
-    }, totalMs);
-    sound.timers.push(closeTimer);
+    }, ALARM_BEEP_MAX_MS);
+    sound.timers.push(maxTimer);
+    playCycle();
   } catch {
     alarmState.sound = null;
   }
