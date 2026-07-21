@@ -8,7 +8,21 @@ const alarmState = {
   tickerId: null,
   travelPollId: null,
   settingsBound: false,
+  /** @type {{ ctx: AudioContext | null, timers: number[], alarmId: string | null } | null} */
+  sound: null,
 };
+
+const ALARM_BEEP_PATTERN = [
+  { t: 0, freq: 880, dur: 0.16 },
+  { t: 0.2, freq: 1175, dur: 0.16 },
+  { t: 0.4, freq: 880, dur: 0.16 },
+  { t: 0.7, freq: 880, dur: 0.16 },
+  { t: 0.9, freq: 1175, dur: 0.16 },
+  { t: 1.1, freq: 880, dur: 0.22 },
+];
+const ALARM_BEEP_PATTERN_MS = 1320;
+const ALARM_BEEP_PAUSE_MS = 2000;
+const ALARM_BEEP_REPEATS = 3;
 
 function defaultAlarmPrefs() {
   return {
@@ -108,10 +122,11 @@ function fireAt(alarm) {
 }
 
 function activeAlarms() {
-  const now = Math.floor(Date.now() / 1000);
-  return alarmState.alarms
-    .filter((a) => !a.firedAt && fireAt(a) > now - 2)
-    .sort((a, b) => fireAt(a) - fireAt(b));
+  // Pending alarms + fired alarms waiting for dismiss (do not auto-remove on fire).
+  return [...alarmState.alarms].sort((a, b) => {
+    if (Boolean(a.firedAt) !== Boolean(b.firedAt)) return a.firedAt ? -1 : 1;
+    return fireAt(a) - fireAt(b);
+  });
 }
 
 function newAlarmId() {
@@ -152,42 +167,70 @@ async function ensureNotificationPermission() {
   }
 }
 
-function playAlarmBeep() {
+function stopAlarmSound(alarmId = null) {
+  const sound = alarmState.sound;
+  if (!sound) return;
+  if (alarmId != null && sound.alarmId != null && sound.alarmId !== alarmId) return;
+  for (const id of sound.timers) clearTimeout(id);
+  sound.timers = [];
+  if (sound.ctx) {
+    try {
+      sound.ctx.close();
+    } catch {
+      /* ignore */
+    }
+  }
+  alarmState.sound = null;
+}
+
+function scheduleBeepPattern(ctx, master, offsetSec) {
+  for (const { t, freq, dur } of ALARM_BEEP_PATTERN) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.value = freq;
+    const start = ctx.currentTime + offsetSec + t;
+    const end = start + dur;
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(1, start + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, end);
+    osc.connect(gain);
+    gain.connect(master);
+    osc.start(start);
+    osc.stop(end + 0.02);
+  }
+}
+
+/** Play the beep pattern 3 times with a 2s pause between; cancellable via stopAlarmSound. */
+function playAlarmBeep(alarmId) {
+  stopAlarmSound();
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
     const ctx = new Ctx();
-    // Square + dual pitch cuts through better than a soft sine.
     const master = ctx.createGain();
     master.gain.value = 0.35;
     master.connect(ctx.destination);
 
-    const beeps = [
-      { t: 0, freq: 880, dur: 0.16 },
-      { t: 0.2, freq: 1175, dur: 0.16 },
-      { t: 0.4, freq: 880, dur: 0.16 },
-      { t: 0.7, freq: 880, dur: 0.16 },
-      { t: 0.9, freq: 1175, dur: 0.16 },
-      { t: 1.1, freq: 880, dur: 0.22 },
-    ];
-    for (const { t, freq, dur } of beeps) {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "square";
-      osc.frequency.value = freq;
-      const start = ctx.currentTime + t;
-      const end = start + dur;
-      gain.gain.setValueAtTime(0.0001, start);
-      gain.gain.exponentialRampToValueAtTime(1, start + 0.015);
-      gain.gain.exponentialRampToValueAtTime(0.0001, end);
-      osc.connect(gain);
-      gain.connect(master);
-      osc.start(start);
-      osc.stop(end + 0.02);
+    const sound = { ctx, timers: [], alarmId };
+    alarmState.sound = sound;
+
+    const cycleSec = (ALARM_BEEP_PATTERN_MS + ALARM_BEEP_PAUSE_MS) / 1000;
+    for (let i = 0; i < ALARM_BEEP_REPEATS; i++) {
+      scheduleBeepPattern(ctx, master, i * cycleSec);
     }
-    setTimeout(() => ctx.close().catch(() => {}), 1600);
+
+    const totalMs =
+      (ALARM_BEEP_REPEATS - 1) * (ALARM_BEEP_PATTERN_MS + ALARM_BEEP_PAUSE_MS) +
+      ALARM_BEEP_PATTERN_MS +
+      100;
+    const closeTimer = setTimeout(() => {
+      if (alarmState.sound !== sound) return;
+      stopAlarmSound(alarmId);
+    }, totalMs);
+    sound.timers.push(closeTimer);
   } catch {
-    /* ignore */
+    alarmState.sound = null;
   }
 }
 
@@ -211,9 +254,10 @@ function alarmBody(alarm) {
 }
 
 function fireAlarm(alarm) {
+  if (alarm.firedAt) return;
   alarm.firedAt = Math.floor(Date.now() / 1000);
   persistAlarms();
-  playAlarmBeep();
+  playAlarmBeep(alarm.id);
   if (typeof Notification !== "undefined" && Notification.permission === "granted") {
     try {
       new Notification(alarmTitle(alarm), { body: alarmBody(alarm), tag: alarm.id });
@@ -221,11 +265,13 @@ function fireAlarm(alarm) {
       /* ignore */
     }
   }
+  setAlarmsOpen(true);
   renderAlarmsPanel();
   window.dispatchEvent(new CustomEvent("alarmschange"));
 }
 
 function removeAlarmById(id) {
+  stopAlarmSound(id);
   const before = alarmState.alarms.length;
   alarmState.alarms = alarmState.alarms.filter((a) => a.id !== id);
   if (alarmState.alarms.length !== before) {
@@ -524,6 +570,7 @@ function notificationBannerHtml() {
 
 function alarmWhenText(alarm, now = Math.floor(Date.now() / 1000)) {
   const eventLabel = typeof fmtTimeShort === "function" ? fmtTimeShort(alarm.eventTs) : "";
+  if (alarm.firedAt) return `${eventLabel} · fired — dismiss to clear`;
   return `${eventLabel} · fires in ${formatCountdown(fireAt(alarm) - now)}`;
 }
 
@@ -555,9 +602,10 @@ function updateAlarmsCountdowns() {
     return;
   }
   for (const alarm of alarms) {
-    const when = list.querySelector(
-      `.alarms-item[data-alarm-id="${alarm.id}"] .alarms-item-when`
-    );
+    const row = list.querySelector(`.alarms-item[data-alarm-id="${alarm.id}"]`);
+    if (!row) continue;
+    row.classList.toggle("alarms-item-fired", Boolean(alarm.firedAt));
+    const when = row.querySelector(".alarms-item-when");
     if (when) when.textContent = alarmWhenText(alarm, now);
   }
   syncAlarmsToggleLabel();
@@ -600,18 +648,22 @@ function renderAlarmsPanel() {
           : `${flag}${a.itemName || a.itemId}${meta ? ` · ${meta.name}` : a.country ? ` · ${a.country}` : ""}`;
       const offsetMin = Math.round((a.offsetSec / 60) * 10) / 10;
       const auto = a.auto ? `<span class="alarms-auto-tag">auto</span>` : "";
-      return `<li class="alarms-item" data-alarm-id="${a.id}">
+      const firedCls = a.firedAt ? " alarms-item-fired" : "";
+      const offsetHtml = a.firedAt
+        ? ""
+        : `<label class="alarms-offset-field" title="Minutes before event">
+          <span>Offset</span>
+          <input type="number" class="alarms-offset-input" min="0" step="0.5" value="${offsetMin}" data-alarm-id="${a.id}" />
+          <span>min</span>
+        </label>`;
+      return `<li class="alarms-item${firedCls}" data-alarm-id="${a.id}">
         <div class="alarms-item-main">
           <span class="alarms-item-type">${alarmTypeLabel(a.type)}${auto}</span>
           <span class="alarms-item-place">${place}</span>
           <span class="alarms-item-when">${alarmWhenText(a, now)}</span>
         </div>
-        <label class="alarms-offset-field" title="Minutes before event">
-          <span>Offset</span>
-          <input type="number" class="alarms-offset-input" min="0" step="0.5" value="${offsetMin}" data-alarm-id="${a.id}" />
-          <span>min</span>
-        </label>
-        <button type="button" class="alarms-dismiss-btn" data-alarm-id="${a.id}" title="Dismiss">✕</button>
+        ${offsetHtml}
+        <button type="button" class="alarms-dismiss-btn" data-alarm-id="${a.id}" title="Dismiss alarm">Dismiss</button>
       </li>`;
     })
     .join("");
@@ -790,13 +842,6 @@ function tickAlarms() {
   for (const alarm of alarmState.alarms) {
     if (alarm.firedAt) continue;
     if (fireAt(alarm) <= now) fireAlarm(alarm);
-  }
-  // Prune old fired alarms (keep list clean)
-  const cutoff = now - 3600;
-  const pruned = alarmState.alarms.filter((a) => !a.firedAt || a.firedAt > cutoff);
-  if (pruned.length !== alarmState.alarms.length) {
-    alarmState.alarms = pruned;
-    persistAlarms();
   }
   updateAlarmsCountdowns();
 }

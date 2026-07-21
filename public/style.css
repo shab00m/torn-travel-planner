@@ -373,6 +373,24 @@ h1 { margin: 0; font-size: 1.35rem; }
   border-radius: 8px;
 }
 
+@keyframes alarms-item-flash {
+  0%,
+  100% {
+    background: var(--surface-2);
+    border-color: var(--border);
+    box-shadow: none;
+  }
+  50% {
+    background: rgba(242, 106, 106, 0.28);
+    border-color: var(--red);
+    box-shadow: 0 0 0 1px rgba(242, 106, 106, 0.45);
+  }
+}
+
+.alarms-item-fired {
+  animation: alarms-item-flash 0.9s ease-in-out infinite;
+}
+
 .alarms-item-main {
   display: flex;
   flex-direction: column;
@@ -427,20 +445,27 @@ h1 { margin: 0; font-size: 1.35rem; }
 }
 
 .alarms-dismiss-btn {
-  background: transparent;
+  background: var(--surface);
   border: 1px solid var(--border);
-  color: var(--text-dim);
+  color: var(--text);
   border-radius: 6px;
-  width: 1.8rem;
-  height: 1.8rem;
+  padding: 4px 10px;
+  min-height: 1.8rem;
   cursor: pointer;
   font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
   line-height: 1;
 }
 
 .alarms-dismiss-btn:hover {
   color: var(--red);
   border-color: var(--red);
+}
+
+.alarms-item-fired .alarms-dismiss-btn {
+  border-color: var(--red);
+  color: var(--red);
 }
 
 .settings-group {
