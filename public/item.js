@@ -1310,13 +1310,16 @@ function leaveBetweenHtml(leave, { type, windowIndex, className }) {
   if (leave.missed) {
     return `<span class="prediction-right ${className}">${leave.text}</span>`;
   }
+  const wallTs = Math.floor(Date.now() / 1000);
   const country = state.item?.country ?? "";
   const itemId = state.item?.itemId ?? "";
+  const canAlarm = leave.leaveEarliest != null && leave.leaveEarliest > wallTs;
   const armed =
+    canAlarm &&
     typeof hasLeaveAlarm === "function" &&
     hasLeaveAlarm(type, country, itemId, windowIndex);
   const btn =
-    typeof alarmButtonHtml === "function"
+    canAlarm && typeof alarmButtonHtml === "function"
       ? alarmButtonHtml({
           armed,
           attrs: {
@@ -1329,7 +1332,7 @@ function leaveBetweenHtml(leave, { type, windowIndex, className }) {
       : "";
   return `<span class="prediction-right ${className}">Leave between ${fmtTimeShort(
     leave.leaveEarliest
-  )} ${btn} and ${fmtTimeShort(leave.leaveLatest)}</span>`;
+  )}${btn ? ` ${btn}` : ""} and ${fmtTimeShort(leave.leaveLatest)}</span>`;
 }
 
 function escapeAttr(value) {
@@ -1824,7 +1827,7 @@ function updateTimeMarkers(chart) {
       ts: arriveTs,
       label: "ARRIVE",
       color: "#ff9800",
-      showAlarm: isFlyingToItem(),
+      showAlarm: isFlyingToItem() && arriveTs > nowTs,
     });
   }
 
