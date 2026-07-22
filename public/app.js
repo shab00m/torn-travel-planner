@@ -1,6 +1,8 @@
 const el = {
   status: document.getElementById("status"),
   pageError: document.getElementById("page-error"),
+  homeMain: document.querySelector(".home-main"),
+  favorites: document.getElementById("favorites"),
   countries: document.getElementById("countries"),
   search: document.getElementById("item-search"),
   countryFilter: document.getElementById("country-filter"),
@@ -172,10 +174,9 @@ function sortStockItems(items, country) {
   );
 }
 
-function getFilteredFavorites(query = state.search.trim().toLowerCase()) {
-  const favorites = collectFavoriteItems();
-  const filtered = favorites.filter(({ country, item }) => itemMatchesFilters(item, country, query));
-  return sortFavoriteItems(filtered);
+/** Favorites ignore home-page filters; only sort applies. */
+function getSortedFavorites() {
+  return sortFavoriteItems(collectFavoriteItems());
 }
 
 function getItemType(itemId) {
@@ -271,7 +272,7 @@ function populateItemTypeFilter() {
 
 function favoriteRowHtml(country, item) {
   const meta = state.countries[country];
-  const nameCell = `${meta.flag} ${highlight(item.name, state.search.trim())}`;
+  const nameCell = `${meta.flag} ${escapeHtml(item.name)}`;
   return `
         <tr data-country="${country}" data-item="${item.id}" data-name="${escapeHtml(item.name)}" title="View item history">
           <td class="favorite-cell">${favoriteButtonHtml(country, item.id)}</td>
@@ -566,67 +567,52 @@ async function loadSafeWindows() {
   renderFavoritesOnly();
 }
 
+function favoritesCardHtml(favorites) {
+  const rows = favorites.map(({ country, item }) => favoriteRowHtml(country, item)).join("");
+  return `
+    <section class="country-card favorites-card">
+      <div class="country-header">
+        <h2>⭐ Favorites</h2>
+        <span class="country-updated">${favorites.length} item${favorites.length === 1 ? "" : "s"}</span>
+      </div>
+      <table>
+        ${FAVORITES_TABLE_COLGROUP}
+        ${favoritesTableHead()}
+        <tbody>${rows}</tbody>
+      </table>
+    </section>`;
+}
+
 function renderFavoritesOnly() {
-  const favoritesCard = el.countries.querySelector(".favorites-card");
-  if (!favoritesCard) return;
-  const filtered = getFilteredFavorites();
-  const header = favoritesCard.querySelector(".country-header");
-  if (header) {
-    header.querySelector(".country-updated").textContent =
-      `${filtered.length} item${filtered.length === 1 ? "" : "s"}`;
-  }
-  const existingTable = favoritesCard.querySelector("table");
-  if (!filtered.length) {
-    existingTable?.remove();
-    if (!favoritesCard.querySelector(".empty-note")) {
-      favoritesCard.insertAdjacentHTML(
-        "beforeend",
-        `<p class="empty-note">No favorites match the current filters.</p>`
-      );
-    }
+  if (!el.favorites) return;
+  const favorites = getSortedFavorites();
+  if (!favorites.length) {
+    el.favorites.replaceChildren();
     return;
   }
-  favoritesCard.querySelector(".empty-note")?.remove();
-  const rows = filtered.map(({ country, item }) => favoriteRowHtml(country, item)).join("");
+  const existingCard = el.favorites.querySelector(".favorites-card");
+  if (!existingCard) {
+    el.favorites.innerHTML = favoritesCardHtml(favorites);
+    return;
+  }
+  const header = existingCard.querySelector(".country-header .country-updated");
+  if (header) {
+    header.textContent = `${favorites.length} item${favorites.length === 1 ? "" : "s"}`;
+  }
   const tableHtml = `<table>
       ${FAVORITES_TABLE_COLGROUP}
       ${favoritesTableHead()}
-      <tbody>${rows}</tbody>
+      <tbody>${favorites.map(({ country, item }) => favoriteRowHtml(country, item)).join("")}</tbody>
     </table>`;
-  if (existingTable) {
-    existingTable.outerHTML = tableHtml;
-  } else {
-    favoritesCard.insertAdjacentHTML("beforeend", tableHtml);
-  }
+  const existingTable = existingCard.querySelector("table");
+  if (existingTable) existingTable.outerHTML = tableHtml;
+  else existingCard.insertAdjacentHTML("beforeend", tableHtml);
 }
 
-function renderFavoritesSection(query, frag) {
-  const favorites = collectFavoriteItems();
-  if (!favorites.length) return;
-
-  const filtered = getFilteredFavorites(query);
-  const card = document.createElement("section");
-  card.className = "country-card favorites-card";
-  card.innerHTML = `
-    <div class="country-header">
-      <h2>⭐ Favorites</h2>
-      <span class="country-updated">${filtered.length} item${filtered.length === 1 ? "" : "s"}</span>
-    </div>`;
-
-  if (!filtered.length) {
-    card.insertAdjacentHTML("beforeend", `<p class="empty-note">No favorites match the current filters.</p>`);
-  } else {
-    const rows = filtered.map(({ country, item }) => favoriteRowHtml(country, item)).join("");
-    card.insertAdjacentHTML(
-      "beforeend",
-        `<table>
-          ${FAVORITES_TABLE_COLGROUP}
-          ${favoritesTableHead()}
-          <tbody>${rows}</tbody>
-        </table>`
-    );
-  }
-  frag.appendChild(card);
+function renderFavoritesSection() {
+  if (!el.favorites) return;
+  const favorites = getSortedFavorites();
+  el.favorites.innerHTML = favorites.length ? favoritesCardHtml(favorites) : "";
 }
 
 function render() {
@@ -634,7 +620,7 @@ function render() {
   const query = state.search.trim().toLowerCase();
   const frag = document.createDocumentFragment();
 
-  renderFavoritesSection(query, frag);
+  renderFavoritesSection();
 
   for (const [code, meta] of Object.entries(state.countries)) {
     if (state.countryFilters.length && !state.countryFilters.includes(code)) continue;
@@ -715,7 +701,7 @@ window.addEventListener("travelsettingschange", () => {
   loadSafeWindows();
 });
 
-el.countries.addEventListener("click", async (e) => {
+el.homeMain.addEventListener("click", async (e) => {
   const sortBtn = e.target.closest(".column-sort");
   if (sortBtn) {
     e.stopPropagation();
@@ -729,7 +715,7 @@ el.countries.addEventListener("click", async (e) => {
       state[sortKey] = { column, dir: "asc" };
     }
     savePrefs({ [sortKey]: state[sortKey] });
-    if (target === "favorites" && el.countries.querySelector(".favorites-card")) {
+    if (target === "favorites" && el.favorites?.querySelector(".favorites-card")) {
       renderFavoritesOnly();
     } else {
       render();
@@ -785,7 +771,7 @@ window.addEventListener("restockamountchange", () => {
 });
 
 window.addEventListener("alarmschange", () => {
-  if (el.countries.querySelector(".favorites-card")) renderFavoritesOnly();
+  if (el.favorites?.querySelector(".favorites-card")) renderFavoritesOnly();
 });
 
 (async () => {

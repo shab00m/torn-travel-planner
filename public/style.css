@@ -533,13 +533,12 @@ h1 { margin: 0; font-size: 1.35rem; }
 .filters {
   display: flex;
   gap: 12px;
-  margin-top: 14px;
   flex-wrap: wrap;
   align-items: center;
 }
 
-#item-search,
-.profit-range input {
+.profit-range input,
+#item-search {
   background: var(--surface-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -549,9 +548,14 @@ h1 { margin: 0; font-size: 1.35rem; }
   font-size: 0.9rem;
 }
 
-#item-search { flex: 1 1 260px; }
-#item-search:focus,
-.profit-range input:focus {
+#item-search {
+  flex: 1 1 260px;
+  min-width: 200px;
+  max-width: 420px;
+}
+
+.profit-range input:focus,
+#item-search:focus {
   outline: 1px solid var(--accent);
 }
 
@@ -670,8 +674,18 @@ h1 { margin: 0; font-size: 1.35rem; }
   font-size: 0.9rem;
 }
 
-.countries {
+.home-main {
   padding: 20px 24px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.favorites-mount:empty {
+  display: none;
+}
+
+.countries {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(460px, 1fr));
   gap: 18px;
@@ -758,10 +772,6 @@ th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
 
 .favorite-btn.is-favorite {
   color: #f0c674;
-}
-
-.favorites-card {
-  grid-column: 1 / -1;
 }
 
 .favorites-card .country-header h2 {
