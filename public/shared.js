@@ -3,9 +3,9 @@ const state = {
   countries: {},
   stocks: null,
   search: "",
-  countryFilter: "",
+  countryFilters: [], // string[] — empty = all countries
   inStockOnly: false,
-  itemTypeFilter: "",
+  itemTypeFilters: [], // string[] — empty = all types
   profitMin: null, // number | null — profit/hr lower bound
   profitMax: null, // number | null — profit/hr upper bound
   itemTypes: null, // { [itemId]: typeString } from items.item_type via /api/item-types
@@ -64,6 +64,15 @@ function parseSortPref(value, allowedColumns, fallback) {
   return fallback;
 }
 
+/** Normalize multi-select prefs; also migrates legacy single-string values. */
+function parseStringListPref(value, legacyValue) {
+  if (Array.isArray(value)) {
+    return value.filter((v) => typeof v === "string" && v);
+  }
+  if (typeof legacyValue === "string" && legacyValue) return [legacyValue];
+  return [];
+}
+
 const PREFS_KEY = "plannerPrefs";
 const TRAVEL_TYPES = ["Standard", "Airstrip", "Private", "Business"];
 const BASE_TRAVEL_CAPACITY = { Standard: 5, Airstrip: 15, Private: 15, Business: 15 };
@@ -111,9 +120,9 @@ function applyStoredPrefs() {
   state.rateTiming = ["avg", "min", "max"].includes(prefs.rateTiming) ? prefs.rateTiming : "avg";
   state.safeWindowUseRateSelection = prefs.safeWindowUseRateSelection !== false;
   state.search = typeof prefs.search === "string" ? prefs.search : "";
-  state.countryFilter = typeof prefs.countryFilter === "string" ? prefs.countryFilter : "";
+  state.countryFilters = parseStringListPref(prefs.countryFilters, prefs.countryFilter);
   state.inStockOnly = prefs.inStockOnly === true;
-  state.itemTypeFilter = typeof prefs.itemTypeFilter === "string" ? prefs.itemTypeFilter : "";
+  state.itemTypeFilters = parseStringListPref(prefs.itemTypeFilters, prefs.itemTypeFilter);
   state.profitMin = parseOptionalNumber(prefs.profitMin);
   state.profitMax = parseOptionalNumber(prefs.profitMax);
   state.timeFormat = TIME_FORMATS.includes(prefs.timeFormat) ? prefs.timeFormat : "european";

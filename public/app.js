@@ -4,7 +4,9 @@ const el = {
   countries: document.getElementById("countries"),
   search: document.getElementById("item-search"),
   countryFilter: document.getElementById("country-filter"),
+  countryFilterList: document.getElementById("country-filter-list"),
   itemTypeFilter: document.getElementById("item-type-filter"),
+  itemTypeFilterList: document.getElementById("item-type-filter-list"),
   profitMin: document.getElementById("profit-min"),
   profitMax: document.getElementById("profit-max"),
   inStockOnly: document.getElementById("in-stock-only"),
@@ -183,8 +185,9 @@ function getItemType(itemId) {
 function itemMatchesFilters(item, country, query) {
   if (query && !item.name.toLowerCase().includes(query)) return false;
   if (state.inStockOnly && item.quantity <= 0) return false;
-  if (state.itemTypeFilter) {
-    if (getItemType(item.id) !== state.itemTypeFilter) return false;
+  if (state.itemTypeFilters.length) {
+    const type = getItemType(item.id);
+    if (!type || !state.itemTypeFilters.includes(type)) return false;
   }
   if (state.profitMin != null || state.profitMax != null) {
     const profit = getItemProfitPerHour(country, item);
@@ -206,35 +209,64 @@ function availableItemTypesInStocks() {
   return [...types].sort((a, b) => a.localeCompare(b));
 }
 
+function filterMenuSummaryLabel(selected, { all, one, many }) {
+  if (!selected.length) return all;
+  if (selected.length === 1) return one(selected[0]);
+  return many(selected.length);
+}
+
+function syncFilterMenuSummary(menuEl, selected, labels) {
+  const summary = menuEl?.querySelector(".filter-menu-summary");
+  if (!summary) return;
+  summary.textContent = filterMenuSummaryLabel(selected, labels);
+  summary.classList.toggle("has-selection", selected.length > 0);
+}
+
+function renderCheckboxOptions(listEl, options, selected, onToggle) {
+  listEl.replaceChildren();
+  for (const { value, label } of options) {
+    const row = document.createElement("label");
+    row.className = "filter-menu-option";
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = value;
+    input.checked = selected.includes(value);
+    input.addEventListener("change", () => onToggle(value, input.checked));
+    const text = document.createElement("span");
+    text.textContent = label;
+    row.append(input, text);
+    listEl.appendChild(row);
+  }
+}
+
 function populateItemTypeFilter() {
-  if (!el.itemTypeFilter) return;
-  const selected = state.itemTypeFilter;
-  const types = availableItemTypesInStocks();
-  // Keep a saved selection visible even before types/stocks finish loading.
-  const options = selected && !types.includes(selected) ? [...types, selected] : types;
-  el.itemTypeFilter.replaceChildren();
-  const allOpt = document.createElement("option");
-  allOpt.value = "";
-  allOpt.textContent = "All types";
-  el.itemTypeFilter.appendChild(allOpt);
-  for (const type of options) {
-    const opt = document.createElement("option");
-    opt.value = type;
-    opt.textContent = type;
-    el.itemTypeFilter.appendChild(opt);
+  if (!el.itemTypeFilterList) return;
+  const available = availableItemTypesInStocks();
+  // Prune stale selections only after both catalogues are ready.
+  if (state.itemTypesStatus === "ready" && state.stocks) {
+    const pruned = state.itemTypeFilters.filter((type) => available.includes(type));
+    if (pruned.length !== state.itemTypeFilters.length) {
+      state.itemTypeFilters = pruned;
+      savePrefs({ itemTypeFilters: state.itemTypeFilters });
+    }
   }
-  el.itemTypeFilter.value = selected && options.includes(selected) ? selected : "";
-  // Only drop a stale preference once both catalogues are ready.
-  if (
-    selected &&
-    state.itemTypesStatus === "ready" &&
-    state.stocks &&
-    !types.includes(selected)
-  ) {
-    state.itemTypeFilter = "";
-    el.itemTypeFilter.value = "";
-    savePrefs({ itemTypeFilter: "" });
-  }
+  const extras = state.itemTypeFilters.filter((type) => !available.includes(type));
+  const options = [...available, ...extras].map((type) => ({ value: type, label: type }));
+  const typeLabels = {
+    all: "All types",
+    one: (t) => t,
+    many: (n) => `Types (${n})`,
+  };
+  renderCheckboxOptions(el.itemTypeFilterList, options, state.itemTypeFilters, (value, checked) => {
+    const next = new Set(state.itemTypeFilters);
+    if (checked) next.add(value);
+    else next.delete(value);
+    state.itemTypeFilters = [...next];
+    savePrefs({ itemTypeFilters: state.itemTypeFilters });
+    syncFilterMenuSummary(el.itemTypeFilter, state.itemTypeFilters, typeLabels);
+    render();
+  });
+  syncFilterMenuSummary(el.itemTypeFilter, state.itemTypeFilters, typeLabels);
 }
 
 function favoriteRowHtml(country, item) {
@@ -364,7 +396,7 @@ function hasActiveListFilters(query) {
   return Boolean(
     query ||
       state.inStockOnly ||
-      state.itemTypeFilter ||
+      state.itemTypeFilters.length ||
       state.profitMin != null ||
       state.profitMax != null
   );
@@ -384,13 +416,55 @@ function profitHrCell(country, item) {
   return `<td class="profit-hr profit-unavailable"${title ? ` title="${escapeHtml(title)}"` : ""}>—</td>`;
 }
 
-async function populateCountryFilter() {
-  for (const [code, meta] of Object.entries(state.countries)) {
-    const opt = document.createElement("option");
-    opt.value = code;
-    opt.textContent = `${meta.flag} ${meta.name}`;
-    el.countryFilter.appendChild(opt);
+function countryFilterLabel(code) {
+  const meta = state.countries[code];
+  return meta ? `${meta.flag} ${meta.name}` : code;
+}
+
+function populateCountryFilter() {
+  if (!el.countryFilterList) return;
+  const codes = Object.keys(state.countries);
+  const valid = state.countryFilters.filter((code) => codes.includes(code));
+  if (valid.length !== state.countryFilters.length) {
+    state.countryFilters = valid;
+    savePrefs({ countryFilters: state.countryFilters });
   }
+  const options = codes.map((code) => ({
+    value: code,
+    label: countryFilterLabel(code),
+  }));
+  const countryLabels = {
+    all: "All countries",
+    one: countryFilterLabel,
+    many: (n) => `Countries (${n})`,
+  };
+  renderCheckboxOptions(el.countryFilterList, options, state.countryFilters, (value, checked) => {
+    const next = new Set(state.countryFilters);
+    if (checked) next.add(value);
+    else next.delete(value);
+    state.countryFilters = [...next];
+    savePrefs({ countryFilters: state.countryFilters });
+    syncFilterMenuSummary(el.countryFilter, state.countryFilters, countryLabels);
+    render();
+  });
+  syncFilterMenuSummary(el.countryFilter, state.countryFilters, countryLabels);
+}
+
+function initFilterMenus() {
+  const menus = [el.countryFilter, el.itemTypeFilter].filter(Boolean);
+  for (const menu of menus) {
+    menu.addEventListener("toggle", () => {
+      if (!menu.open) return;
+      for (const other of menus) {
+        if (other !== menu) other.open = false;
+      }
+    });
+  }
+  document.addEventListener("click", (e) => {
+    for (const menu of menus) {
+      if (menu.open && !menu.contains(e.target)) menu.open = false;
+    }
+  });
 }
 
 let stocksRetryTimer = null;
@@ -563,7 +637,7 @@ function render() {
   renderFavoritesSection(query, frag);
 
   for (const [code, meta] of Object.entries(state.countries)) {
-    if (state.countryFilter && state.countryFilter !== code) continue;
+    if (state.countryFilters.length && !state.countryFilters.includes(code)) continue;
     const data = state.stocks[code];
     if (!data) continue;
 
@@ -603,16 +677,6 @@ function render() {
 el.search.addEventListener("input", () => {
   state.search = el.search.value;
   savePrefs({ search: state.search });
-  render();
-});
-el.countryFilter.addEventListener("change", () => {
-  state.countryFilter = el.countryFilter.value;
-  savePrefs({ countryFilter: state.countryFilter });
-  render();
-});
-el.itemTypeFilter.addEventListener("change", () => {
-  state.itemTypeFilter = el.itemTypeFilter.value;
-  savePrefs({ itemTypeFilter: state.itemTypeFilter });
   render();
 });
 function syncProfitRangeFromInputs() {
@@ -729,10 +793,10 @@ window.addEventListener("alarmschange", () => {
   await loadCountries();
   await loadRestockAmounts();
   hydrateSafeWindowsFromCache();
-  await populateCountryFilter();
+  initFilterMenus();
+  populateCountryFilter();
+  populateItemTypeFilter();
   el.search.value = state.search;
-  el.countryFilter.value = state.countryFilter;
-  el.itemTypeFilter.value = state.itemTypeFilter;
   el.profitMin.value = state.profitMin ?? "";
   el.profitMax.value = state.profitMax ?? "";
   el.inStockOnly.checked = state.inStockOnly;

@@ -39,12 +39,14 @@
 					placeholder="Search items… (e.g. Xanax, Plushie)"
 					autocomplete="off"
 				/>
-				<select id="country-filter">
-					<option value="">All countries</option>
-				</select>
-				<select id="item-type-filter" title="Torn item type">
-					<option value="">All types</option>
-				</select>
+				<details class="filter-menu" id="country-filter">
+					<summary class="filter-menu-summary">All countries</summary>
+					<div class="filter-menu-panel" id="country-filter-list" role="group" aria-label="Countries"></div>
+				</details>
+				<details class="filter-menu" id="item-type-filter" title="Torn item type">
+					<summary class="filter-menu-summary">All types</summary>
+					<div class="filter-menu-panel" id="item-type-filter-list" role="group" aria-label="Item types"></div>
+				</details>
 				<label class="profit-range" title="Filter by profit per hour">
 					<span class="profit-range-label">Profit/hr</span>
 					<input id="profit-min" type="number" inputmode="numeric" placeholder="Min" step="1" />
