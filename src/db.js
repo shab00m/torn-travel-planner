@@ -737,6 +737,45 @@ export async function getDepletionRates(country, itemId, limit) {
   return windows.reverse().slice(0, limit);
 }
 
+/** item_id → item_type for rows that have a Torn type. */
+export async function getAllItemTypeRows() {
+  return many(
+    getPool(),
+    `SELECT item_id, item_type FROM items WHERE item_type IS NOT NULL AND item_type <> ''`
+  );
+}
+
+/** True when at least one known item is still missing a Torn type. */
+export async function hasItemsMissingType() {
+  const row = await one(
+    getPool(),
+    `SELECT EXISTS(
+       SELECT 1 FROM items WHERE item_type IS NULL OR item_type = ''
+     ) AS missing`
+  );
+  return Boolean(row?.missing);
+}
+
+/**
+ * Upsert Torn catalogue rows into items (id, name, item_type).
+ * Preserves existing rows; overwrites name and item_type from Torn.
+ */
+export async function upsertItemTypes(entries) {
+  if (!entries.length) return 0;
+  const ids = entries.map((e) => e.id);
+  const names = entries.map((e) => e.name);
+  const types = entries.map((e) => e.type);
+  await query(
+    `INSERT INTO items (item_id, name, item_type)
+     SELECT * FROM UNNEST($1::int[], $2::text[], $3::text[])
+     ON CONFLICT (item_id) DO UPDATE SET
+       name = EXCLUDED.name,
+       item_type = EXCLUDED.item_type`,
+    [ids, names, types]
+  );
+  return entries.length;
+}
+
 export async function getMarketPriceRow(itemId) {
   return one(
     getPool(),

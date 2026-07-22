@@ -29,6 +29,7 @@ import {
   startMarketRefresh,
   CACHE_TTL_SEC,
 } from "./src/market.js";
+import { getCachedItemTypes, ensureItemTypesPopulated } from "./src/item-types.js";
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
 import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
 import { listUsers, createUser, updateUser, deleteUser, seedBootstrapAdmin } from "./src/users.js";
@@ -175,6 +176,13 @@ app.get("/api/markets", async (_req, res) => {
   const { prices, fetchedAt } = await getCachedMarketPrices();
   void enqueueStaleMarketRefresh();
   res.json({ prices, fetchedAt, cacheTtlSec: CACHE_TTL_SEC });
+});
+
+// Torn item id → type from items.item_type (populated once via TORN_API_KEY).
+app.get("/api/item-types", async (_req, res) => {
+  const { types } = await getCachedItemTypes();
+  if (!Object.keys(types).length) void ensureItemTypesPopulated();
+  res.json({ types });
 });
 
 app.post("/api/travel", async (req, res) => {
@@ -596,4 +604,5 @@ app.listen(PORT, () => {
   console.log(`Torn Travel Planner running at http://localhost:${PORT}`);
   startPolling();
   startMarketRefresh();
+  void ensureItemTypesPopulated();
 });

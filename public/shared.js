@@ -5,6 +5,11 @@ const state = {
   search: "",
   countryFilter: "",
   inStockOnly: false,
+  itemTypeFilter: "",
+  profitMin: null, // number | null — profit/hr lower bound
+  profitMax: null, // number | null — profit/hr upper bound
+  itemTypes: null, // { [itemId]: typeString } from items.item_type via /api/item-types
+  itemTypesStatus: null, // null | "empty" | "ready" | "error"
   chart: null,
   chartPoints: [],
   restocks: [],
@@ -35,8 +40,29 @@ const state = {
   safeWindows: {},
   safeWindowsStatus: null, // null | "loading" | "ready" | "error"
   favoritesSort: { column: "item", dir: "asc" },
+  stocksSort: { column: "item", dir: "asc" },
   restockAmounts: {}, // { "uni:206": 5000 } from /api/restock-amounts
 };
+
+const SORT_COLUMNS = ["item", "stock", "cost", "profit", "safeWindow", "leaveBy"];
+const STOCK_SORT_COLUMNS = ["item", "stock", "cost", "profit"];
+
+function parseOptionalNumber(value) {
+  if (value == null || value === "") return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseSortPref(value, allowedColumns, fallback) {
+  if (
+    value &&
+    allowedColumns.includes(value.column) &&
+    (value.dir === "asc" || value.dir === "desc")
+  ) {
+    return { column: value.column, dir: value.dir };
+  }
+  return fallback;
+}
 
 const PREFS_KEY = "plannerPrefs";
 const TRAVEL_TYPES = ["Standard", "Airstrip", "Private", "Business"];
@@ -87,16 +113,14 @@ function applyStoredPrefs() {
   state.search = typeof prefs.search === "string" ? prefs.search : "";
   state.countryFilter = typeof prefs.countryFilter === "string" ? prefs.countryFilter : "";
   state.inStockOnly = prefs.inStockOnly === true;
+  state.itemTypeFilter = typeof prefs.itemTypeFilter === "string" ? prefs.itemTypeFilter : "";
+  state.profitMin = parseOptionalNumber(prefs.profitMin);
+  state.profitMax = parseOptionalNumber(prefs.profitMax);
   state.timeFormat = TIME_FORMATS.includes(prefs.timeFormat) ? prefs.timeFormat : "european";
   state.timeZone = TIME_ZONES.includes(prefs.timeZone) ? prefs.timeZone : "local";
   state.flightTimeVariance = prefs.flightTimeVariance !== false;
-  if (
-    prefs.favoritesSort &&
-    ["item", "stock", "cost", "profit", "safeWindow", "leaveBy"].includes(prefs.favoritesSort.column) &&
-    ["asc", "desc"].includes(prefs.favoritesSort.dir)
-  ) {
-    state.favoritesSort = prefs.favoritesSort;
-  }
+  state.favoritesSort = parseSortPref(prefs.favoritesSort, SORT_COLUMNS, state.favoritesSort);
+  state.stocksSort = parseSortPref(prefs.stocksSort, STOCK_SORT_COLUMNS, state.stocksSort);
 }
 
 function syncHourButtons(container, hours) {

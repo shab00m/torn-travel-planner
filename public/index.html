@@ -42,6 +42,15 @@
 				<select id="country-filter">
 					<option value="">All countries</option>
 				</select>
+				<select id="item-type-filter" title="Torn item type">
+					<option value="">All types</option>
+				</select>
+				<label class="profit-range" title="Filter by profit per hour">
+					<span class="profit-range-label">Profit/hr</span>
+					<input id="profit-min" type="number" inputmode="numeric" placeholder="Min" step="1" />
+					<span class="profit-range-sep">–</span>
+					<input id="profit-max" type="number" inputmode="numeric" placeholder="Max" step="1" />
+				</label>
 				<label class="checkbox">
 					<input id="in-stock-only" type="checkbox" />
 					In stock only

@@ -4,6 +4,9 @@ const el = {
   countries: document.getElementById("countries"),
   search: document.getElementById("item-search"),
   countryFilter: document.getElementById("country-filter"),
+  itemTypeFilter: document.getElementById("item-type-filter"),
+  profitMin: document.getElementById("profit-min"),
+  profitMax: document.getElementById("profit-max"),
   inStockOnly: document.getElementById("in-stock-only"),
 };
 
@@ -75,15 +78,31 @@ const FAVORITES_SORT_COLUMNS = [
   { key: "leaveBy", label: "Leave by" },
 ];
 
-function favoritesTableHead() {
-  const { column, dir } = state.favoritesSort;
-  const cells = FAVORITES_SORT_COLUMNS.map(({ key, label }) => {
+const STOCK_TABLE_SORT_COLUMNS = [
+  { key: null, label: "" },
+  { key: "item", label: "Item" },
+  { key: "stock", label: "Stock" },
+  { key: "cost", label: "Cost" },
+  { key: "profit", label: "Profit/hr" },
+];
+
+function sortableTableHead(columns, sortState, sortTarget) {
+  const { column, dir } = sortState;
+  const cells = columns.map(({ key, label }) => {
     if (!key) return "<th></th>";
     const active = column === key;
     const indicator = active ? (dir === "asc" ? " ▲" : " ▼") : "";
-    return `<th><button type="button" class="favorites-sort${active ? " active" : ""}" data-sort="${key}">${label}${indicator}</button></th>`;
+    return `<th><button type="button" class="column-sort${active ? " active" : ""}" data-sort="${key}" data-sort-target="${sortTarget}">${label}${indicator}</button></th>`;
   }).join("");
   return `<thead><tr>${cells}</tr></thead>`;
+}
+
+function favoritesTableHead() {
+  return sortableTableHead(FAVORITES_SORT_COLUMNS, state.favoritesSort, "favorites");
+}
+
+function stocksTableHead() {
+  return sortableTableHead(STOCK_TABLE_SORT_COLUMNS, state.stocksSort, "stocks");
 }
 
 function compareSortValues(a, b, dir) {
@@ -105,54 +124,117 @@ function favoriteLeaveBySortValue(country, itemId) {
   return data?.available && data.safeWindow ? data.safeWindow.leaveEarliest : null;
 }
 
-function sortFavoriteItems(favorites) {
-  const { column, dir } = state.favoritesSort;
-  const sorted = [...favorites];
-  sorted.sort((a, b) => {
-    let cmp = 0;
-    switch (column) {
-      case "stock":
-        cmp = compareSortValues(a.item.quantity, b.item.quantity, dir);
-        break;
-      case "cost":
-        cmp = compareSortValues(a.item.cost, b.item.cost, dir);
-        break;
-      case "profit":
-        cmp = compareSortValues(
-          getItemProfitPerHour(a.country, a.item),
-          getItemProfitPerHour(b.country, b.item),
-          dir
-        );
-        break;
-      case "safeWindow":
-        cmp = compareSortValues(
-          favoriteSafeWindowSortValue(a.country, a.item.id),
-          favoriteSafeWindowSortValue(b.country, b.item.id),
-          dir
-        );
-        break;
-      case "leaveBy":
-        cmp = compareSortValues(
-          favoriteLeaveBySortValue(a.country, a.item.id),
-          favoriteLeaveBySortValue(b.country, b.item.id),
-          dir
-        );
-        break;
-      case "item":
-      default:
-        cmp = compareSortValues(a.item.name.toLowerCase(), b.item.name.toLowerCase(), dir);
-        if (cmp === 0) cmp = compareSortValues(a.country, b.country, dir);
-        break;
+function compareItemsBySort(aCountry, aItem, bCountry, bItem, sortState) {
+  const { column, dir } = sortState;
+  switch (column) {
+    case "stock":
+      return compareSortValues(aItem.quantity, bItem.quantity, dir);
+    case "cost":
+      return compareSortValues(aItem.cost, bItem.cost, dir);
+    case "profit":
+      return compareSortValues(
+        getItemProfitPerHour(aCountry, aItem),
+        getItemProfitPerHour(bCountry, bItem),
+        dir
+      );
+    case "safeWindow":
+      return compareSortValues(
+        favoriteSafeWindowSortValue(aCountry, aItem.id),
+        favoriteSafeWindowSortValue(bCountry, bItem.id),
+        dir
+      );
+    case "leaveBy":
+      return compareSortValues(
+        favoriteLeaveBySortValue(aCountry, aItem.id),
+        favoriteLeaveBySortValue(bCountry, bItem.id),
+        dir
+      );
+    case "item":
+    default: {
+      let cmp = compareSortValues(aItem.name.toLowerCase(), bItem.name.toLowerCase(), dir);
+      if (cmp === 0) cmp = compareSortValues(aCountry, bCountry, dir);
+      return cmp;
     }
-    return cmp;
-  });
-  return sorted;
+  }
+}
+
+function sortFavoriteItems(favorites) {
+  return [...favorites].sort((a, b) =>
+    compareItemsBySort(a.country, a.item, b.country, b.item, state.favoritesSort)
+  );
+}
+
+function sortStockItems(items, country) {
+  return [...items].sort((a, b) =>
+    compareItemsBySort(country, a, country, b, state.stocksSort)
+  );
 }
 
 function getFilteredFavorites(query = state.search.trim().toLowerCase()) {
   const favorites = collectFavoriteItems();
-  const filtered = favorites.filter(({ item }) => filterItems([item], query).length > 0);
+  const filtered = favorites.filter(({ country, item }) => itemMatchesFilters(item, country, query));
   return sortFavoriteItems(filtered);
+}
+
+function getItemType(itemId) {
+  return state.itemTypes?.[itemId] ?? null;
+}
+
+function itemMatchesFilters(item, country, query) {
+  if (query && !item.name.toLowerCase().includes(query)) return false;
+  if (state.inStockOnly && item.quantity <= 0) return false;
+  if (state.itemTypeFilter) {
+    if (getItemType(item.id) !== state.itemTypeFilter) return false;
+  }
+  if (state.profitMin != null || state.profitMax != null) {
+    const profit = getItemProfitPerHour(country, item);
+    if (profit == null) return false;
+    if (state.profitMin != null && profit < state.profitMin) return false;
+    if (state.profitMax != null && profit > state.profitMax) return false;
+  }
+  return true;
+}
+
+function availableItemTypesInStocks() {
+  const types = new Set();
+  for (const data of Object.values(state.stocks || {})) {
+    for (const item of data.stocks || []) {
+      const type = getItemType(item.id);
+      if (type) types.add(type);
+    }
+  }
+  return [...types].sort((a, b) => a.localeCompare(b));
+}
+
+function populateItemTypeFilter() {
+  if (!el.itemTypeFilter) return;
+  const selected = state.itemTypeFilter;
+  const types = availableItemTypesInStocks();
+  // Keep a saved selection visible even before types/stocks finish loading.
+  const options = selected && !types.includes(selected) ? [...types, selected] : types;
+  el.itemTypeFilter.replaceChildren();
+  const allOpt = document.createElement("option");
+  allOpt.value = "";
+  allOpt.textContent = "All types";
+  el.itemTypeFilter.appendChild(allOpt);
+  for (const type of options) {
+    const opt = document.createElement("option");
+    opt.value = type;
+    opt.textContent = type;
+    el.itemTypeFilter.appendChild(opt);
+  }
+  el.itemTypeFilter.value = selected && options.includes(selected) ? selected : "";
+  // Only drop a stale preference once both catalogues are ready.
+  if (
+    selected &&
+    state.itemTypesStatus === "ready" &&
+    state.stocks &&
+    !types.includes(selected)
+  ) {
+    state.itemTypeFilter = "";
+    el.itemTypeFilter.value = "";
+    savePrefs({ itemTypeFilter: "" });
+  }
 }
 
 function favoriteRowHtml(country, item) {
@@ -274,11 +356,18 @@ function collectFavoriteItems() {
   return favorites;
 }
 
-function filterItems(items, query) {
-  let filtered = items;
-  if (query) filtered = filtered.filter((it) => it.name.toLowerCase().includes(query));
-  if (state.inStockOnly) filtered = filtered.filter((it) => it.quantity > 0);
-  return filtered;
+function filterItems(items, country, query) {
+  return items.filter((it) => itemMatchesFilters(it, country, query));
+}
+
+function hasActiveListFilters(query) {
+  return Boolean(
+    query ||
+      state.inStockOnly ||
+      state.itemTypeFilter ||
+      state.profitMin != null ||
+      state.profitMax != null
+  );
 }
 
 function profitHrCell(country, item) {
@@ -323,6 +412,19 @@ async function loadMarketPrices() {
   if (state.stocks) render();
 }
 
+async function loadItemTypes() {
+  try {
+    const data = await fetchJson("/api/item-types");
+    state.itemTypes = data.types ?? {};
+    state.itemTypesStatus = Object.keys(state.itemTypes).length ? "ready" : "empty";
+  } catch {
+    state.itemTypes = state.itemTypes ?? {};
+    state.itemTypesStatus = "error";
+  }
+  populateItemTypeFilter();
+  if (state.stocks) render();
+}
+
 async function loadStocks() {
   try {
     const data = await fetchJson("/api/stocks");
@@ -331,6 +433,7 @@ async function loadStocks() {
     noteStockTimestamp(data.timestamp);
     clearPageError();
     el.status.textContent = `Last update: ${fmtTime(data.timestamp)} — updates when YATA polls (~every minute)`;
+    populateItemTypeFilter();
     render();
     await loadSafeWindows();
   } catch (err) {
@@ -464,8 +567,8 @@ function render() {
     const data = state.stocks[code];
     if (!data) continue;
 
-    const items = filterItems(data.stocks, query);
-    if (!items.length && (query || state.inStockOnly)) continue;
+    const items = sortStockItems(filterItems(data.stocks, code, query), code);
+    if (!items.length && hasActiveListFilters(query)) continue;
 
     const card = document.createElement("section");
     card.className = "country-card";
@@ -483,7 +586,7 @@ function render() {
         "beforeend",
         `<table>
           ${STOCK_TABLE_COLGROUP}
-          <thead><tr><th></th><th>Item</th><th>Stock</th><th>Cost</th><th>Profit/hr</th></tr></thead>
+          ${stocksTableHead()}
           <tbody>${rows}</tbody>
         </table>`
       );
@@ -507,6 +610,28 @@ el.countryFilter.addEventListener("change", () => {
   savePrefs({ countryFilter: state.countryFilter });
   render();
 });
+el.itemTypeFilter.addEventListener("change", () => {
+  state.itemTypeFilter = el.itemTypeFilter.value;
+  savePrefs({ itemTypeFilter: state.itemTypeFilter });
+  render();
+});
+function syncProfitRangeFromInputs() {
+  state.profitMin = parseOptionalNumber(el.profitMin.value);
+  state.profitMax = parseOptionalNumber(el.profitMax.value);
+  if (state.profitMin != null && state.profitMax != null && state.profitMin > state.profitMax) {
+    [state.profitMin, state.profitMax] = [state.profitMax, state.profitMin];
+  }
+  savePrefs({ profitMin: state.profitMin, profitMax: state.profitMax });
+  render();
+}
+el.profitMin.addEventListener("change", syncProfitRangeFromInputs);
+el.profitMax.addEventListener("change", syncProfitRangeFromInputs);
+el.profitMin.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") syncProfitRangeFromInputs();
+});
+el.profitMax.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") syncProfitRangeFromInputs();
+});
 el.inStockOnly.addEventListener("change", () => {
   state.inStockOnly = el.inStockOnly.checked;
   savePrefs({ inStockOnly: state.inStockOnly });
@@ -527,18 +652,20 @@ window.addEventListener("travelsettingschange", () => {
 });
 
 el.countries.addEventListener("click", async (e) => {
-  const sortBtn = e.target.closest(".favorites-sort");
+  const sortBtn = e.target.closest(".column-sort");
   if (sortBtn) {
     e.stopPropagation();
     const column = sortBtn.dataset.sort;
-    if (!column) return;
-    if (state.favoritesSort.column === column) {
-      state.favoritesSort.dir = state.favoritesSort.dir === "asc" ? "desc" : "asc";
+    const target = sortBtn.dataset.sortTarget;
+    if (!column || (target !== "favorites" && target !== "stocks")) return;
+    const sortKey = target === "favorites" ? "favoritesSort" : "stocksSort";
+    if (state[sortKey].column === column) {
+      state[sortKey].dir = state[sortKey].dir === "asc" ? "desc" : "asc";
     } else {
-      state.favoritesSort = { column, dir: "asc" };
+      state[sortKey] = { column, dir: "asc" };
     }
-    savePrefs({ favoritesSort: state.favoritesSort });
-    if (el.countries.querySelector(".favorites-card")) {
+    savePrefs({ [sortKey]: state[sortKey] });
+    if (target === "favorites" && el.countries.querySelector(".favorites-card")) {
       renderFavoritesOnly();
     } else {
       render();
@@ -605,8 +732,11 @@ window.addEventListener("alarmschange", () => {
   await populateCountryFilter();
   el.search.value = state.search;
   el.countryFilter.value = state.countryFilter;
+  el.itemTypeFilter.value = state.itemTypeFilter;
+  el.profitMin.value = state.profitMin ?? "";
+  el.profitMax.value = state.profitMax ?? "";
   el.inStockOnly.checked = state.inStockOnly;
-  await Promise.all([loadMarketPrices(), loadStocks()]);
+  await Promise.all([loadMarketPrices(), loadItemTypes(), loadStocks()]);
   startStockUpdateWatcher(loadStocks);
   setInterval(loadMarketPrices, 60_000);
 })();

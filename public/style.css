@@ -538,7 +538,10 @@ h1 { margin: 0; font-size: 1.35rem; }
   align-items: center;
 }
 
-#item-search, #country-filter {
+#item-search,
+#country-filter,
+#item-type-filter,
+.profit-range input {
   background: var(--surface-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -549,7 +552,34 @@ h1 { margin: 0; font-size: 1.35rem; }
 }
 
 #item-search { flex: 1 1 260px; }
-#item-search:focus, #country-filter:focus { outline: 1px solid var(--accent); }
+#item-type-filter { min-width: 8.5rem; }
+#item-search:focus,
+#country-filter:focus,
+#item-type-filter:focus,
+.profit-range input:focus {
+  outline: 1px solid var(--accent);
+}
+
+.profit-range {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.profit-range-label {
+  white-space: nowrap;
+}
+
+.profit-range input {
+  width: 6.5rem;
+  padding: 9px 10px;
+}
+
+.profit-range-sep {
+  color: var(--text-dim);
+}
 
 .checkbox {
   display: flex;
@@ -667,11 +697,11 @@ th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
 .favorites-card .col-safe-window { width: 10.5rem; }
 .favorites-card .col-leave-by { width: 12.5rem; }
 
-.favorites-card thead th {
+.country-card thead th {
   padding: 7px 10px;
 }
 
-.favorites-sort {
+.column-sort {
   background: transparent;
   border: none;
   color: inherit;
@@ -687,11 +717,11 @@ th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
   text-align: inherit;
 }
 
-.favorites-sort:hover {
+.column-sort:hover {
   color: var(--text);
 }
 
-.favorites-sort.active {
+.column-sort.active {
   color: var(--accent);
 }
 
