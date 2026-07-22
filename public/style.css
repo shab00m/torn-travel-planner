@@ -738,8 +738,14 @@ h1 { margin: 0; font-size: 1.35rem; }
 .country-card .col-country { width: 7.5rem; }
 .country-card .col-type { width: 3.9rem; }
 .country-card .col-stock { width: 4.5rem; }
-.country-card .col-cost { width: 4.25rem; }
+.country-card .col-cost { width: 5rem; }
 .country-card .col-profit { width: 9.25rem; }
+
+.country-card th,
+.country-card td {
+  padding-left: 6px;
+  padding-right: 6px;
+}
 
 .country-card td:nth-child(2) {
   overflow: hidden;
@@ -752,8 +758,6 @@ h1 { margin: 0; font-size: 1.35rem; }
 .country-card th.sort-col-country,
 .country-card th.sort-col-type {
   text-align: left;
-  padding-left: 8px;
-  padding-right: 10px;
 }
 
 .country-card .type-cell {
@@ -837,7 +841,8 @@ tr.is-hidden-row {
 .favorites-card .col-leave-by { width: 12.5rem; }
 
 .country-card thead th {
-  padding: 7px 10px;
+  padding-top: 7px;
+  padding-bottom: 7px;
 }
 
 .column-sort {
