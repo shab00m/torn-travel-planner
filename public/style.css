@@ -708,14 +708,13 @@ h1 { margin: 0; font-size: 1.35rem; }
 }
 
 .countries {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(580px, 1fr));
-  gap: 18px;
-  align-items: start;
+  column-width: 580px;
+  column-gap: 18px;
 }
 
 .countries.countries-flat {
-  grid-template-columns: 1fr;
+  column-count: 1;
+  column-width: auto;
 }
 
 .country-card {
@@ -723,10 +722,21 @@ h1 { margin: 0; font-size: 1.35rem; }
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 18px;
+  vertical-align: top;
 }
 
 .country-card.stock-card-full {
-  grid-column: 1 / -1;
+  column-span: all;
+}
+
+.countries > .empty-note {
+  break-inside: avoid;
+  column-span: all;
 }
 
 .country-card table {
