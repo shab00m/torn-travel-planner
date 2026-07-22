@@ -6,6 +6,7 @@ const state = {
   countryFilters: [], // string[] — empty = all countries
   inStockOnly: false,
   itemTypeFilters: [], // string[] — empty = all types
+  stockGroupBy: "country", // "country" | "type" | "none"
   profitMin: null, // number | null — profit/hr lower bound
   profitMax: null, // number | null — profit/hr upper bound
   itemTypes: null, // { [itemId]: typeString } from items.item_type via /api/item-types
@@ -45,7 +46,8 @@ const state = {
 };
 
 const SORT_COLUMNS = ["item", "stock", "cost", "profit", "safeWindow", "leaveBy"];
-const STOCK_SORT_COLUMNS = ["item", "stock", "cost", "profit"];
+const STOCK_SORT_COLUMNS = ["item", "stock", "cost", "profit", "country", "type"];
+const STOCK_GROUP_BY_OPTIONS = ["country", "type", "none"];
 
 function parseOptionalNumber(value) {
   if (value == null || value === "") return null;
@@ -123,6 +125,9 @@ function applyStoredPrefs() {
   state.countryFilters = parseStringListPref(prefs.countryFilters, prefs.countryFilter);
   state.inStockOnly = prefs.inStockOnly === true;
   state.itemTypeFilters = parseStringListPref(prefs.itemTypeFilters, prefs.itemTypeFilter);
+  state.stockGroupBy = STOCK_GROUP_BY_OPTIONS.includes(prefs.stockGroupBy)
+    ? prefs.stockGroupBy
+    : "country";
   state.profitMin = parseOptionalNumber(prefs.profitMin);
   state.profitMax = parseOptionalNumber(prefs.profitMax);
   state.timeFormat = TIME_FORMATS.includes(prefs.timeFormat) ? prefs.timeFormat : "european";

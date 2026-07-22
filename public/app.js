@@ -5,6 +5,7 @@ const el = {
   favorites: document.getElementById("favorites"),
   countries: document.getElementById("countries"),
   search: document.getElementById("item-search"),
+  stockGroupBy: document.getElementById("stock-group-by"),
   countryFilter: document.getElementById("country-filter"),
   countryFilterList: document.getElementById("country-filter-list"),
   itemTypeFilter: document.getElementById("item-type-filter"),
@@ -54,14 +55,6 @@ function marketPriceTitle(country, item) {
   return parts.join(" · ");
 }
 
-const STOCK_TABLE_COLGROUP = `<colgroup>
-    <col class="col-favorite" />
-    <col class="col-item" />
-    <col class="col-stock" />
-    <col class="col-cost" />
-    <col class="col-profit" />
-  </colgroup>`;
-
 const FAVORITES_TABLE_COLGROUP = `<colgroup>
     <col class="col-favorite" />
     <col class="col-item" />
@@ -82,13 +75,42 @@ const FAVORITES_SORT_COLUMNS = [
   { key: "leaveBy", label: "Leave by" },
 ];
 
-const STOCK_TABLE_SORT_COLUMNS = [
-  { key: null, label: "" },
-  { key: "item", label: "Item" },
-  { key: "stock", label: "Stock" },
-  { key: "cost", label: "Cost" },
-  { key: "profit", label: "Profit/hr" },
-];
+const STOCK_COL_CLASS = {
+  favorite: "col-favorite",
+  item: "col-item",
+  country: "col-country",
+  type: "col-type",
+  stock: "col-stock",
+  cost: "col-cost",
+  profit: "col-profit",
+};
+
+/** Stock list columns; omit the dimension currently used for grouping. */
+function stockTableColumns() {
+  const cols = [
+    { key: null, label: "", col: "favorite" },
+    { key: "item", label: "Item", col: "item" },
+  ];
+  if (state.stockGroupBy !== "country") {
+    cols.push({ key: "country", label: "Country", col: "country" });
+  }
+  if (state.stockGroupBy !== "type") {
+    cols.push({ key: "type", label: "Type", col: "type" });
+  }
+  cols.push(
+    { key: "stock", label: "Stock", col: "stock" },
+    { key: "cost", label: "Cost", col: "cost" },
+    { key: "profit", label: "Profit/hr", col: "profit" }
+  );
+  return cols;
+}
+
+function stockTableColgroup() {
+  const cols = stockTableColumns()
+    .map(({ col }) => `<col class="${STOCK_COL_CLASS[col]}" />`)
+    .join("");
+  return `<colgroup>${cols}</colgroup>`;
+}
 
 function sortableTableHead(columns, sortState, sortTarget) {
   const { column, dir } = sortState;
@@ -96,7 +118,7 @@ function sortableTableHead(columns, sortState, sortTarget) {
     if (!key) return "<th></th>";
     const active = column === key;
     const indicator = active ? (dir === "asc" ? " ▲" : " ▼") : "";
-    return `<th><button type="button" class="column-sort${active ? " active" : ""}" data-sort="${key}" data-sort-target="${sortTarget}">${label}${indicator}</button></th>`;
+    return `<th class="sort-col-${key}"><button type="button" class="column-sort${active ? " active" : ""}" data-sort="${key}" data-sort-target="${sortTarget}">${label}${indicator}</button></th>`;
   }).join("");
   return `<thead><tr>${cells}</tr></thead>`;
 }
@@ -106,7 +128,14 @@ function favoritesTableHead() {
 }
 
 function stocksTableHead() {
-  return sortableTableHead(STOCK_TABLE_SORT_COLUMNS, state.stocksSort, "stocks");
+  return sortableTableHead(stockTableColumns(), state.stocksSort, "stocks");
+}
+
+function ensureValidStocksSort() {
+  const keys = stockTableColumns().map((c) => c.key).filter(Boolean);
+  if (keys.includes(state.stocksSort.column)) return;
+  state.stocksSort = { column: "item", dir: "asc" };
+  savePrefs({ stocksSort: state.stocksSort });
 }
 
 function compareSortValues(a, b, dir) {
@@ -128,6 +157,10 @@ function favoriteLeaveBySortValue(country, itemId) {
   return data?.available && data.safeWindow ? data.safeWindow.leaveEarliest : null;
 }
 
+function countrySortLabel(code) {
+  return state.countries[code]?.name?.toLowerCase() ?? code;
+}
+
 function compareItemsBySort(aCountry, aItem, bCountry, bItem, sortState) {
   const { column, dir } = sortState;
   switch (column) {
@@ -139,6 +172,14 @@ function compareItemsBySort(aCountry, aItem, bCountry, bItem, sortState) {
       return compareSortValues(
         getItemProfitPerHour(aCountry, aItem),
         getItemProfitPerHour(bCountry, bItem),
+        dir
+      );
+    case "country":
+      return compareSortValues(countrySortLabel(aCountry), countrySortLabel(bCountry), dir);
+    case "type":
+      return compareSortValues(
+        (getItemType(aItem.id) ?? "").toLowerCase(),
+        (getItemType(bItem.id) ?? "").toLowerCase(),
         dir
       );
     case "safeWindow":
@@ -168,9 +209,9 @@ function sortFavoriteItems(favorites) {
   );
 }
 
-function sortStockItems(items, country) {
-  return [...items].sort((a, b) =>
-    compareItemsBySort(country, a, country, b, state.stocksSort)
+function sortStockRows(rows) {
+  return [...rows].sort((a, b) =>
+    compareItemsBySort(a.country, a.item, b.country, b.item, state.stocksSort)
   );
 }
 
@@ -360,15 +401,23 @@ function leaveByCell(country, itemId, itemName) {
   });
 }
 
-function itemRowHtml(country, item, { showCountry = false } = {}) {
+function stockRowHtml(country, item) {
   const meta = state.countries[country];
-  const nameCell = showCountry
-    ? `${meta.flag} ${highlight(item.name, state.search.trim())}`
-    : highlight(item.name, state.search.trim());
+  const type = getItemType(item.id);
+  const extraCols = [];
+  if (state.stockGroupBy !== "country") {
+    extraCols.push(`<td class="country-cell">${meta.flag} ${escapeHtml(meta.name)}</td>`);
+  }
+  if (state.stockGroupBy !== "type") {
+    extraCols.push(
+      `<td class="type-cell">${type ? escapeHtml(type) : '<span class="type-unknown">—</span>'}</td>`
+    );
+  }
   return `
         <tr data-country="${country}" data-item="${item.id}" data-name="${escapeHtml(item.name)}" title="View item history">
           <td class="favorite-cell">${favoriteButtonHtml(country, item.id)}</td>
-          <td>${nameCell}</td>
+          <td>${highlight(item.name, state.search.trim())}</td>
+          ${extraCols.join("")}
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
           <td>${fmtMoney(item.cost)}</td>
           ${profitHrCell(country, item)}
@@ -615,45 +664,131 @@ function renderFavoritesSection() {
   el.favorites.innerHTML = favorites.length ? favoritesCardHtml(favorites) : "";
 }
 
+function collectStockRows(query) {
+  const rows = [];
+  for (const code of Object.keys(state.countries)) {
+    if (state.countryFilters.length && !state.countryFilters.includes(code)) continue;
+    const data = state.stocks[code];
+    if (!data) continue;
+    for (const item of filterItems(data.stocks, code, query)) {
+      rows.push({ country: code, item, update: data.update });
+    }
+  }
+  return rows;
+}
+
+function stockGroupTitle(groupBy, key) {
+  if (groupBy === "none") return "All items";
+  if (groupBy === "type") return key === "" ? "Unknown type" : key;
+  const meta = state.countries[key];
+  return meta ? `${meta.flag} ${meta.name}` : key;
+}
+
+/** Build display groups from filtered rows according to stockGroupBy. */
+function buildStockGroups(rows, query) {
+  const groupBy = state.stockGroupBy;
+  if (groupBy === "none") {
+    if (!rows.length) return [];
+    const latest = rows.reduce((max, r) => Math.max(max, r.update ?? 0), 0);
+    return [
+      {
+        key: "all",
+        title: stockGroupTitle("none"),
+        meta: `${rows.length} item${rows.length === 1 ? "" : "s"}`,
+        updated: latest || null,
+        rows: sortStockRows(rows),
+        fullWidth: true,
+      },
+    ];
+  }
+
+  if (groupBy === "type") {
+    const byType = new Map();
+    for (const row of rows) {
+      const type = getItemType(row.item.id) ?? "";
+      if (!byType.has(type)) byType.set(type, []);
+      byType.get(type).push(row);
+    }
+    const keys = [...byType.keys()].sort((a, b) => {
+      if (a === "") return 1;
+      if (b === "") return -1;
+      return a.localeCompare(b);
+    });
+    return keys.map((key) => {
+      const groupRows = byType.get(key);
+      const latest = groupRows.reduce((max, r) => Math.max(max, r.update ?? 0), 0);
+      return {
+        key: key || "unknown",
+        title: stockGroupTitle("type", key),
+        meta: `${groupRows.length} item${groupRows.length === 1 ? "" : "s"}`,
+        updated: latest || null,
+        rows: sortStockRows(groupRows),
+        fullWidth: false,
+      };
+    });
+  }
+
+  // Group by country — preserve country order; keep empty countries when no filters.
+  const groups = [];
+  for (const [code, meta] of Object.entries(state.countries)) {
+    if (state.countryFilters.length && !state.countryFilters.includes(code)) continue;
+    const data = state.stocks[code];
+    if (!data) continue;
+    const groupRows = rows.filter((r) => r.country === code);
+    if (!groupRows.length && hasActiveListFilters(query)) continue;
+    groups.push({
+      key: code,
+      title: `${meta.flag} ${meta.name}`,
+      meta: `updated ${fmtTime(data.update)}`,
+      updated: data.update,
+      rows: sortStockRows(groupRows),
+      fullWidth: false,
+    });
+  }
+  return groups;
+}
+
+function stockGroupCardHtml(group) {
+  const card = document.createElement("section");
+  card.className = `country-card${group.fullWidth ? " stock-card-full" : ""}`;
+  card.innerHTML = `
+    <div class="country-header">
+      <h2>${escapeHtml(group.title)}</h2>
+      <span class="country-updated">${escapeHtml(group.meta)}</span>
+    </div>`;
+
+  if (!group.rows.length) {
+    card.insertAdjacentHTML("beforeend", `<p class="empty-note">No items.</p>`);
+    return card;
+  }
+
+  const body = group.rows.map(({ country, item }) => stockRowHtml(country, item)).join("");
+  card.insertAdjacentHTML(
+    "beforeend",
+    `<table>
+      ${stockTableColgroup()}
+      ${stocksTableHead()}
+      <tbody>${body}</tbody>
+    </table>`
+  );
+  return card;
+}
+
 function render() {
   if (!state.stocks) return;
+  ensureValidStocksSort();
   const query = state.search.trim().toLowerCase();
   const frag = document.createDocumentFragment();
 
   renderFavoritesSection();
 
-  for (const [code, meta] of Object.entries(state.countries)) {
-    if (state.countryFilters.length && !state.countryFilters.includes(code)) continue;
-    const data = state.stocks[code];
-    if (!data) continue;
-
-    const items = sortStockItems(filterItems(data.stocks, code, query), code);
-    if (!items.length && hasActiveListFilters(query)) continue;
-
-    const card = document.createElement("section");
-    card.className = "country-card";
-    card.innerHTML = `
-      <div class="country-header">
-        <h2>${meta.flag} ${meta.name}</h2>
-        <span class="country-updated">updated ${fmtTime(data.update)}</span>
-      </div>`;
-
-    if (!items.length) {
-      card.insertAdjacentHTML("beforeend", `<p class="empty-note">No items.</p>`);
-    } else {
-      const rows = items.map((it) => itemRowHtml(code, it)).join("");
-      card.insertAdjacentHTML(
-        "beforeend",
-        `<table>
-          ${STOCK_TABLE_COLGROUP}
-          ${stocksTableHead()}
-          <tbody>${rows}</tbody>
-        </table>`
-      );
-    }
-    frag.appendChild(card);
+  const rows = collectStockRows(query);
+  const groups = buildStockGroups(rows, query);
+  for (const group of groups) {
+    frag.appendChild(stockGroupCardHtml(group));
   }
 
+  el.countries.classList.toggle("countries-flat", state.stockGroupBy === "none");
   el.countries.replaceChildren(frag);
   if (!el.countries.children.length) {
     el.countries.innerHTML = `<p class="empty-note">Nothing matches the current filters.</p>`;
@@ -663,6 +798,14 @@ function render() {
 el.search.addEventListener("input", () => {
   state.search = el.search.value;
   savePrefs({ search: state.search });
+  render();
+});
+el.stockGroupBy.addEventListener("change", () => {
+  const value = el.stockGroupBy.value;
+  if (!STOCK_GROUP_BY_OPTIONS.includes(value)) return;
+  state.stockGroupBy = value;
+  savePrefs({ stockGroupBy: state.stockGroupBy });
+  ensureValidStocksSort();
   render();
 });
 function syncProfitRangeFromInputs() {
@@ -783,6 +926,7 @@ window.addEventListener("alarmschange", () => {
   populateCountryFilter();
   populateItemTypeFilter();
   el.search.value = state.search;
+  el.stockGroupBy.value = state.stockGroupBy;
   el.profitMin.value = state.profitMin ?? "";
   el.profitMax.value = state.profitMax ?? "";
   el.inStockOnly.checked = state.inStockOnly;

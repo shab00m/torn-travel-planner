@@ -538,7 +538,8 @@ h1 { margin: 0; font-size: 1.35rem; }
 }
 
 .profit-range input,
-#item-search {
+#item-search,
+#stock-group-by {
   background: var(--surface-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -555,8 +556,21 @@ h1 { margin: 0; font-size: 1.35rem; }
 }
 
 .profit-range input:focus,
-#item-search:focus {
+#item-search:focus,
+#stock-group-by:focus {
   outline: 1px solid var(--accent);
+}
+
+.group-by {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.group-by-label {
+  white-space: nowrap;
 }
 
 .filter-menu {
@@ -692,11 +706,19 @@ h1 { margin: 0; font-size: 1.35rem; }
   align-items: start;
 }
 
+.countries.countries-flat {
+  grid-template-columns: 1fr;
+}
+
 .country-card {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
+}
+
+.country-card.stock-card-full {
+  grid-column: 1 / -1;
 }
 
 .country-card table {
@@ -705,6 +727,8 @@ h1 { margin: 0; font-size: 1.35rem; }
 }
 
 .country-card .col-favorite { width: 2.25rem; }
+.country-card .col-country { width: 7.5rem; }
+.country-card .col-type { width: 6.5rem; }
 .country-card .col-stock { width: 4.5rem; }
 .country-card .col-cost { width: 5.75rem; }
 .country-card .col-profit { width: 9.25rem; }
@@ -715,14 +739,17 @@ h1 { margin: 0; font-size: 1.35rem; }
   white-space: nowrap;
 }
 
-.country-card th:nth-child(3),
-.country-card td:nth-child(3),
-.country-card th:nth-child(4),
-.country-card td:nth-child(4),
-.country-card th:nth-child(5),
-.country-card td:nth-child(5) {
+.country-card .country-cell,
+.country-card .type-cell,
+.country-card th.sort-col-country,
+.country-card th.sort-col-type {
+  text-align: left;
   padding-left: 8px;
   padding-right: 10px;
+}
+
+.country-card .type-unknown {
+  color: var(--text-dim);
 }
 
 .country-card th:last-child,

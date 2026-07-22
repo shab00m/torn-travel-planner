@@ -45,6 +45,14 @@
 					placeholder="Search items… (e.g. Xanax, Plushie)"
 					autocomplete="off"
 				/>
+				<label class="group-by">
+					<span class="group-by-label">Group by</span>
+					<select id="stock-group-by">
+						<option value="country">Country</option>
+						<option value="type">Item type</option>
+						<option value="none">None</option>
+					</select>
+				</label>
 				<details class="filter-menu" id="country-filter">
 					<summary class="filter-menu-summary">All countries</summary>
 					<div class="filter-menu-panel" id="country-filter-list" role="group" aria-label="Countries"></div>
