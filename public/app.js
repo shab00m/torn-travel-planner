@@ -13,6 +13,7 @@ const el = {
   profitMin: document.getElementById("profit-min"),
   profitMax: document.getElementById("profit-max"),
   inStockOnly: document.getElementById("in-stock-only"),
+  showHidden: document.getElementById("show-hidden"),
 };
 
 function clearPageError() {
@@ -215,9 +216,13 @@ function sortStockRows(rows) {
   );
 }
 
-/** Favorites ignore home-page filters; only sort applies. */
+/** Favorites ignore search/type/profit filters; hidden items still apply unless Show hidden. */
 function getSortedFavorites() {
-  return sortFavoriteItems(collectFavoriteItems());
+  let favorites = collectFavoriteItems();
+  if (!state.showHidden) {
+    favorites = favorites.filter(({ country, item }) => !isHidden(country, item.id));
+  }
+  return sortFavoriteItems(favorites);
 }
 
 function getItemType(itemId) {
@@ -225,6 +230,7 @@ function getItemType(itemId) {
 }
 
 function itemMatchesFilters(item, country, query) {
+  if (!state.showHidden && isHidden(country, item.id)) return false;
   if (query && !item.name.toLowerCase().includes(query)) return false;
   if (state.inStockOnly && item.quantity <= 0) return false;
   if (state.itemTypeFilters.length) {
@@ -314,9 +320,10 @@ function populateItemTypeFilter() {
 function favoriteRowHtml(country, item) {
   const meta = state.countries[country];
   const nameCell = `${meta.flag} ${escapeHtml(item.name)}`;
+  const hidden = isHidden(country, item.id);
   return `
-        <tr data-country="${country}" data-item="${item.id}" data-name="${escapeHtml(item.name)}" title="View item history">
-          <td class="favorite-cell">${favoriteButtonHtml(country, item.id)}</td>
+        <tr class="${hidden ? "is-hidden-row" : ""}" data-country="${country}" data-item="${item.id}" data-name="${escapeHtml(item.name)}" title="View item history">
+          <td class="favorite-cell">${itemActionsHtml(country, item.id)}</td>
           <td>${nameCell}</td>
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
           <td>${fmtMoney(item.cost)}</td>
@@ -404,6 +411,7 @@ function leaveByCell(country, itemId, itemName) {
 function stockRowHtml(country, item) {
   const meta = state.countries[country];
   const type = getItemType(item.id);
+  const hidden = isHidden(country, item.id);
   const extraCols = [];
   if (state.stockGroupBy !== "country") {
     extraCols.push(`<td class="country-cell">${meta.flag} ${escapeHtml(meta.name)}</td>`);
@@ -414,8 +422,8 @@ function stockRowHtml(country, item) {
     );
   }
   return `
-        <tr data-country="${country}" data-item="${item.id}" data-name="${escapeHtml(item.name)}" title="View item history">
-          <td class="favorite-cell">${favoriteButtonHtml(country, item.id)}</td>
+        <tr class="${hidden ? "is-hidden-row" : ""}" data-country="${country}" data-item="${item.id}" data-name="${escapeHtml(item.name)}" title="View item history">
+          <td class="favorite-cell">${itemActionsHtml(country, item.id)}</td>
           <td>${highlight(item.name, state.search.trim())}</td>
           ${extraCols.join("")}
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
@@ -735,7 +743,8 @@ function buildStockGroups(rows, query) {
     const data = state.stocks[code];
     if (!data) continue;
     const groupRows = rows.filter((r) => r.country === code);
-    if (!groupRows.length && hasActiveListFilters(query)) continue;
+    // Keep truly empty countries only when no filters/hiding removed everything.
+    if (!groupRows.length && (data.stocks.length > 0 || hasActiveListFilters(query))) continue;
     groups.push({
       key: code,
       title: `${meta.flag} ${meta.name}`,
@@ -830,6 +839,15 @@ el.inStockOnly.addEventListener("change", () => {
   savePrefs({ inStockOnly: state.inStockOnly });
   render();
 });
+el.showHidden.addEventListener("change", () => {
+  state.showHidden = el.showHidden.checked;
+  savePrefs({ showHidden: state.showHidden });
+  render();
+});
+
+window.addEventListener("hiddenitemschange", () => {
+  render();
+});
 
 window.addEventListener("timeformatchange", () => {
   if (lastStockTimestamp != null) {
@@ -899,6 +917,16 @@ el.homeMain.addEventListener("click", async (e) => {
     render();
     return;
   }
+  const hideBtn = e.target.closest(".hide-btn");
+  if (hideBtn) {
+    e.stopPropagation();
+    const country = hideBtn.dataset.country;
+    const itemId = Number.parseInt(hideBtn.dataset.item, 10);
+    if (!country || !Number.isInteger(itemId)) return;
+    toggleHidden(country, itemId);
+    // render() runs via hiddenitemschange
+    return;
+  }
   const row = e.target.closest("tr[data-item]");
   if (!row) return;
   window.location.href = itemUrl(row.dataset.country, row.dataset.item, row.dataset.name);
@@ -930,6 +958,7 @@ window.addEventListener("alarmschange", () => {
   el.profitMin.value = state.profitMin ?? "";
   el.profitMax.value = state.profitMax ?? "";
   el.inStockOnly.checked = state.inStockOnly;
+  el.showHidden.checked = state.showHidden;
   await Promise.all([loadMarketPrices(), loadItemTypes(), loadStocks()]);
   startStockUpdateWatcher(loadStocks);
   setInterval(loadMarketPrices, 60_000);

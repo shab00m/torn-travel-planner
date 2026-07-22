@@ -734,7 +734,7 @@ h1 { margin: 0; font-size: 1.35rem; }
   width: 100%;
 }
 
-.country-card .col-favorite { width: 2.25rem; }
+.country-card .col-favorite { width: 3.75rem; }
 .country-card .col-country { width: 7.5rem; }
 .country-card .col-type { width: 6.5rem; }
 .country-card .col-stock { width: 4.5rem; }
@@ -783,13 +783,15 @@ th, td { padding: 7px 16px; text-align: right; white-space: nowrap; }
 th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
 
 .favorite-cell {
-  width: 2.25rem;
-  padding-left: 12px;
+  width: 3.75rem;
+  padding-left: 8px;
   padding-right: 4px;
   text-align: center !important;
+  white-space: nowrap;
 }
 
-.favorite-btn {
+.favorite-btn,
+.hide-btn {
   background: transparent;
   border: none;
   color: var(--text-dim);
@@ -807,6 +809,19 @@ th:nth-child(2), td:nth-child(2) { text-align: left; white-space: normal; }
 
 .favorite-btn.is-favorite {
   color: #f0c674;
+}
+
+.hide-btn:hover {
+  color: var(--text);
+  background: rgba(139, 150, 168, 0.15);
+}
+
+.hide-btn.is-hidden {
+  color: var(--red);
+}
+
+tr.is-hidden-row {
+  opacity: 0.55;
 }
 
 .favorites-card .country-header h2 {
@@ -934,7 +949,8 @@ body.page-item {
   margin: 0;
 }
 
-.item-title-row .favorite-btn {
+.item-title-row .favorite-btn,
+.item-title-row .hide-btn {
   font-size: 1.35rem;
   padding: 4px 6px;
 }

@@ -5,6 +5,7 @@ const state = {
   search: "",
   countryFilters: [], // string[] — empty = all countries
   inStockOnly: false,
+  showHidden: false,
   itemTypeFilters: [], // string[] — empty = all types
   stockGroupBy: "country", // "country" | "type" | "none"
   profitMin: null, // number | null — profit/hr lower bound
@@ -124,6 +125,7 @@ function applyStoredPrefs() {
   state.search = typeof prefs.search === "string" ? prefs.search : "";
   state.countryFilters = parseStringListPref(prefs.countryFilters, prefs.countryFilter);
   state.inStockOnly = prefs.inStockOnly === true;
+  state.showHidden = prefs.showHidden === true;
   state.itemTypeFilters = parseStringListPref(prefs.itemTypeFilters, prefs.itemTypeFilter);
   state.stockGroupBy = STOCK_GROUP_BY_OPTIONS.includes(prefs.stockGroupBy)
     ? prefs.stockGroupBy
@@ -560,6 +562,7 @@ function setupItemHeader(item, activeView) {
   document.title = `${item.name} — Torn Travel Planner`;
   renderItemViewNav(activeView);
   initFavoriteToggle(document.getElementById("favorite-toggle"), item.country, item.itemId);
+  initHideToggle(document.getElementById("hide-toggle"), item.country, item.itemId);
 }
 
 const LEGACY_RESTOCK_AMOUNTS_KEY = "restockAmounts";
@@ -658,6 +661,7 @@ function setSellPrice(country, itemId, price) {
 }
 
 const FAVORITES_KEY = "favoriteItems";
+const HIDDEN_ITEMS_KEY = "hiddenItems";
 
 function favoriteItemKey(country, itemId) {
   return `${country}:${itemId}`;
@@ -707,6 +711,57 @@ function initFavoriteToggle(btn, country, itemId) {
     e.stopPropagation();
     toggleFavorite(country, itemId);
     syncFavoriteButton(btn, country, itemId);
+  });
+}
+
+function getHiddenItems() {
+  try {
+    return JSON.parse(localStorage.getItem(HIDDEN_ITEMS_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function isHidden(country, itemId) {
+  return getHiddenItems()[favoriteItemKey(country, itemId)] === true;
+}
+
+function toggleHidden(country, itemId) {
+  const all = getHiddenItems();
+  const key = favoriteItemKey(country, itemId);
+  if (all[key]) delete all[key];
+  else all[key] = true;
+  localStorage.setItem(HIDDEN_ITEMS_KEY, JSON.stringify(all));
+  window.dispatchEvent(new CustomEvent("hiddenitemschange"));
+  return !!all[key];
+}
+
+function syncHideButton(btn, country, itemId) {
+  if (!btn) return;
+  const hidden = isHidden(country, itemId);
+  btn.classList.toggle("is-hidden", hidden);
+  btn.textContent = hidden ? "⊕" : "⊖";
+  btn.title = hidden ? "Show item in lists" : "Hide item from lists";
+  btn.setAttribute("aria-pressed", String(hidden));
+}
+
+function hideButtonHtml(country, itemId) {
+  const hidden = isHidden(country, itemId);
+  return `<button type="button" class="hide-btn${hidden ? " is-hidden" : ""}" data-country="${country}" data-item="${itemId}" title="${hidden ? "Show item in lists" : "Hide item from lists"}" aria-pressed="${hidden}">${hidden ? "⊕" : "⊖"}</button>`;
+}
+
+function itemActionsHtml(country, itemId) {
+  return `${favoriteButtonHtml(country, itemId)}${hideButtonHtml(country, itemId)}`;
+}
+
+function initHideToggle(btn, country, itemId) {
+  if (!btn || btn.dataset.bound) return;
+  btn.dataset.bound = "1";
+  syncHideButton(btn, country, itemId);
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleHidden(country, itemId);
+    syncHideButton(btn, country, itemId);
   });
 }
 
