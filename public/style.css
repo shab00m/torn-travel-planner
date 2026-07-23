@@ -305,9 +305,7 @@ h1 { margin: 0; font-size: 1.35rem; }
 .settings-panel.hidden { display: none; }
 
 .alarm-settings-controls {
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  gap: 8px 14px;
 }
 
 .alarm-setting-field {
