@@ -12,6 +12,7 @@ const el = {
   itemTypeFilterList: document.getElementById("item-type-filter-list"),
   profitMin: document.getElementById("profit-min"),
   profitMax: document.getElementById("profit-max"),
+  maxBudget: document.getElementById("max-budget"),
   inStockOnly: document.getElementById("in-stock-only"),
   showHidden: document.getElementById("show-hidden"),
 };
@@ -61,6 +62,8 @@ const FAVORITES_TABLE_COLGROUP = `<colgroup>
     <col class="col-item" />
     <col class="col-stock" />
     <col class="col-cost" />
+    <col class="col-items" />
+    <col class="col-total-cost" />
     <col class="col-profit" />
     <col class="col-safe-window" />
     <col class="col-leave-by" />
@@ -71,6 +74,8 @@ const FAVORITES_SORT_COLUMNS = [
   { key: "item", label: "Item" },
   { key: "stock", label: "Stock" },
   { key: "cost", label: "Cost" },
+  { key: "items", label: "Items" },
+  { key: "totalCost", label: "Total cost" },
   { key: "profit", label: "Profit/hr" },
   { key: "safeWindow", label: "Next safe window" },
   { key: "leaveBy", label: "Leave by" },
@@ -83,6 +88,8 @@ const STOCK_COL_CLASS = {
   type: "col-type",
   stock: "col-stock",
   cost: "col-cost",
+  items: "col-items",
+  totalCost: "col-total-cost",
   profit: "col-profit",
 };
 
@@ -101,6 +108,8 @@ function stockTableColumns() {
   cols.push(
     { key: "stock", label: "Stock", col: "stock" },
     { key: "cost", label: "Cost", col: "cost" },
+    { key: "items", label: "Items", col: "items" },
+    { key: "totalCost", label: "Total cost", col: "totalCost" },
     { key: "profit", label: "Profit/hr", col: "profit" }
   );
   return cols;
@@ -169,6 +178,18 @@ function compareItemsBySort(aCountry, aItem, bCountry, bItem, sortState) {
       return compareSortValues(aItem.quantity, bItem.quantity, dir);
     case "cost":
       return compareSortValues(aItem.cost, bItem.cost, dir);
+    case "items":
+      return compareSortValues(
+        getMaxPurchaseQty(aCountry, aItem.id, aItem.cost),
+        getMaxPurchaseQty(bCountry, bItem.id, bItem.cost),
+        dir
+      );
+    case "totalCost":
+      return compareSortValues(
+        aItem.cost * getMaxPurchaseQty(aCountry, aItem.id, aItem.cost),
+        bItem.cost * getMaxPurchaseQty(bCountry, bItem.id, bItem.cost),
+        dir
+      );
     case "profit":
       return compareSortValues(
         getItemProfitPerHour(aCountry, aItem),
@@ -317,6 +338,18 @@ function populateItemTypeFilter() {
   syncFilterMenuSummary(el.itemTypeFilter, state.itemTypeFilters, typeLabels);
 }
 
+function purchaseQtyCellsHtml(country, item) {
+  const qty = getMaxPurchaseQty(country, item.id, item.cost);
+  const titleParts = [`${state.travelCapacity} slots`];
+  const restock = getRestockAmount(country, item.id);
+  if (restock != null) titleParts.push(`restock ${fmtNum(restock)}`);
+  if (state.maxBudget != null) titleParts.push(`budget ${fmtMoney(state.maxBudget)}`);
+  const title = titleParts.join(" · ");
+  return `
+          <td title="${escapeHtml(title)}">${fmtNum(qty)}</td>
+          <td title="${escapeHtml(title)}">${fmtMoney(item.cost * qty)}</td>`;
+}
+
 function favoriteRowHtml(country, item) {
   const meta = state.countries[country];
   const nameCell = `${meta.flag} ${escapeHtml(item.name)}`;
@@ -327,6 +360,7 @@ function favoriteRowHtml(country, item) {
           <td>${nameCell}</td>
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
           <td>${fmtMoney(item.cost)}</td>
+          ${purchaseQtyCellsHtml(country, item)}
           ${profitHrCell(country, item)}
           ${safeWindowCell(country, item.id)}
           ${leaveByCell(country, item.id, item.name)}
@@ -428,6 +462,7 @@ function stockRowHtml(country, item) {
           ${extraCols.join("")}
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
           <td>${fmtMoney(item.cost)}</td>
+          ${purchaseQtyCellsHtml(country, item)}
           ${profitHrCell(country, item)}
         </tr>`;
 }
@@ -826,6 +861,12 @@ function syncProfitRangeFromInputs() {
   savePrefs({ profitMin: state.profitMin, profitMax: state.profitMax });
   render();
 }
+function syncMaxBudgetFromInput() {
+  const budget = parseOptionalNumber(el.maxBudget.value);
+  state.maxBudget = budget != null && budget >= 0 ? budget : null;
+  savePrefs({ maxBudget: state.maxBudget });
+  render();
+}
 el.profitMin.addEventListener("change", syncProfitRangeFromInputs);
 el.profitMax.addEventListener("change", syncProfitRangeFromInputs);
 el.profitMin.addEventListener("keydown", (e) => {
@@ -833,6 +874,10 @@ el.profitMin.addEventListener("keydown", (e) => {
 });
 el.profitMax.addEventListener("keydown", (e) => {
   if (e.key === "Enter") syncProfitRangeFromInputs();
+});
+el.maxBudget.addEventListener("change", syncMaxBudgetFromInput);
+el.maxBudget.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") syncMaxBudgetFromInput();
 });
 el.inStockOnly.addEventListener("change", () => {
   state.inStockOnly = el.inStockOnly.checked;
@@ -938,6 +983,7 @@ window.addEventListener("favoriteschange", () => {
 });
 
 window.addEventListener("restockamountchange", () => {
+  render();
   loadSafeWindows();
 });
 
@@ -957,6 +1003,7 @@ window.addEventListener("alarmschange", () => {
   el.stockGroupBy.value = state.stockGroupBy;
   el.profitMin.value = state.profitMin ?? "";
   el.profitMax.value = state.profitMax ?? "";
+  el.maxBudget.value = state.maxBudget ?? "";
   el.inStockOnly.checked = state.inStockOnly;
   el.showHidden.checked = state.showHidden;
   await Promise.all([loadMarketPrices(), loadItemTypes(), loadStocks()]);

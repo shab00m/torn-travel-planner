@@ -546,6 +546,7 @@ h1 { margin: 0; font-size: 1.35rem; }
 }
 
 .profit-range input,
+.max-budget input,
 #item-search,
 #stock-group-by {
   background: var(--surface-2);
@@ -564,6 +565,7 @@ h1 { margin: 0; font-size: 1.35rem; }
 }
 
 .profit-range input:focus,
+.max-budget input:focus,
 #item-search:focus,
 #stock-group-by:focus {
   outline: 1px solid var(--accent);
@@ -681,6 +683,23 @@ h1 { margin: 0; font-size: 1.35rem; }
   color: var(--text-dim);
 }
 
+.max-budget {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.max-budget-label {
+  white-space: nowrap;
+}
+
+.max-budget input {
+  width: 7.5rem;
+  padding: 9px 10px;
+}
+
 .checkbox {
   display: flex;
   align-items: center;
@@ -749,6 +768,8 @@ h1 { margin: 0; font-size: 1.35rem; }
 .country-card .col-type { width: 5rem; }
 .country-card .col-stock { width: 4.5rem; }
 .country-card .col-cost { width: 5rem; }
+.country-card .col-items { width: 4rem; }
+.country-card .col-total-cost { width: 6.5rem; }
 .country-card .col-profit { width: 9.25rem; }
 
 .country-card th,

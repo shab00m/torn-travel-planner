@@ -106,6 +106,7 @@ function updateProfitCalcs() {
     buyPrice: item.cost,
     sellPrice,
     country: state.item.country,
+    itemId: item.itemId,
   });
   if (!metrics) return;
 
@@ -119,8 +120,15 @@ function updateProfitCalcs() {
   );
 
   if (el.profitNote) {
+    const restock = getRestockAmount(item.country, item.itemId);
+    const restockNote =
+      restock != null && restock < state.travelCapacity ? ` · restock ${fmtNum(restock)}` : "";
+    const budgetNote =
+      state.maxBudget != null && metrics.itemsPerTrip < state.travelCapacity && (restock == null || metrics.itemsPerTrip < restock)
+        ? ` · budget ${fmtMoney(state.maxBudget)}`
+        : "";
     el.profitNote.textContent =
-      `${fmtNum(metrics.itemsPerTrip)} item${metrics.itemsPerTrip === 1 ? "" : "s"} per trip · ${state.travelCapacity} slots · ${fmtDuration(metrics.roundTripSec)} round trip (${state.travelType})`;
+      `${fmtNum(metrics.itemsPerTrip)} item${metrics.itemsPerTrip === 1 ? "" : "s"} per trip · ${state.travelCapacity} slots${restockNote}${budgetNote} · ${fmtDuration(metrics.roundTripSec)} round trip (${state.travelType})`;
     el.profitNote.classList.remove("hidden");
   }
 }
@@ -2903,6 +2911,11 @@ window.addEventListener("timeformatchange", () => {
 
 window.addEventListener("travelsettingschange", () => {
   syncInspectAdminAccess();
+  if (!profitSell.item) return;
+  updateProfitCalcs();
+});
+
+window.addEventListener("restockamountchange", () => {
   if (!profitSell.item) return;
   updateProfitCalcs();
 });

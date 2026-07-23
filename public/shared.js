@@ -10,6 +10,7 @@ const state = {
   stockGroupBy: "country", // "country" | "type" | "none"
   profitMin: null, // number | null — profit/hr lower bound
   profitMax: null, // number | null — profit/hr upper bound
+  maxBudget: null, // number | null — cap purchase qty so total cost stays under this
   itemTypes: null, // { [itemId]: typeString } from items.item_type via /api/item-types
   itemTypesStatus: null, // null | "empty" | "ready" | "error"
   chart: null,
@@ -46,8 +47,8 @@ const state = {
   restockAmounts: {}, // { "uni:206": 5000 } from /api/restock-amounts
 };
 
-const SORT_COLUMNS = ["item", "stock", "cost", "profit", "safeWindow", "leaveBy"];
-const STOCK_SORT_COLUMNS = ["item", "stock", "cost", "profit", "country", "type"];
+const SORT_COLUMNS = ["item", "stock", "cost", "items", "totalCost", "profit", "safeWindow", "leaveBy"];
+const STOCK_SORT_COLUMNS = ["item", "stock", "cost", "items", "totalCost", "profit", "country", "type"];
 const STOCK_GROUP_BY_OPTIONS = ["country", "type", "none"];
 
 function parseOptionalNumber(value) {
@@ -132,6 +133,8 @@ function applyStoredPrefs() {
     : "country";
   state.profitMin = parseOptionalNumber(prefs.profitMin);
   state.profitMax = parseOptionalNumber(prefs.profitMax);
+  const budget = parseOptionalNumber(prefs.maxBudget);
+  state.maxBudget = budget != null && budget >= 0 ? budget : null;
   state.timeFormat = TIME_FORMATS.includes(prefs.timeFormat) ? prefs.timeFormat : "european";
   state.timeZone = TIME_ZONES.includes(prefs.timeZone) ? prefs.timeZone : "local";
   state.flightTimeVariance = prefs.flightTimeVariance !== false;
@@ -829,12 +832,28 @@ function profitValueClass(value) {
   return "neutral";
 }
 
-function computeProfitMetrics({ buyPrice, sellPrice, country }) {
+/**
+ * Max items purchasable in one trip: travel capacity, optionally capped by
+ * known restock amount and/or max budget (total cost = qty × buyPrice).
+ */
+function getMaxPurchaseQty(country, itemId, buyPrice) {
+  let qty = state.travelCapacity;
+  const restock = getRestockAmount(country, itemId);
+  if (restock != null && restock < qty) qty = restock;
+  if (state.maxBudget != null) {
+    if (!(buyPrice > 0)) return 0;
+    qty = Math.min(qty, Math.floor(state.maxBudget / buyPrice));
+  }
+  return Math.max(0, qty);
+}
+
+function computeProfitMetrics({ buyPrice, sellPrice, country, itemId }) {
   const flightSec = getFlightSec(country);
   if (flightSec == null || sellPrice == null) return null;
   const roundTripSec = flightSec * 2;
   if (roundTripSec <= 0) return null;
-  const itemsPerTrip = state.travelCapacity;
+  const itemsPerTrip =
+    itemId != null ? getMaxPurchaseQty(country, itemId, buyPrice) : state.travelCapacity;
   const profitPerItem = sellPrice - buyPrice;
   const totalCost = buyPrice * itemsPerTrip;
   const totalProfit = profitPerItem * itemsPerTrip;
@@ -861,5 +880,12 @@ function getItemProfitPerHour(country, item) {
   const marketPrice = state.marketPrices?.[item.id] ?? null;
   const sellPrice = getItemSellPrice(country, item.id, marketPrice);
   if (sellPrice == null) return null;
-  return computeProfitMetrics({ buyPrice: item.cost, sellPrice, country })?.profitPerHour ?? null;
+  return (
+    computeProfitMetrics({
+      buyPrice: item.cost,
+      sellPrice,
+      country,
+      itemId: item.id,
+    })?.profitPerHour ?? null
+  );
 }
