@@ -334,6 +334,11 @@ h1 { margin: 0; font-size: 1.35rem; }
   text-align: center;
 }
 
+#auto-alarm-restrict-hours-label.hidden,
+#auto-alarm-allowed-field.hidden {
+  display: none;
+}
+
 .alarms-panel {
   margin-top: 14px;
   padding-top: 14px;

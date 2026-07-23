@@ -29,6 +29,7 @@ function defaultAlarmPrefs() {
     leaveAlarmOffsetMin: 1,
     arrivalAlarmOffsetMin: 1,
     autoArrivalAlarm: false,
+    autoAlarmRestrictHours: false,
     autoAlarmAllowedStart: "00:00",
     autoAlarmAllowedEnd: "23:59",
     autoSafeAlarms: {},
@@ -46,6 +47,7 @@ function loadAlarmPrefs() {
     arrivalAlarmOffsetMin:
       Number.isFinite(arrivalMin) && arrivalMin >= 0 ? arrivalMin : defaults.arrivalAlarmOffsetMin,
     autoArrivalAlarm: prefs.autoArrivalAlarm === true,
+    autoAlarmRestrictHours: prefs.autoAlarmRestrictHours === true,
     autoAlarmAllowedStart: parseHhMm(prefs.autoAlarmAllowedStart) ?? defaults.autoAlarmAllowedStart,
     autoAlarmAllowedEnd: parseHhMm(prefs.autoAlarmAllowedEnd) ?? defaults.autoAlarmAllowedEnd,
     autoSafeAlarms:
@@ -73,6 +75,7 @@ function hhMmToMinutes(hhmm) {
 /** Whether a unix fire time falls inside the configured auto-alarm allowed hours. */
 function isWithinAutoAlarmHours(fireTs) {
   const prefs = loadAlarmPrefs();
+  if (!prefs.autoAlarmRestrictHours) return true;
   const start = hhMmToMinutes(prefs.autoAlarmAllowedStart);
   const end = hhMmToMinutes(prefs.autoAlarmAllowedEnd);
   const parts = new Date(fireTs * 1000).toLocaleTimeString("en-GB", {
@@ -821,6 +824,15 @@ function injectAlarmsPanel() {
   renderAlarmsPanel();
 }
 
+function updateAutoAlarmHoursVisibility() {
+  const autoOn = document.getElementById("auto-arrival-alarm")?.checked === true;
+  const restrictOn = document.getElementById("auto-alarm-restrict-hours")?.checked === true;
+  document.getElementById("auto-alarm-restrict-hours-label")?.classList.toggle("hidden", !autoOn);
+  document
+    .getElementById("auto-alarm-allowed-field")
+    ?.classList.toggle("hidden", !autoOn || !restrictOn);
+}
+
 function injectAlarmSettings() {
   const settingsPanel = document.getElementById("settings-panel");
   if (!settingsPanel || document.getElementById("alarm-settings-group")) return;
@@ -846,7 +858,23 @@ function injectAlarmSettings() {
         <input id="auto-arrival-alarm" type="checkbox" ${prefs.autoArrivalAlarm ? "checked" : ""} />
         Auto-alarm arrival when travelling
       </label>
-      <label class="alarm-setting-field" title="Auto alarms only created if fire time is in this range">
+      <label
+        id="auto-alarm-restrict-hours-label"
+        class="checkbox${prefs.autoArrivalAlarm ? "" : " hidden"}"
+        for="auto-alarm-restrict-hours"
+      >
+        <input
+          id="auto-alarm-restrict-hours"
+          type="checkbox"
+          ${prefs.autoAlarmRestrictHours ? "checked" : ""}
+        />
+        Restrict hours
+      </label>
+      <label
+        id="auto-alarm-allowed-field"
+        class="alarm-setting-field${prefs.autoArrivalAlarm && prefs.autoAlarmRestrictHours ? "" : " hidden"}"
+        title="Auto alarms only created if fire time is in this range"
+      >
         <span>Auto allowed</span>
         <input id="auto-alarm-start" type="time" value="${prefs.autoAlarmAllowedStart}" />
         <span>–</span>
@@ -875,8 +903,16 @@ function injectAlarmSettings() {
     }
     if (t.id === "auto-arrival-alarm") {
       savePrefs({ autoArrivalAlarm: t.checked });
+      updateAutoAlarmHoursVisibility();
       if (t.checked) await ensureNotificationPermission();
       refreshTravelForAlarms();
+      return;
+    }
+    if (t.id === "auto-alarm-restrict-hours") {
+      savePrefs({ autoAlarmRestrictHours: t.checked });
+      updateAutoAlarmHoursVisibility();
+      refreshTravelForAlarms();
+      window.dispatchEvent(new CustomEvent("alarmautosettingchange"));
       return;
     }
     if (t.id === "auto-alarm-start" || t.id === "auto-alarm-end") {
