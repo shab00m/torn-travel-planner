@@ -1,7 +1,7 @@
 // Client-side alarms: localStorage persistence, header panel, Notification + beep.
 const ALARMS_KEY = "plannerAlarms";
 const ALARMS_OPEN_KEY = "plannerAlarmsOpen";
-const ALARM_TYPES = ["leave_regular", "leave_safe", "arrival"];
+const ALARM_TYPES = ["leave_regular", "leave_safe", "arrival", "restock"];
 
 const alarmState = {
   alarms: [],
@@ -151,12 +151,26 @@ function findArrivalAlarm() {
   return alarmState.alarms.find((a) => !a.firedAt && a.type === "arrival");
 }
 
+function findRestockAlarm(country, itemId) {
+  return alarmState.alarms.find(
+    (a) =>
+      !a.firedAt &&
+      a.type === "restock" &&
+      a.country === country &&
+      Number(a.itemId) === Number(itemId)
+  );
+}
+
 function hasLeaveAlarm(type, country, itemId, windowIndex) {
   return Boolean(findLeaveAlarm(type, country, itemId, windowIndex));
 }
 
 function hasArrivalAlarm() {
   return Boolean(findArrivalAlarm());
+}
+
+function hasRestockAlarm(country, itemId) {
+  return Boolean(findRestockAlarm(country, itemId));
 }
 
 async function ensureNotificationPermission() {
@@ -247,8 +261,9 @@ function alarmTitle(alarm) {
     const dest = alarm.destination || alarm.country || "destination";
     return `Arriving: ${dest}`;
   }
-  const kind = alarm.type === "leave_safe" ? "Safe leave" : "Leave";
   const item = alarm.itemName || `item ${alarm.itemId}`;
+  if (alarm.type === "restock") return `Restock: ${item}`;
+  const kind = alarm.type === "leave_safe" ? "Safe leave" : "Leave";
   return `${kind}: ${item}`;
 }
 
@@ -257,6 +272,9 @@ function alarmBody(alarm) {
   const offsetMin = Math.round(alarm.offsetSec / 60);
   if (alarm.type === "arrival") {
     return `Landing at ${when} (${offsetMin}m offset)`;
+  }
+  if (alarm.type === "restock") {
+    return `Restock at ${when} (${offsetMin}m offset)`;
   }
   return `Leave window starts ${when} (${offsetMin}m offset)`;
 }
@@ -299,7 +317,7 @@ function upsertAlarm(alarm) {
 }
 
 async function toggleLeaveAlarm({ type, country, itemId, itemName, windowIndex, leaveEarliest }) {
-  if (!ALARM_TYPES.includes(type) || type === "arrival") return;
+  if (type !== "leave_regular" && type !== "leave_safe") return;
   if (leaveEarliest == null || country == null || itemId == null || windowIndex == null) return;
   const existing = findLeaveAlarm(type, country, itemId, windowIndex);
   if (existing) {
@@ -342,6 +360,47 @@ async function toggleArrivalAlarm({ country, itemId, itemName, arriveTs, destina
     auto: false,
     firedAt: null,
   });
+}
+
+async function toggleRestockAlarm({ country, itemId, itemName, restockTs }) {
+  if (restockTs == null || country == null || itemId == null) return;
+  const existing = findRestockAlarm(country, itemId);
+  if (existing) {
+    removeAlarmById(existing.id);
+    return;
+  }
+  await ensureNotificationPermission();
+  upsertAlarm({
+    id: newAlarmId(),
+    type: "restock",
+    country,
+    itemId: Number(itemId),
+    itemName: itemName || null,
+    destination: null,
+    windowIndex: 0,
+    eventTs: restockTs,
+    offsetSec: getLeaveAlarmOffsetSec(),
+    auto: false,
+    firedAt: null,
+  });
+}
+
+/** Keep next-restock (#1) alarm eventTs in sync with latest prediction; drop if missed. */
+function syncRestockAlarmForItem(country, itemId, restockTs) {
+  if (!country || itemId == null) return;
+  const existing = findRestockAlarm(country, itemId);
+  if (!existing) return;
+  const now = Math.floor(Date.now() / 1000);
+  if (restockTs == null || restockTs <= now) {
+    removeAlarmById(existing.id);
+    return;
+  }
+  if (existing.eventTs !== restockTs) {
+    existing.eventTs = restockTs;
+    persistAlarms();
+    renderAlarmsPanel();
+    window.dispatchEvent(new CustomEvent("alarmschange"));
+  }
 }
 
 /** Favorites dashboard "next safe leave" alarms use this index (not item prediction #). */
@@ -599,6 +658,7 @@ async function syncArrivalFromTravel(travel) {
 function alarmTypeLabel(type) {
   if (type === "leave_safe") return "Safe leave";
   if (type === "leave_regular") return "Leave";
+  if (type === "restock") return "Restock";
   return "Arrival";
 }
 
@@ -700,7 +760,9 @@ function renderAlarmsPanel() {
       const place =
         a.type === "arrival"
           ? a.destination || meta?.name || a.country || "Travel"
-          : `${flag}${a.itemName || a.itemId}${meta ? ` · ${meta.name}` : a.country ? ` · ${a.country}` : ""}`;
+          : `${flag}${a.itemName || a.itemId}${
+              meta ? ` · ${meta.name}` : a.country ? ` · ${a.country}` : ""
+            }${a.type === "restock" ? " · #1" : ""}`;
       const offsetMin = Math.round((a.offsetSec / 60) * 10) / 10;
       const auto = a.auto ? `<span class="alarms-auto-tag">auto</span>` : "";
       const firedCls = a.firedAt ? " alarms-item-fired" : "";

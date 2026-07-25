@@ -1365,7 +1365,8 @@ body.page-item {
   color: var(--accent);
   background: rgba(79, 156, 249, 0.15);
 }
-.chart-time-marker-label .alarm-set-btn {
+.chart-time-marker-label .alarm-set-btn,
+.restock-marker-label .alarm-set-btn {
   pointer-events: auto;
   margin-left: 4px;
 }

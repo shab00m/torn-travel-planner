@@ -1375,6 +1375,9 @@ function renderPredictionPanel(events, segments) {
     if (country && state.item && typeof syncLeaveAlarmsForItem === "function") {
       syncLeaveAlarmsForItem(country, state.item.itemId, []);
     }
+    if (country && state.item && typeof syncRestockAlarmForItem === "function") {
+      syncRestockAlarmForItem(country, state.item.itemId, null);
+    }
     if (country && state.item && typeof syncAutoSafeAlarms === "function") {
       syncAutoSafeAlarms(country, state.item.itemId, state.item.name, []);
     }
@@ -1461,6 +1464,9 @@ function renderPredictionPanel(events, segments) {
 
   if (country && state.item && flightSec != null && typeof syncLeaveAlarmsForItem === "function") {
     syncLeaveAlarmsForItem(country, state.item.itemId, leaveSyncWindows);
+  }
+  if (country && state.item && typeof syncRestockAlarmForItem === "function") {
+    syncRestockAlarmForItem(country, state.item.itemId, restocks[0]?.ts ?? null);
   }
   if (country && state.item && flightSec != null && typeof syncAutoSafeAlarms === "function") {
     syncAutoSafeAlarms(country, state.item.itemId, state.item.name, safeAutoWindows);
@@ -1913,17 +1919,37 @@ function updateRestockMarkers(chart) {
       });
     });
 
-  state.predictedEvents
-    .filter((e) => e.type === "restock" && e.ts >= dataTs)
-    .forEach((ev, i) => {
-      appendVerticalChartMarker(el.restockMarkers, chart, {
-        ts: ev.ts,
-        lineClass: "restock-marker",
-        labelClass: "restock-marker-label",
-        labelHtml: `#${i + 1}<br>${fmtTimeShort(ev.ts)}`,
-        labelYAdjust: CHART_PREDICTION_LABEL_Y_ADJUST,
-      });
+  const nowTs = Math.floor(Date.now() / 1000);
+  const predictedRestocks = state.predictedEvents.filter(
+    (e) => e.type === "restock" && e.ts >= dataTs
+  );
+  predictedRestocks.forEach((ev, i) => {
+    let alarmBtn = "";
+    if (
+      i === 0 &&
+      ev.ts > nowTs &&
+      state.item &&
+      typeof alarmButtonHtml === "function"
+    ) {
+      const armed =
+        typeof hasRestockAlarm === "function" &&
+        hasRestockAlarm(state.item.country, state.item.itemId);
+      alarmBtn = ` ${alarmButtonHtml({
+        armed,
+        attrs: {
+          "data-alarm-type": "restock",
+          "data-restock-ts": ev.ts,
+        },
+      })}`;
+    }
+    appendVerticalChartMarker(el.restockMarkers, chart, {
+      ts: ev.ts,
+      lineClass: "restock-marker",
+      labelClass: "restock-marker-label",
+      labelHtml: `#${i + 1}${alarmBtn}<br>${fmtTimeShort(ev.ts)}`,
+      labelYAdjust: CHART_PREDICTION_LABEL_Y_ADJUST,
     });
+  });
 }
 
 function updateSafeWindowMarkers(chart) {
@@ -2833,6 +2859,20 @@ el.timeMarkers?.addEventListener("click", async (e) => {
   if (state.chart) updateTimeMarkers(state.chart);
 });
 
+el.restockMarkers?.addEventListener("click", async (e) => {
+  const alarmBtn = e.target.closest("button.alarm-set-btn[data-alarm-type='restock']");
+  if (!alarmBtn || !state.item || typeof toggleRestockAlarm !== "function") return;
+  const restockTs = Number(alarmBtn.dataset.restockTs);
+  if (!Number.isFinite(restockTs)) return;
+  await toggleRestockAlarm({
+    country: state.item.country,
+    itemId: state.item.itemId,
+    itemName: state.item.name,
+    restockTs,
+  });
+  if (state.chart) updateRestockMarkers(state.chart);
+});
+
 syncHourButtons(el.rangeButtons, state.rangeHours);
 syncHourButtons(el.predictionButtons, state.predictionHours);
 
@@ -2862,7 +2902,9 @@ window.addEventListener("alarmautosettingchange", () => {
 });
 
 window.addEventListener("alarmschange", () => {
-  if (state.chart) updateTimeMarkers(state.chart);
+  if (!state.chart) return;
+  updateTimeMarkers(state.chart);
+  updateRestockMarkers(state.chart);
 });
 
 if (el.safeWindowUseRate) {
