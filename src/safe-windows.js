@@ -431,8 +431,8 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
   const restockAmount =
     opts.restockAmount ?? (await getStoredRestockAmount(country, itemId));
 
-  const restocks = await getRestocks(country, itemId, 50);
-  const rates = await getDepletionRates(country, itemId, 50);
+  const restocks = await getRestocks(country, itemId);
+  const rates = await getDepletionRates(country, itemId);
   const chartPoints = await getHistory(country, itemId, 0);
 
   const current = resolveCurrentStock(chartPoints);

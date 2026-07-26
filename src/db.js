@@ -440,16 +440,24 @@ export async function getHistory(country, itemId, sinceTs) {
   );
 }
 
-/** Most recent out-of-stock periods, newest first (open period included). */
+/**
+ * Out-of-stock periods, newest first (open period included).
+ * @param {number | null | undefined} limit Max rows; omit/null for all.
+ */
 export async function getRestocks(country, itemId, limit) {
+  const params = [country, itemId];
+  let limitSql = "";
+  if (limit != null) {
+    params.push(limit);
+    limitSql = ` LIMIT $${params.length}`;
+  }
   const rows = await many(
     getPool(),
     `SELECT depleted_ts, restocked_ts, duration, ignored
      FROM restocks
      WHERE country = $1 AND item_id = $2
-     ORDER BY depleted_ts DESC
-     LIMIT $3`,
-    [country, itemId, limit]
+     ORDER BY depleted_ts DESC${limitSql}`,
+    params
   );
   return rows.map((row) => ({
     ...row,
@@ -671,6 +679,7 @@ function lastPositiveBefore(snapshots, beforeTs) {
 /**
  * In-stock windows with their depletion rate, newest first.
  * Loads restocks + snapshots in two queries (avoids per-cycle round trips).
+ * @param {number | null | undefined} limit Max windows; omit/null for all.
  */
 export async function getDepletionRates(country, itemId, limit) {
   const pool = getPool();
@@ -734,7 +743,8 @@ export async function getDepletionRates(country, itemId, limit) {
       open,
     });
   }
-  return windows.reverse().slice(0, limit);
+  const ordered = windows.reverse();
+  return limit == null ? ordered : ordered.slice(0, limit);
 }
 
 /** item_id → item_type for rows that have a Torn type. */

@@ -268,17 +268,20 @@ app.get("/api/history/:country/:itemId", async (req, res) => {
   });
 });
 
-// Recent out-of-stock periods and in-stock depletion-rate windows for one
-// item (newest first). 50 = enough history for cycle table (10 rows) and
-// sample averages.
+async function loadRestockViews(country, itemId) {
+  const [restocks, rates] = await Promise.all([
+    getRestocks(country, itemId),
+    getDepletionRates(country, itemId),
+  ]);
+  return { restocks, rates };
+}
+
+// Out-of-stock periods and in-stock depletion-rate windows for one item
+// (newest first, full history).
 app.get("/api/restocks/:country/:itemId", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
-  const [restocks, rates] = await Promise.all([
-    getRestocks(params.country, params.id, 50),
-    getDepletionRates(params.country, params.id, 50),
-  ]);
-  res.json({ restocks, rates });
+  res.json(await loadRestockViews(params.country, params.id));
 });
 
 app.get("/api/restock-amounts", async (_req, res) => {
@@ -430,10 +433,7 @@ app.patch("/api/restocks/:country/:itemId/:depletedTs", requireAdmin, async (req
   }
   try {
     await setRestockIgnored(params.country, params.id, depletedTs, ignored);
-    const [restocks, rates] = await Promise.all([
-      getRestocks(params.country, params.id, 50),
-      getDepletionRates(params.country, params.id, 50),
-    ]);
+    const { restocks, rates } = await loadRestockViews(params.country, params.id);
     res.json({ ok: true, restocks, rates });
   } catch (err) {
     res.status(err.message === "Restock cycle not found" ? 404 : 400).json({ error: err.message });
@@ -446,10 +446,7 @@ app.post("/api/restocks/:country/:itemId/flag-outliers", requireAdmin, async (re
   if (!params) return;
   try {
     const result = await flagOutlierRestocks(params.country, params.id);
-    const [restocks, rates] = await Promise.all([
-      getRestocks(params.country, params.id, 50),
-      getDepletionRates(params.country, params.id, 50),
-    ]);
+    const { restocks, rates } = await loadRestockViews(params.country, params.id);
     res.json({
       ok: true,
       flagged: result.flagged,
@@ -468,10 +465,7 @@ app.post("/api/restocks/:country/:itemId/backfill", requireAdmin, async (req, re
   if (!params) return;
   try {
     const result = await backfillRestocksForItem(params.country, params.id);
-    const [restocks, rates] = await Promise.all([
-      getRestocks(params.country, params.id, 50),
-      getDepletionRates(params.country, params.id, 50),
-    ]);
+    const { restocks, rates } = await loadRestockViews(params.country, params.id);
     res.json({
       ok: true,
       opened: result.opened,
@@ -495,11 +489,7 @@ function parseYataTs(req, res) {
 
 async function rerunRestocks(country, itemId) {
   await backfillRestocksForItem(country, itemId);
-  const [restocks, rates] = await Promise.all([
-    getRestocks(country, itemId, 50),
-    getDepletionRates(country, itemId, 50),
-  ]);
-  return { restocks, rates };
+  return loadRestockViews(country, itemId);
 }
 
 app.post("/api/snapshots/:country/:itemId/delete", requireAdmin, async (req, res) => {

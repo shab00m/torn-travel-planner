@@ -82,7 +82,7 @@ Snapshot history from the database.
 
 ### `GET /api/restocks/:country/:itemId`
 
-Recent out-of-stock periods and in-stock depletion-rate windows (newest first, up to 50).
+Out-of-stock periods and in-stock depletion-rate windows (newest first, full history).
 
 **Response:** `{ restocks, rates }`
 

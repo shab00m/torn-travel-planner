@@ -40,7 +40,13 @@ function destroyEmptyForChart() {
 }
 
 function emptyForChartOptions(points) {
+  const xValues = points.map((p) => p.x);
   const yValues = points.map((p) => p.y);
+  const xMinData = Math.min(...xValues);
+  const xMaxData = Math.max(...xValues);
+  const xPadSec = 10 * 60;
+  const xMin = Math.max(0, xMinData - xPadSec);
+  const xMax = xMaxData + xPadSec;
   const yMin = Math.min(...yValues);
   const yMax = Math.max(...yValues);
   const pad = Math.max((yMax - yMin) * 0.05, 60_000);
@@ -81,7 +87,8 @@ function emptyForChartOptions(points) {
     scales: {
       x: {
         type: "linear",
-        min: 0,
+        min: xMin,
+        max: xMax,
         title: {
           display: true,
           text: "Empty for",
@@ -122,7 +129,7 @@ function emptyForChartDataset(points) {
   return {
     label: "Empty for",
     data: points,
-    showLine: true,
+    showLine: false,
     borderColor: "#f0a36b",
     backgroundColor: "rgba(240, 163, 107, 0.85)",
     pointRadius: points.length > 200 ? 2 : 4,
