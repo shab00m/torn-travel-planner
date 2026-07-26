@@ -82,6 +82,12 @@ const TRAVEL_TYPES = ["Standard", "Airstrip", "Private", "Business"];
 const BASE_TRAVEL_CAPACITY = { Standard: 5, Airstrip: 15, Private: 15, Business: 15 };
 const SAMPLE_OPTIONS = [1, 3, 5, 10, 20];
 const RANGE_HOURS_OPTIONS = [1, 6, 24, 168, 0];
+
+/** Unix lower bound for History Time Range; `0` means All (no lower bound). */
+function historyRangeSinceTs(nowTs = Math.floor(Date.now() / 1000)) {
+  if (!state.rangeHours) return 0;
+  return nowTs - Math.round(state.rangeHours * 3600);
+}
 const PREDICTION_HOURS_OPTIONS = [0, 1, 2, 3, 6, 12, 24];
 const TIME_FORMATS = ["european", "us"];
 const TIME_ZONES = ["local", "tct"];

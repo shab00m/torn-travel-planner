@@ -503,8 +503,10 @@ function rebuildLastZeroLookup() {
 function lastZeroBeforeRestock(restockedTs, depletedTs) {
   if (!lastZeroLookup || lastZeroLookup.points !== state.chartPoints) rebuildLastZeroLookup();
   const lookup = lastZeroLookup;
-  if (!lookup) return depletedTs ?? null;
+  if (!lookup?.points.length) return depletedTs ?? null;
   const { points, prefixLastZero } = lookup;
+  // Restock outside loaded snapshot window — no reliable last-zero from history.
+  if (restockedTs < points[0].yata_ts) return null;
   let lo = 0;
   let hi = points.length - 1;
   let idx = -1;
@@ -517,7 +519,7 @@ function lastZeroBeforeRestock(restockedTs, depletedTs) {
       hi = mid - 1;
     }
   }
-  if (idx < 0) return depletedTs ?? null;
+  if (idx < 0) return null;
   return prefixLastZero[idx] ?? depletedTs ?? null;
 }
 
@@ -525,8 +527,12 @@ function lastZeroBeforeRestock(restockedTs, depletedTs) {
 function adjustRestockTime(restockedTs, observedQty, ratePerMin, restockAmount, depletedTs) {
   if (!restockAmount || !ratePerMin || ratePerMin <= 0 || !observedQty) return restockedTs;
   if (observedQty >= restockAmount) return restockedTs;
+  // Need snapshot context around the restock; truncated History Time Range can't provide it.
+  const points = state.chartPoints;
+  if (!points.length || restockedTs < points[0].yata_ts) return restockedTs;
   const adjustSec = ((restockAmount - observedQty) / ratePerMin) * 60;
   let adjusted = Math.round(restockedTs - adjustSec);
+  if (depletedTs != null) adjusted = Math.max(adjusted, depletedTs + 1);
   const lastZero = lastZeroBeforeRestock(restockedTs, depletedTs);
   if (lastZero != null) adjusted = Math.max(adjusted, lastZero + 1);
   return adjusted;

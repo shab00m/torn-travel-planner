@@ -13,13 +13,15 @@ const emptyForChartEl = {
 };
 
 function getEmptyForChartPoints() {
+  const sinceTs = historyRangeSinceTs();
   return getCycleHistoryRows()
     .filter(
       (r) =>
         !r.ignored &&
         r.emptyForSec != null &&
         r.emptyForSec >= 0 &&
-        r.restocked_ts != null
+        r.restocked_ts != null &&
+        (sinceTs === 0 || r.restocked_ts >= sinceTs)
     )
     .map((r) => ({
       x: r.emptyForSec,
