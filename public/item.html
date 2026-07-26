@@ -160,14 +160,24 @@
 				</div>
 				<ul id="prediction-list" class="restock-list prediction-list"></ul>
 			</div>
-			<div class="chart-wrap">
-				<canvas id="history-chart"></canvas>
-				<div id="safe-window-markers" class="chart-markers chart-safe-window-markers" aria-hidden="true"></div>
-				<div id="event-markers" class="chart-markers chart-event-markers" aria-hidden="true"></div>
-				<div id="time-markers" class="chart-markers chart-time-markers" aria-hidden="true"></div>
-				<div id="restock-markers" class="chart-markers chart-restock-markers" aria-hidden="true"></div>
-				<div id="chart-inspect-layer" class="chart-inspect-layer hidden" aria-hidden="true">
-					<div id="chart-selection-box" class="chart-selection-box hidden"></div>
+			<div class="chart-type-toggle range-buttons" id="chart-type-buttons" role="group" aria-label="Chart type">
+				<button type="button" data-chart="stock" class="active">Stock</button>
+				<button type="button" data-chart="empty-for">Empty for</button>
+			</div>
+			<div class="chart-panels">
+				<div class="chart-wrap" id="stock-chart-wrap">
+					<canvas id="history-chart"></canvas>
+					<div id="safe-window-markers" class="chart-markers chart-safe-window-markers" aria-hidden="true"></div>
+					<div id="event-markers" class="chart-markers chart-event-markers" aria-hidden="true"></div>
+					<div id="time-markers" class="chart-markers chart-time-markers" aria-hidden="true"></div>
+					<div id="restock-markers" class="chart-markers chart-restock-markers" aria-hidden="true"></div>
+					<div id="chart-inspect-layer" class="chart-inspect-layer hidden" aria-hidden="true">
+						<div id="chart-selection-box" class="chart-selection-box hidden"></div>
+					</div>
+				</div>
+				<div class="chart-wrap chart-wrap-empty-for hidden" id="empty-for-chart-wrap">
+					<canvas id="empty-for-chart"></canvas>
+					<p id="empty-for-chart-empty" class="item-empty hidden">No completed empty-for cycles yet.</p>
 				</div>
 			</div>
 			<div id="snapshot-inspector" class="snapshot-inspector hidden">
@@ -283,5 +293,6 @@
 		<script src="/api-tos.js"></script>
 		<script src="/auth.js"></script>
 		<script src="/item.js"></script>
+		<script src="/item-empty-for-chart.js"></script>
 	</body>
 </html>

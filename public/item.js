@@ -57,7 +57,7 @@ const el = {
   snapshotDeleteAllBtn: document.getElementById("snapshot-delete-all-btn"),
   chartOffset: document.getElementById("chart-offset"),
   chartScale: document.getElementById("chart-scale"),
-  chartWrap: document.querySelector(".chart-wrap"),
+  chartWrap: document.getElementById("stock-chart-wrap"),
   flightVarianceToggle: document.getElementById("flight-variance-toggle"),
 };
 
@@ -2505,6 +2505,7 @@ async function drawChart() {
     state.chartOffsetSec = clampChartOffsetSec(state.chartOffsetSec, timeline);
   }
   refreshChart(timeline);
+  if (typeof syncEmptyForChart === "function") syncEmptyForChart();
   for (const ts of snapshotInspector.selected) {
     if (!snapshotByTs(ts)) snapshotInspector.selected.delete(ts);
   }
@@ -2622,6 +2623,7 @@ function setupItemPage(item) {
 
 function refreshRestockAdjustments() {
   renderCycleHistory();
+  if (typeof syncEmptyForChart === "function") syncEmptyForChart();
   if (!state.chartPoints.length) return;
   const timeline = buildTimeline(state.chartPoints, state.predictionHours);
   refreshChart(timeline);
@@ -2634,6 +2636,7 @@ function loadRestockData({ restocks, rates } = {}) {
 
 function refreshRestockViews() {
   renderCycleHistory();
+  if (typeof syncEmptyForChart === "function") syncEmptyForChart();
   if (state.chartPoints.length) {
     const timeline = buildTimeline(state.chartPoints, state.predictionHours);
     refreshChart(timeline);
@@ -2949,6 +2952,7 @@ window.addEventListener("timeformatchange", () => {
     const timeline = buildTimeline(state.chartPoints, state.predictionHours);
     refreshChart(timeline);
   }
+  if (typeof syncEmptyForChart === "function") syncEmptyForChart();
 });
 
 window.addEventListener("travelsettingschange", () => {

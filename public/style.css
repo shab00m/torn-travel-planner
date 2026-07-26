@@ -1646,6 +1646,19 @@ body.page-item {
   cursor: pointer;
 }
 
+.chart-type-toggle {
+  margin: 4px 0 8px;
+  flex-shrink: 0;
+}
+
+.chart-panels {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
+}
+
 .page-item .chart-wrap {
   flex: 1;
   width: 100%;
@@ -1654,6 +1667,32 @@ body.page-item {
   overflow: hidden;
   padding-top: 32px;
 }
+
+.page-item .chart-wrap.hidden {
+  display: none;
+}
+
+.page-item .chart-wrap-empty-for {
+  padding-top: 16px;
+}
+
+#empty-for-chart.hidden {
+  display: none;
+}
+
+.chart-wrap-empty-for .item-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+}
+
+.chart-wrap-empty-for .item-empty.hidden {
+  display: none;
+}
+
 .item-empty { color: var(--text-dim); text-align: center; margin: 10px 0 0; flex-shrink: 0; }
 .hidden.item-empty { display: none; }
 
