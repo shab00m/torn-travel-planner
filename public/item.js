@@ -2546,7 +2546,7 @@ async function drawChart() {
     state.chartOffsetSec = clampChartOffsetSec(state.chartOffsetSec, timeline);
   }
   refreshChart(timeline);
-  if (typeof syncEmptyForChart === "function") syncEmptyForChart();
+  if (typeof syncActiveItemChartView === "function") syncActiveItemChartView();
   for (const ts of snapshotInspector.selected) {
     if (!snapshotByTs(ts)) snapshotInspector.selected.delete(ts);
   }
@@ -2664,7 +2664,7 @@ function setupItemPage(item) {
 
 function refreshRestockAdjustments() {
   renderCycleHistory();
-  if (typeof syncEmptyForChart === "function") syncEmptyForChart();
+  if (typeof syncActiveItemChartView === "function") syncActiveItemChartView();
   if (!state.chartPoints.length) return;
   const timeline = buildTimeline(state.chartPoints, state.predictionHours);
   refreshChart(timeline);
@@ -2677,7 +2677,7 @@ function loadRestockData({ restocks, rates } = {}) {
 
 function refreshRestockViews() {
   renderCycleHistory();
-  if (typeof syncEmptyForChart === "function") syncEmptyForChart();
+  if (typeof syncActiveItemChartView === "function") syncActiveItemChartView();
   if (state.chartPoints.length) {
     const timeline = buildTimeline(state.chartPoints, state.predictionHours);
     refreshChart(timeline);
@@ -2993,7 +2993,7 @@ window.addEventListener("timeformatchange", () => {
     const timeline = buildTimeline(state.chartPoints, state.predictionHours);
     refreshChart(timeline);
   }
-  if (typeof syncEmptyForChart === "function") syncEmptyForChart();
+  if (typeof syncActiveItemChartView === "function") syncActiveItemChartView();
 });
 
 window.addEventListener("travelsettingschange", () => {

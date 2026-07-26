@@ -1706,15 +1706,18 @@ body.page-item {
   display: none;
 }
 
-.page-item .chart-wrap-empty-for {
+.page-item .chart-wrap-empty-for,
+.page-item .chart-wrap-rate-tod {
   padding-top: 16px;
 }
 
-#empty-for-chart.hidden {
+#empty-for-chart.hidden,
+#rate-tod-chart.hidden {
   display: none;
 }
 
-.chart-wrap-empty-for .item-empty {
+.chart-wrap-empty-for .item-empty,
+.chart-wrap-rate-tod .item-empty {
   position: absolute;
   inset: 0;
   display: flex;
@@ -1723,7 +1726,8 @@ body.page-item {
   margin: 0;
 }
 
-.chart-wrap-empty-for .item-empty.hidden {
+.chart-wrap-empty-for .item-empty.hidden,
+.chart-wrap-rate-tod .item-empty.hidden {
   display: none;
 }
 

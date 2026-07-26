@@ -1,14 +1,11 @@
 // Lazy empty-for scatter chart on the item stock page (built only when toggled).
 const emptyForChartUi = {
-  type: "stock",
   chart: null,
   axesSwapped: false,
 };
 
 const emptyForChartEl = {
-  buttons: document.getElementById("chart-type-buttons"),
   swapAxes: document.getElementById("empty-for-swap-axes"),
-  stockWrap: document.getElementById("stock-chart-wrap"),
   wrap: document.getElementById("empty-for-chart-wrap"),
   canvas: document.getElementById("empty-for-chart"),
   empty: document.getElementById("empty-for-chart-empty"),
@@ -178,7 +175,7 @@ function emptyForChartDataset(points) {
 
 function syncEmptyForSwapAxesButton() {
   if (!emptyForChartEl.swapAxes) return;
-  const onEmptyFor = emptyForChartUi.type === "empty-for";
+  const onEmptyFor = typeof isItemChartView === "function" && isItemChartView("empty-for");
   emptyForChartEl.swapAxes.classList.toggle("hidden", !onEmptyFor);
   emptyForChartEl.swapAxes.classList.toggle("active", emptyForChartUi.axesSwapped);
   emptyForChartEl.swapAxes.setAttribute(
@@ -190,7 +187,7 @@ function syncEmptyForSwapAxesButton() {
 /** Build or update the empty-for chart. No-op unless that view is active. */
 function syncEmptyForChart() {
   syncEmptyForSwapAxesButton();
-  if (emptyForChartUi.type !== "empty-for") return;
+  if (typeof isItemChartView === "function" && !isItemChartView("empty-for")) return;
   if (!emptyForChartEl.canvas || !emptyForChartEl.wrap) return;
 
   const points = getEmptyForChartPoints();
@@ -229,40 +226,10 @@ function setEmptyForAxesSwapped(swapped) {
   syncEmptyForChart();
 }
 
-function setItemChartType(type) {
-  if (type !== "stock" && type !== "empty-for") {
-    throw new Error(`Unknown chart type: ${type}`);
-  }
-  emptyForChartUi.type = type;
-
-  emptyForChartEl.buttons?.querySelectorAll("button[data-chart]").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.chart === type);
-  });
-  emptyForChartEl.stockWrap?.classList.toggle("hidden", type !== "stock");
-  emptyForChartEl.wrap?.classList.toggle("hidden", type !== "empty-for");
-  syncEmptyForSwapAxesButton();
-
-  if (type === "empty-for") {
-    syncEmptyForChart();
-    return;
-  }
-
-  if (state.chart) state.chart.resize();
-}
-
-function initItemChartTypeToggle() {
-  if (!emptyForChartEl.buttons) return;
-  emptyForChartEl.buttons.addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-chart]");
-    if (!btn) return;
-    const type = btn.dataset.chart;
-    if (type === emptyForChartUi.type) return;
-    setItemChartType(type);
-  });
-
+function initEmptyForSwapAxesButton() {
   emptyForChartEl.swapAxes?.addEventListener("click", () => {
     setEmptyForAxesSwapped(!emptyForChartUi.axesSwapped);
   });
 }
 
-initItemChartTypeToggle();
+initEmptyForSwapAxesButton();

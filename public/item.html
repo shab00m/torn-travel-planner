@@ -164,6 +164,7 @@
 				<div class="chart-type-toggle range-buttons" id="chart-type-buttons" role="group" aria-label="Chart type">
 					<button type="button" data-chart="stock" class="active">Stock</button>
 					<button type="button" data-chart="empty-for">Empty for</button>
+					<button type="button" data-chart="rate-tod">Rate by hour</button>
 				</div>
 				<button type="button" id="empty-for-swap-axes" class="empty-for-swap-axes hidden" title="Swap empty-for and time axes">
 					Swap axes
@@ -183,6 +184,10 @@
 				<div class="chart-wrap chart-wrap-empty-for hidden" id="empty-for-chart-wrap">
 					<canvas id="empty-for-chart"></canvas>
 					<p id="empty-for-chart-empty" class="item-empty hidden">No completed empty-for cycles yet.</p>
+				</div>
+				<div class="chart-wrap chart-wrap-rate-tod hidden" id="rate-tod-chart-wrap">
+					<canvas id="rate-tod-chart"></canvas>
+					<p id="rate-tod-chart-empty" class="item-empty hidden">No depletion-rate data in this history range yet.</p>
 				</div>
 			</div>
 			<div id="snapshot-inspector" class="snapshot-inspector hidden">
@@ -298,6 +303,8 @@
 		<script src="/api-tos.js"></script>
 		<script src="/auth.js"></script>
 		<script src="/item.js"></script>
+		<script src="/item-chart-views.js"></script>
 		<script src="/item-empty-for-chart.js"></script>
+		<script src="/item-rate-tod-chart.js"></script>
 	</body>
 </html>
