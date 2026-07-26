@@ -14,7 +14,13 @@ const emptyForChartEl = {
 
 function getEmptyForChartPoints() {
   return getCycleHistoryRows()
-    .filter((r) => r.emptyForSec != null && r.emptyForSec >= 0 && r.restocked_ts != null)
+    .filter(
+      (r) =>
+        !r.ignored &&
+        r.emptyForSec != null &&
+        r.emptyForSec >= 0 &&
+        r.restocked_ts != null
+    )
     .map((r) => ({
       x: r.emptyForSec,
       y: r.restocked_ts * 1000,
