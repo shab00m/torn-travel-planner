@@ -209,9 +209,50 @@ function tctHourOfDay(ts) {
   return new Date(ts * 1000).getUTCHours();
 }
 
+function tctSecondsOfDay(ts) {
+  const d = new Date(ts * 1000);
+  return d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds();
+}
+
+/**
+ * Same minute-weighted TCT bucketing as the server lookup table.
+ * Used when the DB table has not been filled yet for this item.
+ */
+function computeRateTodHoursFromRates() {
+  const buckets = Array.from({ length: 24 }, () => ({ sum: 0, weight: 0 }));
+  for (const w of getUsableRates()) {
+    if (w.open || w.rate == null || w.rate <= 0) continue;
+    if (w.start_ts == null || w.end_ts == null || w.end_ts <= w.start_ts) continue;
+    let t = w.start_ts;
+    const end = w.end_ts;
+    while (t < end) {
+      const sod = tctSecondsOfDay(t);
+      const hour = Math.floor(sod / 3600);
+      const segSec = Math.min(3600 - (sod % 3600), end - t);
+      const minutes = segSec / 60;
+      if (minutes > 0) {
+        buckets[hour].sum += w.rate * minutes;
+        buckets[hour].weight += minutes;
+      }
+      t += segSec;
+    }
+  }
+  return buckets.map((b) => (b.weight > 0 ? b.sum / b.weight : null));
+}
+
+function rateTodHoursHaveData(hours) {
+  return Boolean(hours?.some((r) => r != null && r > 0));
+}
+
+/** Prefer persisted API lookup; fall back to computing from loaded rate windows. */
+function effectiveRateTodHours() {
+  if (rateTodHoursHaveData(state.rateTod?.hours)) return state.rateTod.hours;
+  return computeRateTodHoursFromRates();
+}
+
 /** Rate from daily TOD lookup; nearest hour with data, else fallback. */
 function rateFromTodLookup(ts, fallback) {
-  const hours = state.rateTod?.hours;
+  const hours = effectiveRateTodHours();
   if (!hours?.length) return fallback;
   const hour = tctHourOfDay(ts);
   if (hours[hour] != null && hours[hour] > 0) return hours[hour];
@@ -713,7 +754,7 @@ function rateFromHistory() {
 }
 
 function meanTodRate() {
-  const hours = state.rateTod?.hours?.filter((r) => r != null && r > 0) ?? [];
+  const hours = effectiveRateTodHours().filter((r) => r != null && r > 0);
   if (!hours.length) return null;
   return hours.reduce((sum, r) => sum + r, 0) / hours.length;
 }
@@ -1143,10 +1184,11 @@ function renderCycleHistory() {
   }
 
   if (state.historicalRatePrediction) {
-    const hours = state.rateTod?.hours?.filter((r) => r != null && r > 0) ?? [];
+    const hours = effectiveRateTodHours().filter((r) => r != null && r > 0);
     if (hours.length) {
       const avg = hours.reduce((sum, r) => sum + r, 0) / hours.length;
-      el.rateAvg.textContent = `TCT by hour (${hours.length}/24 · mean ${fmtRate(avg)}/min)`;
+      const source = rateTodHoursHaveData(state.rateTod?.hours) ? "saved" : "live";
+      el.rateAvg.textContent = `TCT by hour (${hours.length}/24 · mean ${fmtRate(avg)}/min · ${source})`;
     } else {
       el.rateAvg.textContent = "no TCT hour averages yet";
     }

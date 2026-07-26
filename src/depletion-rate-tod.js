@@ -108,10 +108,7 @@ export async function rebuildAllDepletionRateTod() {
   return { itemsUpdated, hoursWritten };
 }
 
-/**
- * @returns {Promise<{ hours: (number | null)[], updatedAt: number | null }>}
- */
-export async function getDepletionRateTod(country, itemId) {
+async function readDepletionRateTod(country, itemId) {
   const rows = await many(
     getPool(),
     `SELECT hour_of_day AS hour, avg_rate AS "avgRate", updated_at AS "updatedAt"
@@ -126,7 +123,20 @@ export async function getDepletionRateTod(country, itemId) {
     hours[row.hour] = row.avgRate;
     if (updatedAt == null || row.updatedAt > updatedAt) updatedAt = row.updatedAt;
   }
-  return { hours, updatedAt };
+  return { hours, updatedAt, rowCount: rows.length };
+}
+
+/**
+ * @returns {Promise<{ hours: (number | null)[], updatedAt: number | null }>}
+ */
+export async function getDepletionRateTod(country, itemId) {
+  let result = await readDepletionRateTod(country, itemId);
+  // First visit before the daily job finishes — build this item on demand.
+  if (result.rowCount === 0) {
+    await rebuildDepletionRateTodForItem(country, itemId);
+    result = await readDepletionRateTod(country, itemId);
+  }
+  return { hours: result.hours, updatedAt: result.updatedAt };
 }
 
 /** Pick rate for a unix ts from a 24-length hours array; nearest hour, then fallback. */
