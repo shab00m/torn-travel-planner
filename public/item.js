@@ -2626,6 +2626,14 @@ function startLiveChartTicker() {
     if (document.hidden) return;
     updateCurrentDepletionCountdown();
 
+    if (
+      typeof isItemChartView === "function" &&
+      isItemChartView("rate-tod") &&
+      typeof patchRateTodNowMarker === "function"
+    ) {
+      patchRateTodNowMarker();
+    }
+
     if (!state.chart || !state.lastTimeline || !state.chartPoints?.length) return;
     if (chartPan.active || snapshotInspector.drag) return;
 

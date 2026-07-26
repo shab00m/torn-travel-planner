@@ -96,6 +96,30 @@ function destroyRateTodChart() {
   if (existing) existing.destroy();
 }
 
+function rateTodNowX() {
+  return secondsOfDay(Math.floor(Date.now() / 1000)) / 3600;
+}
+
+function rateTodNowAnnotation() {
+  const x = rateTodNowX();
+  return {
+    type: "line",
+    xMin: x,
+    xMax: x,
+    borderColor: "#ffea00",
+    borderWidth: 2,
+    borderDash: [4, 4],
+    label: {
+      display: true,
+      content: "NOW",
+      position: "start",
+      backgroundColor: "rgba(23, 28, 38, 0.9)",
+      color: "#ffea00",
+      font: { size: 10, weight: "600" },
+    },
+  };
+}
+
 function rateTodChartOptions() {
   return {
     responsive: true,
@@ -107,6 +131,11 @@ function rateTodChartOptions() {
         position: "top",
         align: "start",
         labels: { color: "#8b96a8" },
+      },
+      annotation: {
+        annotations: {
+          now: rateTodNowAnnotation(),
+        },
       },
       tooltip: {
         backgroundColor: "rgba(23, 28, 38, 0.95)",
@@ -188,6 +217,18 @@ function rateTodChartDataset(points) {
     tension: 0.2,
     spanGaps: false,
   };
+}
+
+/** Move the NOW line without rebuilding rate buckets. */
+function patchRateTodNowMarker() {
+  const chart = rateTodChartUi.chart;
+  const ann = chart?.options?.plugins?.annotation?.annotations?.now;
+  if (!ann) return;
+  const x = rateTodNowX();
+  if (ann.xMin === x && ann.xMax === x) return;
+  ann.xMin = x;
+  ann.xMax = x;
+  chart.update("none");
 }
 
 /** Build or update the rate-by-hour chart. No-op unless that view is active. */
