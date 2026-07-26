@@ -1309,7 +1309,12 @@ function predictedRestockBounds(e, averages, events, segments, { dataTs, startQt
 }
 
 function safeWindowDepletionRate() {
-  if (state.safeWindowUseRateSelection) return rateFromHistory();
+  if (state.safeWindowUseRateSelection) {
+    if (state.historicalRatePrediction) {
+      return meanTodRate() ?? rateFromHistory();
+    }
+    return rateFromHistory();
+  }
   return getHistoricalExtents().maxRate;
 }
 
@@ -1343,30 +1348,40 @@ function initialDepletionEnvelope(dataTs, startQty, depletionRate) {
 
 /**
  * Safe windows as [latest possible restock, earliest possible depletion].
- * Empty-for min/max compounds across cycles; depletion uses a single rate from
- * safeWindowDepletionRate() (selected rate when "Use for safe window" is on,
- * otherwise historical max). Stops when the envelope collapses.
+ * Empty-for min/max compounds across cycles. Depletion rate comes from
+ * safeWindowDepletionRate() (TOD averages when historical prediction is on and
+ * "Use for safe window" is checked; otherwise avg/min/max or historical max).
+ * With historical TOD, each path looks up the rate at its restock time.
  */
 function computeCompoundSafeWindows(dataTs, endTs, startQty) {
   const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
-  const depletionRate = safeWindowDepletionRate();
-  if (minEmptyFor == null || maxEmptyFor == null || depletionRate == null || startQty == null) {
+  const fallbackRate = safeWindowDepletionRate();
+  if (minEmptyFor == null || maxEmptyFor == null || fallbackRate == null || startQty == null) {
     return [];
   }
 
   const restockQty = restockQtyForSafeWindow();
   if (restockQty == null || restockQty <= 0) return [];
 
-  const initial = initialDepletionEnvelope(dataTs, startQty, depletionRate);
+  const initial = initialDepletionEnvelope(dataTs, startQty, fallbackRate);
   if (!initial) return [];
+
+  const rateAt = (ts) =>
+    state.historicalRatePrediction && state.safeWindowUseRateSelection
+      ? rateFromTodLookup(ts, fallbackRate)
+      : fallbackRate;
 
   let { earliestDepleted, latestDepleted } = initial;
   const windows = [];
-  const depleteSec = (restockQty / depletionRate) * 60;
 
   for (let i = 0; i < 100; i++) {
-    const safeStart = Math.round(latestDepleted + maxEmptyFor);
-    const safeEnd = Math.round(earliestDepleted + minEmptyFor + depleteSec);
+    const restockEarliest = earliestDepleted + minEmptyFor;
+    const restockLatest = latestDepleted + maxEmptyFor;
+    const depleteSecEarliest = (restockQty / rateAt(restockEarliest)) * 60;
+    const depleteSecLatest = (restockQty / rateAt(restockLatest)) * 60;
+
+    const safeStart = Math.round(restockLatest);
+    const safeEnd = Math.round(restockEarliest + depleteSecEarliest);
 
     if (safeStart > endTs) break;
     if (safeStart >= safeEnd) break;
@@ -1377,9 +1392,8 @@ function computeCompoundSafeWindows(dataTs, endTs, startQty) {
       depletedTs: latestDepleted,
     });
 
-    // Compound empty-for uncertainty only; same depletion rate on both paths.
-    earliestDepleted = Math.round(earliestDepleted + minEmptyFor + depleteSec);
-    latestDepleted = Math.round(latestDepleted + maxEmptyFor + depleteSec);
+    earliestDepleted = Math.round(restockEarliest + depleteSecEarliest);
+    latestDepleted = Math.round(restockLatest + depleteSecLatest);
     if (earliestDepleted > endTs) break;
   }
 

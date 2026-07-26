@@ -639,6 +639,7 @@ async function loadSafeWindows() {
         travelType: state.travelType,
         flightTimeVariance: state.flightTimeVariance,
         safeWindowUseRateSelection: state.safeWindowUseRateSelection,
+        historicalRatePrediction: state.historicalRatePrediction,
         avgSamples: state.avgSamples,
         avgRateSamples: state.avgRateSamples,
         stockoutTiming: state.stockoutTiming,

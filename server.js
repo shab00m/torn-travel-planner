@@ -346,6 +346,10 @@ function parseSafeWindowOptions(query = {}, body = {}) {
     opts.safeWindowUseRateSelection =
       src.safeWindowUseRateSelection === true || src.safeWindowUseRateSelection === "true";
   }
+  if (src.historicalRatePrediction != null) {
+    opts.historicalRatePrediction =
+      src.historicalRatePrediction === true || src.historicalRatePrediction === "true";
+  }
   if (src.predictionHours != null) {
     const hours = Number.parseFloat(src.predictionHours);
     if (Number.isNaN(hours) || hours <= 0) throw new Error("predictionHours must be a positive number");

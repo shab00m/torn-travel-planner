@@ -1,5 +1,6 @@
 import { getRestocks, getDepletionRates, getHistory, getRestockAmount as getStoredRestockAmount } from "./db.js";
 import { getFlightSeconds } from "./flight-times.js";
+import { getDepletionRateTod, rateFromTodHours } from "./depletion-rate-tod.js";
 
 const FLIGHT_TIME_VARIANCE = 0.03;
 
@@ -58,6 +59,8 @@ function createContext({
   stockoutTiming,
   rateTiming,
   safeWindowUseRateSelection,
+  historicalRatePrediction,
+  rateTodHours,
   currentQty,
   currentPollTs,
   wallTs,
@@ -162,6 +165,17 @@ function createContext({
     return sample.reduce((sum, w) => sum + w.rate, 0) / sample.length;
   }
 
+  function meanTodRate() {
+    const hours = (rateTodHours ?? []).filter((r) => r != null && r > 0);
+    if (!hours.length) return null;
+    return hours.reduce((sum, r) => sum + r, 0) / hours.length;
+  }
+
+  function rateForAverages() {
+    if (historicalRatePrediction) return meanTodRate() ?? rateFromHistory();
+    return rateFromHistory();
+  }
+
   function getOpenRateWindow() {
     const raw = rates.find((w) => w.open);
     if (!raw || isRateWindowIgnored(raw.start_ts)) return null;
@@ -176,6 +190,9 @@ function createContext({
   }
 
   function depletionRateForCycle(t, startTs, startQty, avgRate) {
+    if (historicalRatePrediction) {
+      return rateFromTodHours(t, rateTodHours, avgRate);
+    }
     if (startQty > 0 && t === startTs) {
       // Continue the current open cycle at its observed rate — not the historical average.
       const w = getOpenRateWindow();
@@ -217,7 +234,7 @@ function createContext({
 
   function getAverages() {
     const restockSec = stockoutSecFromHistory();
-    const rate = rateFromHistory();
+    const rate = rateForAverages();
     if (restockSec == null || rate == null) return null;
     const qtySample = getUsableRates().slice(0, avgRateSamples);
     const qtySource = qtySample.length ? qtySample : getUsableRates();
@@ -294,7 +311,10 @@ function createContext({
   }
 
   function safeWindowDepletionRate() {
-    if (safeWindowUseRateSelection) return rateFromHistory();
+    if (safeWindowUseRateSelection) {
+      if (historicalRatePrediction) return meanTodRate() ?? rateFromHistory();
+      return rateFromHistory();
+    }
     return getHistoricalExtents().maxRate;
   }
 
@@ -327,30 +347,37 @@ function createContext({
 
   /**
    * Safe windows as [latest possible restock, earliest possible depletion].
-   * Empty-for min/max compounds across cycles; depletion uses a single rate from
-   * safeWindowDepletionRate() (selected rate when "Use for safe window" is on,
-   * otherwise historical max). Stops when the envelope collapses.
+   * With historical TOD rates, each path looks up depletion rate at its restock time.
    */
   function computeCompoundSafeWindows(dataTs, endTs, startQty) {
     const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
-    const depletionRate = safeWindowDepletionRate();
-    if (minEmptyFor == null || maxEmptyFor == null || depletionRate == null || startQty == null) {
+    const fallbackRate = safeWindowDepletionRate();
+    if (minEmptyFor == null || maxEmptyFor == null || fallbackRate == null || startQty == null) {
       return [];
     }
 
     const restockQty = restockQtyForSafeWindow();
     if (restockQty == null || restockQty <= 0) return [];
 
-    const initial = initialDepletionEnvelope(dataTs, startQty, depletionRate);
+    const initial = initialDepletionEnvelope(dataTs, startQty, fallbackRate);
     if (!initial) return [];
+
+    const rateAt = (ts) =>
+      historicalRatePrediction && safeWindowUseRateSelection
+        ? rateFromTodHours(ts, rateTodHours, fallbackRate)
+        : fallbackRate;
 
     let { earliestDepleted, latestDepleted } = initial;
     const windows = [];
-    const depleteSec = (restockQty / depletionRate) * 60;
 
     for (let i = 0; i < 100; i++) {
-      const safeStart = Math.round(latestDepleted + maxEmptyFor);
-      const safeEnd = Math.round(earliestDepleted + minEmptyFor + depleteSec);
+      const restockEarliest = earliestDepleted + minEmptyFor;
+      const restockLatest = latestDepleted + maxEmptyFor;
+      const depleteSecEarliest = (restockQty / rateAt(restockEarliest)) * 60;
+      const depleteSecLatest = (restockQty / rateAt(restockLatest)) * 60;
+
+      const safeStart = Math.round(restockLatest);
+      const safeEnd = Math.round(restockEarliest + depleteSecEarliest);
 
       if (safeStart > endTs) break;
       if (safeStart >= safeEnd) break;
@@ -361,9 +388,8 @@ function createContext({
         depletedTs: latestDepleted,
       });
 
-      // Compound empty-for uncertainty only; same depletion rate on both paths.
-      earliestDepleted = Math.round(earliestDepleted + minEmptyFor + depleteSec);
-      latestDepleted = Math.round(latestDepleted + maxEmptyFor + depleteSec);
+      earliestDepleted = Math.round(restockEarliest + depleteSecEarliest);
+      latestDepleted = Math.round(restockLatest + depleteSecLatest);
       if (earliestDepleted > endTs) break;
     }
 
@@ -422,6 +448,7 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
     stockoutTiming: "avg",
     rateTiming: "avg",
     safeWindowUseRateSelection: true,
+    historicalRatePrediction: false,
     travelType: "Standard",
     flightTimeVariance: true,
     predictionHours: 24,
@@ -431,9 +458,12 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
   const restockAmount =
     opts.restockAmount ?? (await getStoredRestockAmount(country, itemId));
 
-  const restocks = await getRestocks(country, itemId);
-  const rates = await getDepletionRates(country, itemId);
-  const chartPoints = await getHistory(country, itemId, 0);
+  const [restocks, rates, chartPoints, rateTod] = await Promise.all([
+    getRestocks(country, itemId),
+    getDepletionRates(country, itemId),
+    getHistory(country, itemId, 0),
+    getDepletionRateTod(country, itemId),
+  ]);
 
   const current = resolveCurrentStock(chartPoints);
   if (!current) {
@@ -463,6 +493,8 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
     stockoutTiming: opts.stockoutTiming,
     rateTiming: opts.rateTiming,
     safeWindowUseRateSelection: opts.safeWindowUseRateSelection,
+    historicalRatePrediction: opts.historicalRatePrediction === true,
+    rateTodHours: rateTod.hours,
     currentQty: startQty,
     currentPollTs: dataTs,
     wallTs: opts.wallTs,
