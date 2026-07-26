@@ -246,6 +246,8 @@ function syncCurrentStockDepletion(quantity, pollTs) {
 const fmtRate = (r) => (Math.abs(r) >= 10 ? r.toFixed(0) : r.toFixed(1));
 const CYCLE_HISTORY_PAGE_SIZE = 10;
 let cycleHistoryPage = 0;
+/** @type {number | null} depleted_ts of the cycle row highlighted from the empty-for chart */
+let cycleHistoryHighlightTs = null;
 const CHART_TOP_PADDING = 48;
 const CHART_VIEWPORT_HOURS = 24;
 const CHART_MIN_VIEWPORT_SEC = 15 * 60;
@@ -1123,7 +1125,13 @@ function renderCycleHistory() {
             />
           </td>`
         : `<td class="cycle-count-cell"></td>`;
-      return `<tr class="${r.ignored ? "cycle-ignored" : ""}" data-depleted-ts="${r.depleted_ts}">
+      const classes = [
+        r.ignored ? "cycle-ignored" : "",
+        r.depleted_ts === cycleHistoryHighlightTs ? "cycle-highlight" : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      return `<tr class="${classes}" data-depleted-ts="${r.depleted_ts}">
         ${countCell}
         <td>${fmtTime(r.restocked_ts)}</td>
         <td>${fmtTime(r.depleted_ts)}</td>
@@ -1132,6 +1140,21 @@ function renderCycleHistory() {
       </tr>`;
     })
     .join("");
+}
+
+/** Jump the cycle history pager to a row and highlight it (used by empty-for chart clicks). */
+function focusCycleHistoryRow(depletedTs) {
+  if (depletedTs == null) return;
+  const rows = getCycleHistoryRows();
+  const index = rows.findIndex((r) => r.depleted_ts === depletedTs);
+  if (index < 0) return;
+
+  cycleHistoryHighlightTs = depletedTs;
+  cycleHistoryPage = Math.floor(index / CYCLE_HISTORY_PAGE_SIZE);
+  renderCycleHistory();
+
+  const row = el.cycleHistoryBody?.querySelector(`tr[data-depleted-ts="${depletedTs}"]`);
+  row?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 function depletionAfterRestock(restockTs, events, segments) {

@@ -1867,6 +1867,20 @@ body.page-item {
   opacity: 0.45;
   text-decoration: line-through;
 }
+
+.cycle-history tr.cycle-highlight td {
+  background: rgba(240, 163, 107, 0.18);
+  color: var(--text);
+}
+
+.cycle-history tr.cycle-highlight td.rate-cell {
+  color: var(--green);
+}
+
+.cycle-history tr.cycle-highlight td.duration-cell {
+  color: var(--text);
+  font-weight: 600;
+}
 .cycle-history .cycle-count {
   width: 14px;
   height: 14px;

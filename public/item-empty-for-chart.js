@@ -64,6 +64,17 @@ function emptyForChartOptions(points) {
     maintainAspectRatio: false,
     parsing: false,
     interaction: { mode: "nearest", intersect: true },
+    onHover(event, elements) {
+      const canvas = event.native?.target;
+      if (canvas?.style) canvas.style.cursor = elements.length ? "pointer" : "default";
+    },
+    onClick(_event, elements, chart) {
+      if (!elements.length) return;
+      const el = elements[0];
+      const raw = chart.data.datasets[el.datasetIndex]?.data?.[el.index];
+      if (raw?.depleted_ts == null || typeof focusCycleHistoryRow !== "function") return;
+      focusCycleHistoryRow(raw.depleted_ts);
+    },
     plugins: {
       legend: {
         position: "top",
@@ -140,6 +151,7 @@ function emptyForChartDataset(points) {
     backgroundColor: "rgba(240, 163, 107, 0.85)",
     pointRadius: points.length > 200 ? 2 : 4,
     pointHoverRadius: 6,
+    pointHitRadius: 8,
     borderWidth: 1.5,
     tension: 0,
   };
