@@ -2,10 +2,12 @@
 const emptyForChartUi = {
   type: "stock",
   chart: null,
+  axesSwapped: false,
 };
 
 const emptyForChartEl = {
   buttons: document.getElementById("chart-type-buttons"),
+  swapAxes: document.getElementById("empty-for-swap-axes"),
   stockWrap: document.getElementById("stock-chart-wrap"),
   wrap: document.getElementById("empty-for-chart-wrap"),
   canvas: document.getElementById("empty-for-chart"),
@@ -14,6 +16,7 @@ const emptyForChartEl = {
 
 function getEmptyForChartPoints() {
   const sinceTs = historyRangeSinceTs();
+  const swapped = emptyForChartUi.axesSwapped;
   return getCycleHistoryRows()
     .filter(
       (r) =>
@@ -23,14 +26,17 @@ function getEmptyForChartPoints() {
         r.restocked_ts != null &&
         (sinceTs === 0 || r.restocked_ts >= sinceTs)
     )
-    .map((r) => ({
-      x: r.emptyForSec,
-      y: r.restocked_ts * 1000,
-      depleted_ts: r.depleted_ts,
-      restocked_ts: r.restocked_ts,
-      emptyForSec: r.emptyForSec,
-    }))
-    .sort((a, b) => a.y - b.y);
+    .map((r) => {
+      const timeMs = r.restocked_ts * 1000;
+      return {
+        x: swapped ? timeMs : r.emptyForSec,
+        y: swapped ? r.emptyForSec : timeMs,
+        depleted_ts: r.depleted_ts,
+        restocked_ts: r.restocked_ts,
+        emptyForSec: r.emptyForSec,
+      };
+    })
+    .sort((a, b) => a.restocked_ts - b.restocked_ts);
 }
 
 function emptyForChartTimeUnit(spanMs) {
@@ -47,19 +53,62 @@ function destroyEmptyForChart() {
   if (existing) existing.destroy();
 }
 
-function emptyForChartOptions(points) {
-  const xValues = points.map((p) => p.x);
-  const yValues = points.map((p) => p.y);
-  const xMinData = Math.min(...xValues);
-  const xMaxData = Math.max(...xValues);
-  const xPadSec = 10 * 60;
-  const xMin = Math.max(0, xMinData - xPadSec);
-  const xMax = xMaxData + xPadSec;
-  const yMin = Math.min(...yValues);
-  const yMax = Math.max(...yValues);
+function emptyForDurationScale(values) {
+  const minData = Math.min(...values);
+  const maxData = Math.max(...values);
+  const padSec = 10 * 60;
+  return {
+    type: "linear",
+    min: Math.max(0, minData - padSec),
+    max: maxData + padSec,
+    title: {
+      display: true,
+      text: "Empty for",
+      color: "#8b96a8",
+    },
+    ticks: {
+      color: "#8b96a8",
+      callback: (value) => fmtDuration(value),
+    },
+    grid: { color: "#2a3345" },
+  };
+}
+
+function emptyForTimeScale(valuesMs) {
+  const yMin = Math.min(...valuesMs);
+  const yMax = Math.max(...valuesMs);
   const pad = Math.max((yMax - yMin) * 0.05, 60_000);
   const spanMs = Math.max(yMax - yMin, 60_000);
   const timeUnit = emptyForChartTimeUnit(spanMs);
+  return {
+    type: "time",
+    min: yMin - pad,
+    max: yMax + pad,
+    title: {
+      display: true,
+      text: "Restocked",
+      color: "#8b96a8",
+    },
+    time: {
+      unit: timeUnit,
+      stepSize: timeUnit === "minute" ? 1 : undefined,
+      displayFormats: chartTimeDisplayFormats(),
+    },
+    ticks: {
+      color: "#8b96a8",
+      maxTicksLimit: 12,
+      callback: chartTimeTickCallback,
+    },
+    grid: { color: "#2a3345" },
+  };
+}
+
+function emptyForChartOptions(points) {
+  const durationValues = points.map((p) => p.emptyForSec);
+  const timeValues = points.map((p) => p.restocked_ts * 1000);
+  const durationScale = emptyForDurationScale(durationValues);
+  const timeScale = emptyForTimeScale(timeValues);
+  const swapped = emptyForChartUi.axesSwapped;
 
   return {
     responsive: true,
@@ -95,51 +144,19 @@ function emptyForChartOptions(points) {
           label: (ctx) => {
             const raw = ctx.raw;
             if (!raw) return "";
-            return [
-              `Empty for: ${fmtDuration(raw.emptyForSec)}`,
-              `Depleted: ${fmtTime(raw.depleted_ts)}`,
-            ];
+            return `Empty for: ${fmtDurationDetailed(raw.emptyForSec)}`;
+          },
+          afterLabel: (ctx) => {
+            const raw = ctx.raw;
+            if (!raw) return "";
+            return `Depleted: ${fmtTime(raw.depleted_ts)}`;
           },
         },
       },
     },
     scales: {
-      x: {
-        type: "linear",
-        min: xMin,
-        max: xMax,
-        title: {
-          display: true,
-          text: "Empty for",
-          color: "#8b96a8",
-        },
-        ticks: {
-          color: "#8b96a8",
-          callback: (value) => fmtDuration(value),
-        },
-        grid: { color: "#2a3345" },
-      },
-      y: {
-        type: "time",
-        min: yMin - pad,
-        max: yMax + pad,
-        title: {
-          display: true,
-          text: "Restocked",
-          color: "#8b96a8",
-        },
-        time: {
-          unit: timeUnit,
-          stepSize: timeUnit === "minute" ? 1 : undefined,
-          displayFormats: chartTimeDisplayFormats(),
-        },
-        ticks: {
-          color: "#8b96a8",
-          maxTicksLimit: 12,
-          callback: chartTimeTickCallback,
-        },
-        grid: { color: "#2a3345" },
-      },
+      x: swapped ? timeScale : durationScale,
+      y: swapped ? durationScale : timeScale,
     },
   };
 }
@@ -159,8 +176,20 @@ function emptyForChartDataset(points) {
   };
 }
 
+function syncEmptyForSwapAxesButton() {
+  if (!emptyForChartEl.swapAxes) return;
+  const onEmptyFor = emptyForChartUi.type === "empty-for";
+  emptyForChartEl.swapAxes.classList.toggle("hidden", !onEmptyFor);
+  emptyForChartEl.swapAxes.classList.toggle("active", emptyForChartUi.axesSwapped);
+  emptyForChartEl.swapAxes.setAttribute(
+    "aria-pressed",
+    emptyForChartUi.axesSwapped ? "true" : "false"
+  );
+}
+
 /** Build or update the empty-for chart. No-op unless that view is active. */
 function syncEmptyForChart() {
+  syncEmptyForSwapAxesButton();
   if (emptyForChartUi.type !== "empty-for") return;
   if (!emptyForChartEl.canvas || !emptyForChartEl.wrap) return;
 
@@ -193,6 +222,13 @@ function syncEmptyForChart() {
   });
 }
 
+function setEmptyForAxesSwapped(swapped) {
+  emptyForChartUi.axesSwapped = Boolean(swapped);
+  // Scale types change (linear ↔ time); recreate instead of updating in place.
+  destroyEmptyForChart();
+  syncEmptyForChart();
+}
+
 function setItemChartType(type) {
   if (type !== "stock" && type !== "empty-for") {
     throw new Error(`Unknown chart type: ${type}`);
@@ -204,6 +240,7 @@ function setItemChartType(type) {
   });
   emptyForChartEl.stockWrap?.classList.toggle("hidden", type !== "stock");
   emptyForChartEl.wrap?.classList.toggle("hidden", type !== "empty-for");
+  syncEmptyForSwapAxesButton();
 
   if (type === "empty-for") {
     syncEmptyForChart();
@@ -221,6 +258,10 @@ function initItemChartTypeToggle() {
     const type = btn.dataset.chart;
     if (type === emptyForChartUi.type) return;
     setItemChartType(type);
+  });
+
+  emptyForChartEl.swapAxes?.addEventListener("click", () => {
+    setEmptyForAxesSwapped(!emptyForChartUi.axesSwapped);
   });
 }
 

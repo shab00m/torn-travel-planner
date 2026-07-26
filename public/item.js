@@ -167,6 +167,18 @@ function fmtDuration(seconds) {
   return `${m}m ${s % 60}s`;
 }
 
+/** Like fmtDuration but keeps the next smaller unit (e.g. minutes when days are shown). */
+function fmtDurationDetailed(seconds) {
+  const s = Math.round(seconds);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (d > 0) return `${d}d ${h}h ${m}m`;
+  if (h > 0) return `${h}h ${m}m ${sec}s`;
+  return `${m}m ${sec}s`;
+}
+
 const currentStockSnapshot = {
   pollTs: null,
   quantity: null,

@@ -1646,9 +1646,43 @@ body.page-item {
   cursor: pointer;
 }
 
-.chart-type-toggle {
+.chart-type-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin: 4px 0 8px;
   flex-shrink: 0;
+}
+
+.chart-type-toggle {
+  margin: 0;
+}
+
+.empty-for-swap-axes {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.empty-for-swap-axes:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.empty-for-swap-axes.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.empty-for-swap-axes.hidden {
+  display: none;
 }
 
 .chart-panels {

@@ -160,9 +160,14 @@
 				</div>
 				<ul id="prediction-list" class="restock-list prediction-list"></ul>
 			</div>
-			<div class="chart-type-toggle range-buttons" id="chart-type-buttons" role="group" aria-label="Chart type">
-				<button type="button" data-chart="stock" class="active">Stock</button>
-				<button type="button" data-chart="empty-for">Empty for</button>
+			<div class="chart-type-bar">
+				<div class="chart-type-toggle range-buttons" id="chart-type-buttons" role="group" aria-label="Chart type">
+					<button type="button" data-chart="stock" class="active">Stock</button>
+					<button type="button" data-chart="empty-for">Empty for</button>
+				</div>
+				<button type="button" id="empty-for-swap-axes" class="empty-for-swap-axes hidden" title="Swap empty-for and time axes">
+					Swap axes
+				</button>
 			</div>
 			<div class="chart-panels">
 				<div class="chart-wrap" id="stock-chart-wrap">
