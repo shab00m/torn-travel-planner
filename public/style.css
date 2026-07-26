@@ -1785,6 +1785,10 @@ body.page-item {
 
 .avg-buttons { display: flex; gap: 4px; }
 
+.avg-buttons.is-disabled {
+  opacity: 0.45;
+}
+
 .avg-buttons button {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1990,6 +1994,11 @@ body.page-item {
   padding-top: 12px;
 }
 .rate-controls .restock-avg { color: var(--green); }
+
+.rate-controls > .checkbox {
+  margin-top: 8px;
+  font-size: 0.84rem;
+}
 
 .rate-safe-window-toggle {
   margin-top: 8px;

@@ -26,6 +26,7 @@ const el = {
   cycleHistoryActionStatus: document.getElementById("cycle-history-action-status"),
   rateAvgButtons: document.getElementById("rate-avg-buttons"),
   rateAvg: document.getElementById("rate-avg"),
+  historicalRatePrediction: document.getElementById("historical-rate-prediction"),
   safeWindowUseRate: document.getElementById("safe-window-use-rate"),
   predictionButtons: document.getElementById("prediction-buttons"),
   predictionList: document.getElementById("prediction-list"),
@@ -203,7 +204,31 @@ function getCurrentRestockRate(
   return rateFromWindowEndpoints(w.start_ts, refTs, w.start_qty, qty) ?? (w.rate > 0 ? w.rate : null);
 }
 
+/** Torn City Time (UTC) hour 0–23. */
+function tctHourOfDay(ts) {
+  return new Date(ts * 1000).getUTCHours();
+}
+
+/** Rate from daily TOD lookup; nearest hour with data, else fallback. */
+function rateFromTodLookup(ts, fallback) {
+  const hours = state.rateTod?.hours;
+  if (!hours?.length) return fallback;
+  const hour = tctHourOfDay(ts);
+  if (hours[hour] != null && hours[hour] > 0) return hours[hour];
+  for (let d = 1; d < 24; d++) {
+    for (const dir of [-1, 1]) {
+      const h = (hour + dir * d + 24) % 24;
+      if (hours[h] != null && hours[h] > 0) return hours[h];
+    }
+  }
+  return fallback;
+}
+
 function depletionRateForCycle(t, startTs, startQty, avgRate) {
+  if (state.historicalRatePrediction) {
+    // TOD averages beat the open-window observed rate — early post-restock sell-off skews it.
+    return rateFromTodLookup(t, avgRate);
+  }
   if (startQty > 0 && t === startTs) {
     // Continue the current open cycle at its observed rate — not the historical average.
     const w = getOpenRateWindow();
@@ -211,6 +236,15 @@ function depletionRateForCycle(t, startTs, startQty, avgRate) {
     return getCurrentRestockRate(startQty, startTs) ?? avgRate;
   }
   return avgRate;
+}
+
+function syncHistoricalRatePredictionUi() {
+  const on = state.historicalRatePrediction;
+  if (el.historicalRatePrediction) el.historicalRatePrediction.checked = on;
+  el.rateAvgButtons?.classList.toggle("is-disabled", on);
+  el.rateAvgButtons?.querySelectorAll("button").forEach((btn) => {
+    btn.disabled = on;
+  });
 }
 
 function getCurrentDepletionTs() {
@@ -678,9 +712,22 @@ function rateFromHistory() {
   return sample.reduce((sum, w) => sum + w.rate, 0) / sample.length;
 }
 
+function meanTodRate() {
+  const hours = state.rateTod?.hours?.filter((r) => r != null && r > 0) ?? [];
+  if (!hours.length) return null;
+  return hours.reduce((sum, r) => sum + r, 0) / hours.length;
+}
+
+function rateForAverages() {
+  if (state.historicalRatePrediction) {
+    return meanTodRate() ?? rateFromHistory();
+  }
+  return rateFromHistory();
+}
+
 function getAverages() {
   const restockSec = stockoutSecFromHistory();
-  const rate = rateFromHistory();
+  const rate = rateForAverages();
   if (restockSec == null || rate == null) return null;
   const configuredQty = currentRestockAmount();
   const qtySample = getUsableRates().slice(0, state.avgRateSamples);
@@ -1095,22 +1142,33 @@ function renderCycleHistory() {
     el.restockAvg.textContent = "no samples yet";
   }
 
-  const rateSample = usableRates.filter((w) => w.rate != null).slice(0, state.avgRateSamples);
-  if (state.rateTiming === "min" || state.rateTiming === "max") {
-    const { minRate, maxRate } = getHistoricalExtents();
-    const value = state.rateTiming === "min" ? minRate : maxRate;
-    const allRateRows = usableRates.filter((w) => w.rate != null);
-    if (value != null && allRateRows.length) {
-      el.rateAvg.textContent = `${fmtRate(value)}/min (${state.rateTiming.toUpperCase()} of ${allRateRows.length})`;
+  if (state.historicalRatePrediction) {
+    const hours = state.rateTod?.hours?.filter((r) => r != null && r > 0) ?? [];
+    if (hours.length) {
+      const avg = hours.reduce((sum, r) => sum + r, 0) / hours.length;
+      el.rateAvg.textContent = `TCT by hour (${hours.length}/24 · mean ${fmtRate(avg)}/min)`;
+    } else {
+      el.rateAvg.textContent = "no TCT hour averages yet";
+    }
+  } else {
+    const rateSample = usableRates.filter((w) => w.rate != null).slice(0, state.avgRateSamples);
+    if (state.rateTiming === "min" || state.rateTiming === "max") {
+      const { minRate, maxRate } = getHistoricalExtents();
+      const value = state.rateTiming === "min" ? minRate : maxRate;
+      const allRateRows = usableRates.filter((w) => w.rate != null);
+      if (value != null && allRateRows.length) {
+        el.rateAvg.textContent = `${fmtRate(value)}/min (${state.rateTiming.toUpperCase()} of ${allRateRows.length})`;
+      } else {
+        el.rateAvg.textContent = "no samples yet";
+      }
+    } else if (rateSample.length) {
+      const avg = rateSample.reduce((sum, w) => sum + w.rate, 0) / rateSample.length;
+      el.rateAvg.textContent = `${fmtRate(avg)}/min (${rateSample.length} sample${rateSample.length === 1 ? "" : "s"})`;
     } else {
       el.rateAvg.textContent = "no samples yet";
     }
-  } else if (rateSample.length) {
-    const avg = rateSample.reduce((sum, w) => sum + w.rate, 0) / rateSample.length;
-    el.rateAvg.textContent = `${fmtRate(avg)}/min (${rateSample.length} sample${rateSample.length === 1 ? "" : "s"})`;
-  } else {
-    el.rateAvg.textContent = "no samples yet";
   }
+  syncHistoricalRatePredictionUi();
 
   const showCount = isAdminUser();
   el.cycleHistoryTable?.classList.toggle("cycle-history-with-count", showCount);
@@ -2678,9 +2736,10 @@ function refreshRestockAdjustments() {
   refreshChart(timeline);
 }
 
-function loadRestockData({ restocks, rates } = {}) {
+function loadRestockData({ restocks, rates, rateTod } = {}) {
   if (restocks) state.restocks = restocks;
   if (rates) state.rates = rates;
+  if (rateTod !== undefined) state.rateTod = rateTod;
 }
 
 function refreshRestockViews() {
@@ -2964,6 +3023,17 @@ if (el.safeWindowUseRate) {
   el.safeWindowUseRate.addEventListener("change", () => {
     state.safeWindowUseRateSelection = el.safeWindowUseRate.checked;
     savePrefs({ safeWindowUseRateSelection: state.safeWindowUseRateSelection });
+    redrawPrediction();
+  });
+}
+
+if (el.historicalRatePrediction) {
+  syncHistoricalRatePredictionUi();
+  el.historicalRatePrediction.addEventListener("change", () => {
+    state.historicalRatePrediction = el.historicalRatePrediction.checked;
+    savePrefs({ historicalRatePrediction: state.historicalRatePrediction });
+    syncHistoricalRatePredictionUi();
+    renderCycleHistory();
     redrawPrediction();
   });
 }

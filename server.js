@@ -31,6 +31,10 @@ import {
 } from "./src/market.js";
 import { getCachedItemTypes, ensureItemTypesPopulated } from "./src/item-types.js";
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
+import {
+  getDepletionRateTod,
+  startDepletionRateTodRebuild,
+} from "./src/depletion-rate-tod.js";
 import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
 import { listUsers, createUser, updateUser, deleteUser, seedBootstrapAdmin } from "./src/users.js";
 import { recordPageView, listPageViews, getClientIp } from "./src/analytics.js";
@@ -269,11 +273,12 @@ app.get("/api/history/:country/:itemId", async (req, res) => {
 });
 
 async function loadRestockViews(country, itemId) {
-  const [restocks, rates] = await Promise.all([
+  const [restocks, rates, rateTod] = await Promise.all([
     getRestocks(country, itemId),
     getDepletionRates(country, itemId),
+    getDepletionRateTod(country, itemId),
   ]);
-  return { restocks, rates };
+  return { restocks, rates, rateTod };
 }
 
 // Out-of-stock periods and in-stock depletion-rate windows for one item
@@ -594,5 +599,6 @@ app.listen(PORT, () => {
   console.log(`Torn Travel Planner running at http://localhost:${PORT}`);
   startPolling();
   startMarketRefresh();
+  startDepletionRateTodRebuild();
   void ensureItemTypesPopulated();
 });

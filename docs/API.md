@@ -84,10 +84,11 @@ Snapshot history from the database.
 
 Out-of-stock periods and in-stock depletion-rate windows (newest first, full history).
 
-**Response:** `{ restocks, rates }`
+**Response:** `{ restocks, rates, rateTod }`
 
 - `restocks[]` — `{ depleted_ts, restocked_ts, duration, ignored }`
 - `rates[]` — `{ start_ts, end_ts, start_qty, end_qty, rate, open }` (rate in items/minute)
+- `rateTod` — `{ hours: (number|null)[24], updatedAt: number|null }` minute-weighted average depletion rate by Torn City Time (UTC) hour-of-day, rebuilt daily from all completed non-ignored rate windows. Missing hours are `null`.
 
 ---
 

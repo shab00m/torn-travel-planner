@@ -21,6 +21,8 @@ const state = {
   avgRateSamples: 3,
   stockoutTiming: "avg", // "avg" | "min" | "max"
   rateTiming: "avg", // "avg" | "min" | "max"
+  historicalRatePrediction: false,
+  rateTod: null, // { hours: (number|null)[24], updatedAt: number|null } from API
   safeWindowUseRateSelection: true,
   item: null, // { country, itemId, name } on the item detail page
   rangeHours: 24,
@@ -128,6 +130,7 @@ function applyStoredPrefs() {
     ? prefs.stockoutTiming
     : "avg";
   state.rateTiming = ["avg", "min", "max"].includes(prefs.rateTiming) ? prefs.rateTiming : "avg";
+  state.historicalRatePrediction = prefs.historicalRatePrediction === true;
   state.safeWindowUseRateSelection = prefs.safeWindowUseRateSelection !== false;
   state.search = typeof prefs.search === "string" ? prefs.search : "";
   state.countryFilters = parseStringListPref(prefs.countryFilters, prefs.countryFilter);
