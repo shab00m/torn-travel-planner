@@ -5,6 +5,7 @@ import { COUNTRIES } from "./src/countries.js";
 import { getFlightMatrix } from "./src/flight-times.js";
 import {
   initDb,
+  ensurePersistedRates,
   getHistory,
   getRestocks,
   getDepletionRates,
@@ -612,4 +613,7 @@ app.listen(PORT, () => {
   startMarketRefresh();
   startDepletionRateTodRebuild();
   void ensureItemTypesPopulated();
+  void ensurePersistedRates().catch((err) => {
+    console.error(`[depletion-rates] backfill failed: ${err.message}`);
+  });
 });

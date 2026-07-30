@@ -263,13 +263,14 @@ export async function getDepletionRates(country, itemId, limit) {
   return limit == null ? ordered : ordered.slice(0, limit);
 }
 
-/** True when any closed cycle is still missing persisted rate endpoints. */
+/** True when any non-ignored closed cycle is still missing persisted rate endpoints. */
 export async function hasMissingPersistedRates() {
   const row = await one(
     getPool(),
     `SELECT EXISTS (
        SELECT 1 FROM restocks r
-       WHERE r.restocked_ts IS NOT NULL
+       WHERE r.ignored = 0
+         AND r.restocked_ts IS NOT NULL
          AND r.rate_end_ts IS NULL
          AND EXISTS (
            SELECT 1 FROM restocks n
@@ -288,7 +289,8 @@ export async function backfillAllPersistedRates() {
     getPool(),
     `SELECT DISTINCT r.country, r.item_id AS "itemId"
      FROM restocks r
-     WHERE r.restocked_ts IS NOT NULL
+     WHERE r.ignored = 0
+       AND r.restocked_ts IS NOT NULL
        AND r.rate_end_ts IS NULL
        AND EXISTS (
          SELECT 1 FROM restocks n

@@ -37,12 +37,18 @@ async function many(db, text, params = []) {
 export async function initDb() {
   getPool();
   await runMigrations();
-  if (await hasMissingPersistedRates()) {
-    const result = await backfillAllPersistedRates();
-    console.log(
-      `[depletion-rates] backfilled ${result.itemsUpdated} items (${result.windowsWritten} windows)`
-    );
-  }
+}
+
+/**
+ * Fill any non-ignored closed cycles still missing rate columns.
+ * Safe to run after listen — does not need to block startup.
+ */
+export async function ensurePersistedRates() {
+  if (!(await hasMissingPersistedRates())) return;
+  const result = await backfillAllPersistedRates();
+  console.log(
+    `[depletion-rates] backfilled ${result.itemsUpdated} items (${result.windowsWritten} windows)`
+  );
 }
 
 export { closePool };

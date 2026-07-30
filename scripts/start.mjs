@@ -18,7 +18,10 @@ function pidsListeningOnPort(port) {
   }
 
   try {
-    const out = execSync(`lsof -tiTCP:${port} -sTCP:LISTEN`, { encoding: "utf8" });
+    const out = execSync(`lsof -tiTCP:${port} -sTCP:LISTEN`, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
     return out
       .split(/\s+/)
       .map((s) => Number(s))
