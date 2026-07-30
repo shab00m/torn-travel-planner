@@ -643,17 +643,20 @@ function lastZeroBeforeRestock(restockedTs, depletedTs) {
 
 /** Shift restock time earlier when the first snapshot is below the known full restock size. */
 function adjustRestockTime(restockedTs, observedQty, ratePerMin, restockAmount, depletedTs) {
-  if (!restockAmount || !ratePerMin || ratePerMin <= 0 || !observedQty) return restockedTs;
-  if (observedQty >= restockAmount) return restockedTs;
+  const api = window.AdjustRestockTime;
+  if (!api) throw new Error("AdjustRestockTime module not loaded");
   // Need snapshot context around the restock; truncated History Time Range can't provide it.
   const points = state.chartPoints;
   if (!points.length || restockedTs < points[0].yata_ts) return restockedTs;
-  const adjustSec = ((restockAmount - observedQty) / ratePerMin) * 60;
-  let adjusted = Math.round(restockedTs - adjustSec);
-  if (depletedTs != null) adjusted = Math.max(adjusted, depletedTs + 1);
-  const lastZero = lastZeroBeforeRestock(restockedTs, depletedTs);
-  if (lastZero != null) adjusted = Math.max(adjusted, lastZero + 1);
-  return adjusted;
+  return api.adjustRestockTime({
+    restockedTs,
+    observedQty,
+    fallbackRatePerMin: ratePerMin,
+    restockAmount,
+    depletedTs,
+    lastZero: lastZeroBeforeRestock(restockedTs, depletedTs),
+    points,
+  });
 }
 
 function rateWindowForRestock(restockedTs) {
@@ -684,10 +687,9 @@ function adjustedRestockRecord(r) {
 }
 
 function rateFromWindowEndpoints(startTs, endTs, startQty, endQty) {
-  const minutes = (endTs - startTs) / 60;
-  if (minutes <= 0) return null;
-  const rate = (startQty - endQty) / minutes;
-  return rate > 0 ? rate : null;
+  const api = window.AdjustRestockTime;
+  if (!api) throw new Error("AdjustRestockTime module not loaded");
+  return api.rateFromEndpoints(startTs, endTs, startQty, endQty);
 }
 
 function adjustedRateWindow(w) {
@@ -3203,6 +3205,12 @@ window.addEventListener("restockamountchange", () => {
 });
 
 (async () => {
+  const mod = await import("/adjust-restock-time.js");
+  window.AdjustRestockTime = {
+    adjustRestockTime: mod.adjustRestockTime,
+    earlyDepletionRate: mod.earlyDepletionRate,
+    rateFromEndpoints: mod.rateFromEndpoints,
+  };
   await window.authReady;
   syncInspectAdminAccess();
   await loadCountries();

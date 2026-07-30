@@ -1,6 +1,10 @@
 import { getRestocks, getDepletionRates, getHistory, getRestockAmount as getStoredRestockAmount } from "./db.js";
 import { getFlightSeconds } from "./flight-times.js";
 import { getDepletionRateTod, rateFromTodHours, hoursFromRateWindows } from "./depletion-rate-tod.js";
+import {
+  adjustRestockTime as adjustRestockTimeCore,
+  rateFromEndpoints,
+} from "../public/adjust-restock-time.js";
 
 const FLIGHT_TIME_VARIANCE = 0.03;
 
@@ -40,13 +44,15 @@ function lastZeroBeforeRestock(lookup, restockedTs, depletedTs) {
 }
 
 function adjustRestockTime(lookup, restockedTs, observedQty, ratePerMin, restockAmount, depletedTs) {
-  if (!restockAmount || !ratePerMin || ratePerMin <= 0 || !observedQty) return restockedTs;
-  if (observedQty >= restockAmount) return restockedTs;
-  const adjustSec = ((restockAmount - observedQty) / ratePerMin) * 60;
-  let adjusted = Math.round(restockedTs - adjustSec);
-  const lastZero = lastZeroBeforeRestock(lookup, restockedTs, depletedTs);
-  if (lastZero != null) adjusted = Math.max(adjusted, lastZero + 1);
-  return adjusted;
+  return adjustRestockTimeCore({
+    restockedTs,
+    observedQty,
+    fallbackRatePerMin: ratePerMin,
+    restockAmount,
+    depletedTs,
+    lastZero: lastZeroBeforeRestock(lookup, restockedTs, depletedTs),
+    points: lookup?.points ?? null,
+  });
 }
 
 function createContext({
@@ -99,13 +105,6 @@ function createContext({
     };
   }
 
-  function rateFromWindowEndpoints(startTs, endTs, startQty, endQty) {
-    const minutes = (endTs - startTs) / 60;
-    if (minutes <= 0) return null;
-    const rate = (startQty - endQty) / minutes;
-    return rate > 0 ? rate : null;
-  }
-
   function adjustedRateWindow(w) {
     if (!restockAmount || w.start_qty >= restockAmount) return w;
     const restock = restocks.find((r) => r.restocked_ts === w.start_ts);
@@ -117,7 +116,7 @@ function createContext({
       restockAmount,
       restock?.depleted_ts
     );
-    const rate = rateFromWindowEndpoints(startTs, w.end_ts, restockAmount, w.end_qty) ?? w.rate;
+    const rate = rateFromEndpoints(startTs, w.end_ts, restockAmount, w.end_qty) ?? w.rate;
     return { ...w, start_ts: startTs, start_qty: restockAmount, rate };
   }
 
@@ -186,7 +185,7 @@ function createContext({
     const w = getOpenRateWindow();
     if (!w) return null;
     if (qty == null || refTs == null || qty <= 0) return null;
-    return rateFromWindowEndpoints(w.start_ts, refTs, w.start_qty, qty) ?? (w.rate > 0 ? w.rate : null);
+    return rateFromEndpoints(w.start_ts, refTs, w.start_qty, qty) ?? (w.rate > 0 ? w.rate : null);
   }
 
   function depletionRateForCycle(t, startTs, startQty, avgRate) {
