@@ -434,7 +434,7 @@ async function toggleArrivalAlarm({ country, itemId, itemName, arriveTs, destina
   });
 }
 
-async function toggleRestockAlarm({ country, itemId, itemName, restockTs }) {
+async function toggleRestockAlarm({ country, itemId, itemName, restockTs, depletedTs }) {
   if (restockTs == null || country == null || itemId == null) return;
   const existing = findRestockAlarm(country, itemId);
   if (existing) {
@@ -442,6 +442,7 @@ async function toggleRestockAlarm({ country, itemId, itemName, restockTs }) {
     return;
   }
   await ensureNotificationPermission();
+  const cycleDepletedTs = depletedTs != null ? Number(depletedTs) : null;
   const record = alarmState.alarms.find(
     (a) =>
       a.type === "restock" &&
@@ -452,6 +453,7 @@ async function toggleRestockAlarm({ country, itemId, itemName, restockTs }) {
     record.dismissedAt = null;
     record.firedAt = null;
     record.eventTs = restockTs;
+    record.depletedTs = Number.isFinite(cycleDepletedTs) ? cycleDepletedTs : null;
     record.offsetSec = getLeaveAlarmOffsetSec();
     record.auto = false;
     record.itemName = itemName || record.itemName;
@@ -469,6 +471,7 @@ async function toggleRestockAlarm({ country, itemId, itemName, restockTs }) {
     destination: null,
     windowIndex: 0,
     eventTs: restockTs,
+    depletedTs: Number.isFinite(cycleDepletedTs) ? cycleDepletedTs : null,
     offsetSec: getLeaveAlarmOffsetSec(),
     auto: false,
     firedAt: null,
@@ -476,21 +479,66 @@ async function toggleRestockAlarm({ country, itemId, itemName, restockTs }) {
   });
 }
 
-/** Keep next-restock (#1) alarm eventTs in sync with latest prediction; drop if missed. */
-function syncRestockAlarmForItem(country, itemId, restockTs) {
+/**
+ * Keep next-restock (#1) alarm in sync with the latest prediction.
+ * Fires if the armed cycle has already restocked (including early), or if the
+ * updated fire time is already due after a settings/prediction change.
+ *
+ * @param {string} country
+ * @param {number} itemId
+ * @param {number|null|{ nextTs?: number|null, nextDepletedTs?: number|null, armedCycleRestockedTs?: number|null }} info
+ */
+function syncRestockAlarmForItem(country, itemId, info) {
   if (!country || itemId == null) return;
   const existing = findRestockAlarm(country, itemId);
   if (!existing) return;
   const now = Math.floor(Date.now() / 1000);
-  if (restockTs == null || restockTs <= now) {
+  const payload =
+    info != null && typeof info === "object"
+      ? info
+      : { nextTs: info ?? null };
+  const nextTs = payload.nextTs ?? null;
+  const nextDepletedTs =
+    payload.nextDepletedTs != null && Number.isFinite(Number(payload.nextDepletedTs))
+      ? Number(payload.nextDepletedTs)
+      : null;
+  const armedCycleRestockedTs =
+    payload.armedCycleRestockedTs != null &&
+    Number.isFinite(Number(payload.armedCycleRestockedTs))
+      ? Number(payload.armedCycleRestockedTs)
+      : null;
+
+  // Armed cycle closed (possibly before the predicted time) — notify now.
+  if (armedCycleRestockedTs != null) {
+    existing.eventTs = armedCycleRestockedTs;
+    persistAlarms();
+    fireAlarm(existing);
+    return;
+  }
+
+  if (nextTs == null) {
     removeAlarmById(existing.id);
     return;
   }
-  if (existing.eventTs !== restockTs) {
-    existing.eventTs = restockTs;
+
+  let changed = false;
+  if (existing.eventTs !== nextTs) {
+    existing.eventTs = nextTs;
+    changed = true;
+  }
+  if (nextDepletedTs != null && Number(existing.depletedTs) !== nextDepletedTs) {
+    existing.depletedTs = nextDepletedTs;
+    changed = true;
+  }
+  if (changed) {
     persistAlarms();
     renderAlarmsPanel();
     window.dispatchEvent(new CustomEvent("alarmschange"));
+  }
+
+  // Prediction moved earlier (settings / open-cycle step) so the offset is already due.
+  if (!existing.firedAt && !existing.dismissedAt && fireAt(existing) <= now) {
+    fireAlarm(existing);
   }
 }
 
