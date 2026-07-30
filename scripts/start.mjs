@@ -5,7 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const PORT = Number(process.env.PORT) || 3000;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
+/** Local-dev only: free the port if a previous node process is still bound. */
 function pidsListeningOnPort(port) {
+  if (process.env.RAILWAY_ENVIRONMENT) return [];
+
   if (process.platform === "win32") {
     const out = execSync("netstat -ano", { encoding: "utf8" });
     const pids = new Set();

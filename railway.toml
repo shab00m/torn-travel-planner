@@ -1,0 +1,4 @@
+[deploy]
+# Run Node as PID 1 so Railway's deploy SIGTERM isn't wrapped by npm as a
+# failed command (which triggers crash emails on every successful redeploy).
+startCommand = "node scripts/start.mjs"

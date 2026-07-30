@@ -607,7 +607,28 @@ app.get("/item/:country/:itemId(\\d+)/price", (_req, res) => {
 await initDb();
 await seedBootstrapAdmin();
 
-app.listen(PORT, () => {
+/** @type {import("node:http").Server | null} */
+let server = null;
+let shuttingDown = false;
+
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Received ${signal}, shutting down`);
+  const done = (code) => process.exit(code);
+  if (!server) {
+    done(0);
+    return;
+  }
+  server.close(() => done(0));
+  // Don't hang forever if connections linger during a deploy replace.
+  setTimeout(() => done(0), 5_000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+server = app.listen(PORT, () => {
   console.log(`Torn Travel Planner running at http://localhost:${PORT}`);
   startPolling();
   startMarketRefresh();
