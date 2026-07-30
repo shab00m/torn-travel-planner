@@ -146,11 +146,16 @@ async function readDepletionRateTod(country, itemId) {
  * @returns {Promise<{ hours: (number | null)[], updatedAt: number | null }>}
  */
 export async function getDepletionRateTod(country, itemId) {
-  let result = await readDepletionRateTod(country, itemId);
-  // First visit before the daily job finishes — build this item on demand.
+  const result = await readDepletionRateTod(country, itemId);
+  // Don't rebuild inline — that contended with YATA snapshot writes. Fill in background;
+  // callers already fall back to live rate-window averages when hours are empty.
   if (result.rowCount === 0) {
-    await rebuildDepletionRateTodForItem(country, itemId);
-    result = await readDepletionRateTod(country, itemId);
+    void rebuildDepletionRateTodForItem(country, itemId).catch((err) => {
+      console.error(
+        `[depletion-rate-tod] background rebuild failed for ${country}/${itemId}:`,
+        err.message
+      );
+    });
   }
   return { hours: result.hours, updatedAt: result.updatedAt };
 }

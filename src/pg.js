@@ -21,6 +21,9 @@ function buildPoolConfig() {
   return {
     connectionString,
     ssl: needsSsl ? { rejectUnauthorized: false } : undefined,
+    // Don't queue forever if the pool is exhausted by a long backfill.
+    connectionTimeoutMillis: 15_000,
+    idleTimeoutMillis: 30_000,
   };
 }
 
@@ -30,6 +33,12 @@ export function getPool() {
     pool = new Pool(buildPoolConfig());
     pool.on("error", (err) => {
       console.error("[pg] idle client error:", err.message);
+    });
+    pool.on("connect", (client) => {
+      // Abort runaway queries so a stuck saveSnapshot can't hold a client forever.
+      client.query("SET statement_timeout = 60000").catch((err) => {
+        console.error("[pg] failed to set statement_timeout:", err.message);
+      });
     });
   }
   return pool;

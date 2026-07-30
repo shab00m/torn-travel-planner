@@ -5,7 +5,10 @@ const POLL_INTERVAL_MS = 60_000;
 
 let latest = null; // last successful payload, served to the frontend
 let lastError = null;
-let pollInFlight = false;
+let fetchInFlight = false;
+let persistInFlight = false;
+/** Newest payload waiting to persist while a prior saveSnapshot is still running. */
+let persistQueued = null;
 
 async function fetchOnce() {
 	const res = await fetch(YATA_URL, { signal: AbortSignal.timeout(15_000) });
@@ -19,32 +22,55 @@ async function fetchOnce() {
 	return payload;
 }
 
+async function persistStocks(stocks) {
+	const inserted = await saveSnapshot(stocks);
+	console.log(
+		`[yata] persisted OK at ${new Date().toISOString()}, ${inserted} new snapshot rows`,
+	);
+}
+
+/**
+ * Persist without blocking the next YATA fetch. If a save is already running,
+ * keep only the newest payload and save it when the current one finishes.
+ */
+async function enqueuePersist(payload) {
+	persistQueued = payload;
+	if (persistInFlight) return;
+	persistInFlight = true;
+	try {
+		while (persistQueued) {
+			const next = persistQueued;
+			persistQueued = null;
+			try {
+				await persistStocks(next.stocks);
+			} catch (err) {
+				lastError = err.message;
+				console.error(`[yata] saveSnapshot failed: ${err.message}`);
+			}
+		}
+	} finally {
+		persistInFlight = false;
+	}
+}
+
 async function poll() {
-	if (pollInFlight) {
-		console.warn("[yata] skipping poll — previous poll still in flight");
+	if (fetchInFlight) {
+		console.warn("[yata] skipping poll — previous fetch still in flight");
 		return;
 	}
-	pollInFlight = true;
+	fetchInFlight = true;
 	try {
 		const payload = await fetchOnce();
-		// Serve live stocks immediately; DB persistence must not block the API.
+		// Serve live stocks immediately; DB persistence must not block fetches.
 		latest = payload;
 		lastError = null;
-
-		try {
-			const inserted = await saveSnapshot(payload.stocks);
-			console.log(
-				`[yata] fetched OK at ${new Date().toISOString()}, ${inserted} new snapshot rows`,
-			);
-		} catch (err) {
-			lastError = err.message;
-			console.error(`[yata] saveSnapshot failed: ${err.message}`);
-		}
+		console.log(`[yata] fetched OK at ${new Date().toISOString()}`);
+		void enqueuePersist(payload);
 	} catch (err) {
 		lastError = err.message;
 		console.error(`[yata] fetch failed: ${err.message}`);
 	} finally {
-		pollInFlight = false;
+		fetchInFlight = false;
 	}
 }
 

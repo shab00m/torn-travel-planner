@@ -2850,7 +2850,8 @@ async function setCycleIgnored(depletedTs, ignored) {
   if (!row) return;
   const prevIgnored = row.ignored;
   row.ignored = ignored;
-  refreshRestockViews();
+  // Optimistic UI only — avoid a full chart rebuild before the server confirms.
+  renderCycleHistory();
 
   try {
     const data = await fetchJsonWithBody(

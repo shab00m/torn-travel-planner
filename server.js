@@ -273,7 +273,14 @@ app.get("/api/history/:country/:itemId", async (req, res) => {
   });
 });
 
-async function loadRestockViews(country, itemId) {
+async function loadRestockViews(country, itemId, { includeRateTod = true } = {}) {
+  if (!includeRateTod) {
+    const [restocks, rates] = await Promise.all([
+      getRestocks(country, itemId),
+      getDepletionRates(country, itemId),
+    ]);
+    return { restocks, rates };
+  }
   const [restocks, rates, rateTod] = await Promise.all([
     getRestocks(country, itemId),
     getDepletionRates(country, itemId),
@@ -450,7 +457,10 @@ app.patch("/api/restocks/:country/:itemId/:depletedTs", requireAdmin, async (req
   }
   try {
     await setRestockIgnored(params.country, params.id, depletedTs, ignored);
-    const { restocks, rates } = await loadRestockViews(params.country, params.id);
+    // Skip rateTod — ignore toggles must stay cheap; TOD averages are unchanged by Count.
+    const { restocks, rates } = await loadRestockViews(params.country, params.id, {
+      includeRateTod: false,
+    });
     res.json({ ok: true, restocks, rates });
   } catch (err) {
     res.status(err.message === "Restock cycle not found" ? 404 : 400).json({ error: err.message });
@@ -463,7 +473,9 @@ app.post("/api/restocks/:country/:itemId/flag-outliers", requireAdmin, async (re
   if (!params) return;
   try {
     const result = await flagOutlierRestocks(params.country, params.id);
-    const { restocks, rates } = await loadRestockViews(params.country, params.id);
+    const { restocks, rates } = await loadRestockViews(params.country, params.id, {
+      includeRateTod: false,
+    });
     res.json({
       ok: true,
       flagged: result.flagged,
@@ -482,7 +494,9 @@ app.post("/api/restocks/:country/:itemId/backfill", requireAdmin, async (req, re
   if (!params) return;
   try {
     const result = await backfillRestocksForItem(params.country, params.id);
-    const { restocks, rates } = await loadRestockViews(params.country, params.id);
+    const { restocks, rates } = await loadRestockViews(params.country, params.id, {
+      includeRateTod: false,
+    });
     res.json({
       ok: true,
       opened: result.opened,
