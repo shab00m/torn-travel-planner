@@ -1453,7 +1453,19 @@ function formatRestockLabel(e, i, averages, events, segments, predictionCtx) {
     segments,
     predictionCtx
   );
-  return `#${i + 1}: Window between ${fmtTimeShort(restockEarliest)} → ${fmtTimeShort(restockLatest)}`;
+  let alarmBtn = "";
+  if (i === 0 && state.item && typeof alarmButtonHtml === "function") {
+    const armed =
+      typeof hasRestockAlarm === "function" &&
+      hasRestockAlarm(state.item.country, state.item.itemId);
+    const attrs = {
+      "data-alarm-type": "restock",
+      "data-restock-ts": e.ts,
+    };
+    if (e.depleted_ts != null) attrs["data-depleted-ts"] = e.depleted_ts;
+    alarmBtn = ` ${alarmButtonHtml({ armed, attrs })}`;
+  }
+  return `#${i + 1}${alarmBtn}: Window between ${fmtTimeShort(restockEarliest)} → ${fmtTimeShort(restockLatest)}`;
 }
 
 /** @returns {{ text: string, missed: boolean, leaveEarliest?: number, leaveLatest?: number } | null} */
@@ -2151,18 +2163,13 @@ function updateRestockMarkers(chart) {
       });
     });
 
-  const nowTs = Math.floor(Date.now() / 1000);
   const predictedRestocks = state.predictedEvents.filter(
     (e) => e.type === "restock" && e.ts >= dataTs
   );
   predictedRestocks.forEach((ev, i) => {
     let alarmBtn = "";
-    if (
-      i === 0 &&
-      ev.ts > nowTs &&
-      state.item &&
-      typeof alarmButtonHtml === "function"
-    ) {
+    // #1 stays armable even when overdue (empty longer than all historical durations).
+    if (i === 0 && state.item && typeof alarmButtonHtml === "function") {
       const armed =
         typeof hasRestockAlarm === "function" &&
         hasRestockAlarm(state.item.country, state.item.itemId);
@@ -3072,7 +3079,25 @@ el.predictionList?.addEventListener("click", async (e) => {
     return;
   }
   const alarmBtn = e.target.closest("button.alarm-set-btn");
-  if (!alarmBtn || !state.item || typeof toggleLeaveAlarm !== "function") return;
+  if (!alarmBtn || !state.item) return;
+
+  if (alarmBtn.dataset.alarmType === "restock") {
+    if (typeof toggleRestockAlarm !== "function") return;
+    const restockTs = Number(alarmBtn.dataset.restockTs);
+    if (!Number.isFinite(restockTs)) return;
+    const depletedRaw = Number(alarmBtn.dataset.depletedTs);
+    await toggleRestockAlarm({
+      country: state.item.country,
+      itemId: state.item.itemId,
+      itemName: state.item.name,
+      restockTs,
+      depletedTs: Number.isFinite(depletedRaw) ? depletedRaw : null,
+    });
+    redrawPrediction();
+    return;
+  }
+
+  if (typeof toggleLeaveAlarm !== "function") return;
   const type = alarmBtn.dataset.alarmType;
   const windowIndex = Number(alarmBtn.dataset.windowIndex);
   const leaveEarliest = Number(alarmBtn.dataset.leaveEarliest);

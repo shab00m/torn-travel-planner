@@ -442,7 +442,10 @@ async function toggleRestockAlarm({ country, itemId, itemName, restockTs, deplet
     return;
   }
   await ensureNotificationPermission();
+  const now = Math.floor(Date.now() / 1000);
   const cycleDepletedTs = depletedTs != null ? Number(depletedTs) : null;
+  // Overdue open cycle: wait for the actual restock instead of firing immediately.
+  const awaitActual = restockTs <= now;
   const record = alarmState.alarms.find(
     (a) =>
       a.type === "restock" &&
@@ -454,6 +457,7 @@ async function toggleRestockAlarm({ country, itemId, itemName, restockTs, deplet
     record.firedAt = null;
     record.eventTs = restockTs;
     record.depletedTs = Number.isFinite(cycleDepletedTs) ? cycleDepletedTs : null;
+    record.awaitActual = awaitActual;
     record.offsetSec = getLeaveAlarmOffsetSec();
     record.auto = false;
     record.itemName = itemName || record.itemName;
@@ -472,6 +476,7 @@ async function toggleRestockAlarm({ country, itemId, itemName, restockTs, deplet
     windowIndex: 0,
     eventTs: restockTs,
     depletedTs: Number.isFinite(cycleDepletedTs) ? cycleDepletedTs : null,
+    awaitActual,
     offsetSec: getLeaveAlarmOffsetSec(),
     auto: false,
     firedAt: null,
@@ -511,6 +516,7 @@ function syncRestockAlarmForItem(country, itemId, info) {
   // Armed cycle closed (possibly before the predicted time) — notify now.
   if (armedCycleRestockedTs != null) {
     existing.eventTs = armedCycleRestockedTs;
+    existing.awaitActual = false;
     persistAlarms();
     fireAlarm(existing);
     return;
@@ -528,6 +534,25 @@ function syncRestockAlarmForItem(country, itemId, info) {
   }
   if (nextDepletedTs != null && Number(existing.depletedTs) !== nextDepletedTs) {
     existing.depletedTs = nextDepletedTs;
+    changed = true;
+  }
+
+  // Overdue open cycle: keep waiting for the actual restock (don't timer-fire).
+  if (nextTs <= now) {
+    if (!existing.awaitActual) {
+      existing.awaitActual = true;
+      changed = true;
+    }
+    if (changed) {
+      persistAlarms();
+      renderAlarmsPanel();
+      window.dispatchEvent(new CustomEvent("alarmschange"));
+    }
+    return;
+  }
+
+  if (existing.awaitActual) {
+    existing.awaitActual = false;
     changed = true;
   }
   if (changed) {
@@ -856,6 +881,9 @@ function notificationBannerHtml() {
 function alarmWhenText(alarm, now = Math.floor(Date.now() / 1000)) {
   const eventLabel = typeof fmtTimeShort === "function" ? fmtTimeShort(alarm.eventTs) : "";
   if (alarm.firedAt) return `${eventLabel} · fired — dismiss to clear`;
+  if (alarm.type === "restock" && alarm.awaitActual) {
+    return `${eventLabel} · waiting for restock`;
+  }
   return `${eventLabel} · fires in ${formatCountdown(fireAt(alarm) - now)}`;
 }
 
@@ -1161,6 +1189,8 @@ function tickAlarms() {
   const now = Math.floor(Date.now() / 1000);
   for (const alarm of alarmState.alarms) {
     if (alarm.firedAt || alarm.dismissedAt) continue;
+    // Overdue restock alarms wait for the cycle to close (sync), not the clock.
+    if (alarm.type === "restock" && alarm.awaitActual) continue;
     if (fireAt(alarm) <= now) fireAlarm(alarm);
   }
   updateAlarmsCountdowns();
