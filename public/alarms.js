@@ -124,9 +124,13 @@ function fireAt(alarm) {
   return alarm.eventTs - alarm.offsetSec;
 }
 
+function isAlarmActive(alarm) {
+  return Boolean(alarm) && !alarm.dismissedAt;
+}
+
 function activeAlarms() {
-  // Pending alarms + fired alarms waiting for dismiss (do not auto-remove on fire).
-  return [...alarmState.alarms].sort((a, b) => {
+  // Pending + fired waiting for dismiss. Dismissed records stay in storage but are hidden.
+  return alarmState.alarms.filter(isAlarmActive).sort((a, b) => {
     if (Boolean(a.firedAt) !== Boolean(b.firedAt)) return a.firedAt ? -1 : 1;
     return fireAt(a) - fireAt(b);
   });
@@ -136,24 +140,43 @@ function newAlarmId() {
   return crypto.randomUUID();
 }
 
-function findLeaveAlarm(type, country, itemId, windowIndex) {
-  return alarmState.alarms.find(
-    (a) =>
-      !a.firedAt &&
-      a.type === type &&
-      a.country === country &&
-      Number(a.itemId) === Number(itemId) &&
-      Number(a.windowIndex) === Number(windowIndex)
+function matchesLeaveAlarm(a, type, country, itemId, windowIndex) {
+  return (
+    a.type === type &&
+    a.country === country &&
+    Number(a.itemId) === Number(itemId) &&
+    Number(a.windowIndex) === Number(windowIndex)
   );
 }
 
+/** Armed (not fired, not dismissed) leave alarm — for UI toggle state. */
+function findLeaveAlarm(type, country, itemId, windowIndex) {
+  return alarmState.alarms.find(
+    (a) =>
+      isAlarmActive(a) &&
+      !a.firedAt &&
+      matchesLeaveAlarm(a, type, country, itemId, windowIndex)
+  );
+}
+
+/** Any leave alarm record including fired/dismissed — for sync dedupe. */
+function findLeaveAlarmRecord(type, country, itemId, windowIndex) {
+  return alarmState.alarms.find((a) => matchesLeaveAlarm(a, type, country, itemId, windowIndex));
+}
+
 function findArrivalAlarm() {
-  return alarmState.alarms.find((a) => !a.firedAt && a.type === "arrival");
+  return alarmState.alarms.find((a) => isAlarmActive(a) && !a.firedAt && a.type === "arrival");
+}
+
+/** Any arrival record including fired/dismissed — for sync dedupe. */
+function findArrivalAlarmRecord() {
+  return alarmState.alarms.find((a) => a.type === "arrival");
 }
 
 function findRestockAlarm(country, itemId) {
   return alarmState.alarms.find(
     (a) =>
+      isAlarmActive(a) &&
       !a.firedAt &&
       a.type === "restock" &&
       a.country === country &&
@@ -280,7 +303,7 @@ function alarmBody(alarm) {
 }
 
 function fireAlarm(alarm) {
-  if (alarm.firedAt) return;
+  if (alarm.firedAt || alarm.dismissedAt) return;
   alarm.firedAt = Math.floor(Date.now() / 1000);
   persistAlarms();
   playAlarmBeep(alarm.id);
@@ -296,6 +319,7 @@ function fireAlarm(alarm) {
   window.dispatchEvent(new CustomEvent("alarmschange"));
 }
 
+/** Hard-delete (manual toggle-off, sync cleanup when event is gone). */
 function removeAlarmById(id) {
   stopAlarmSound(id);
   const before = alarmState.alarms.length;
@@ -305,6 +329,17 @@ function removeAlarmById(id) {
     renderAlarmsPanel();
     window.dispatchEvent(new CustomEvent("alarmschange"));
   }
+}
+
+/** Soft-dismiss: keep the record so auto-sync does not recreate it. */
+function dismissAlarmById(id) {
+  stopAlarmSound(id);
+  const alarm = alarmState.alarms.find((a) => a.id === id);
+  if (!alarm || alarm.dismissedAt) return;
+  alarm.dismissedAt = Math.floor(Date.now() / 1000);
+  persistAlarms();
+  renderAlarmsPanel();
+  window.dispatchEvent(new CustomEvent("alarmschange"));
 }
 
 function upsertAlarm(alarm) {
@@ -336,6 +371,7 @@ async function toggleLeaveAlarm({ type, country, itemId, itemName, windowIndex, 
     offsetSec: getLeaveAlarmOffsetSec(),
     auto: false,
     firedAt: null,
+    dismissedAt: null,
   });
 }
 
@@ -359,6 +395,7 @@ async function toggleArrivalAlarm({ country, itemId, itemName, arriveTs, destina
     offsetSec: getArrivalAlarmOffsetSec(),
     auto: false,
     firedAt: null,
+    dismissedAt: null,
   });
 }
 
@@ -382,6 +419,7 @@ async function toggleRestockAlarm({ country, itemId, itemName, restockTs }) {
     offsetSec: getLeaveAlarmOffsetSec(),
     auto: false,
     firedAt: null,
+    dismissedAt: null,
   });
 }
 
@@ -420,6 +458,7 @@ function syncLeaveAlarmsForItem(country, itemId, windows) {
   for (const alarm of alarmState.alarms) {
     if (
       alarm.firedAt ||
+      alarm.dismissedAt ||
       (alarm.type !== "leave_regular" && alarm.type !== "leave_safe") ||
       alarm.country !== country ||
       Number(alarm.itemId) !== Number(itemId)
