@@ -27,6 +27,7 @@ const el = {
   rateAvgButtons: document.getElementById("rate-avg-buttons"),
   rateAvg: document.getElementById("rate-avg"),
   historicalRatePrediction: document.getElementById("historical-rate-prediction"),
+  historicalRateMaxAge: document.getElementById("historical-rate-max-age"),
   safeWindowUseRate: document.getElementById("safe-window-use-rate"),
   predictionButtons: document.getElementById("prediction-buttons"),
   predictionList: document.getElementById("prediction-list"),
@@ -214,17 +215,32 @@ function tctSecondsOfDay(ts) {
   return d.getUTCHours() * 3600 + d.getUTCMinutes() * 60 + d.getUTCSeconds();
 }
 
+/** Unix lower bound for historical TOD averages; `0` means all history. */
+function historicalRateSinceTs(nowTs = Math.floor(Date.now() / 1000)) {
+  const days = state.historicalRateMaxAgeDays;
+  if (days == null || days <= 0) return 0;
+  return nowTs - days * 86400;
+}
+
 /**
  * Same minute-weighted TCT bucketing as the server lookup table.
- * Used when the DB table has not been filled yet for this item.
+ * Respects Max age when set.
  */
 function computeRateTodHoursFromRates() {
+  const sinceTs = historicalRateSinceTs();
+  const nowTs = Math.floor(Date.now() / 1000);
   const buckets = Array.from({ length: 24 }, () => ({ sum: 0, weight: 0 }));
   for (const w of getUsableRates()) {
     if (w.open || w.rate == null || w.rate <= 0) continue;
     if (w.start_ts == null || w.end_ts == null || w.end_ts <= w.start_ts) continue;
     let t = w.start_ts;
-    const end = w.end_ts;
+    let end = w.end_ts;
+    if (sinceTs > 0) {
+      if (end <= sinceTs || t >= nowTs) continue;
+      t = Math.max(t, sinceTs);
+      end = Math.min(end, nowTs);
+      if (end <= t) continue;
+    }
     while (t < end) {
       const sod = tctSecondsOfDay(t);
       const hour = Math.floor(sod / 3600);
@@ -244,10 +260,20 @@ function rateTodHoursHaveData(hours) {
   return Boolean(hours?.some((r) => r != null && r > 0));
 }
 
-/** Prefer persisted API lookup; fall back to computing from loaded rate windows. */
+/**
+ * Prefer live compute (respects Max age). Fall back to saved DB hours only when
+ * Max age is unlimited and live windows produced nothing.
+ */
 function effectiveRateTodHours() {
-  if (rateTodHoursHaveData(state.rateTod?.hours)) return state.rateTod.hours;
-  return computeRateTodHoursFromRates();
+  const live = computeRateTodHoursFromRates();
+  if (rateTodHoursHaveData(live)) return live;
+  if (
+    state.historicalRateMaxAgeDays == null &&
+    rateTodHoursHaveData(state.rateTod?.hours)
+  ) {
+    return state.rateTod.hours;
+  }
+  return live;
 }
 
 /** Rate from daily TOD lookup; nearest hour with data, else fallback. */
@@ -282,6 +308,11 @@ function depletionRateForCycle(t, startTs, startQty, avgRate) {
 function syncHistoricalRatePredictionUi() {
   const on = state.historicalRatePrediction;
   if (el.historicalRatePrediction) el.historicalRatePrediction.checked = on;
+  if (el.historicalRateMaxAge) {
+    el.historicalRateMaxAge.disabled = !on;
+    el.historicalRateMaxAge.value =
+      state.historicalRateMaxAgeDays != null ? String(state.historicalRateMaxAgeDays) : "";
+  }
   el.rateAvgButtons?.classList.toggle("is-disabled", on);
   el.rateAvgButtons?.querySelectorAll("button").forEach((btn) => {
     btn.disabled = on;
@@ -1187,8 +1218,11 @@ function renderCycleHistory() {
     const hours = effectiveRateTodHours().filter((r) => r != null && r > 0);
     if (hours.length) {
       const avg = hours.reduce((sum, r) => sum + r, 0) / hours.length;
-      const source = rateTodHoursHaveData(state.rateTod?.hours) ? "saved" : "live";
-      el.rateAvg.textContent = `TCT by hour (${hours.length}/24 · mean ${fmtRate(avg)}/min · ${source})`;
+      const age =
+        state.historicalRateMaxAgeDays != null
+          ? ` · ≤${state.historicalRateMaxAgeDays}d`
+          : "";
+      el.rateAvg.textContent = `TCT by hour (${hours.length}/24 · mean ${fmtRate(avg)}/min${age})`;
     } else {
       el.rateAvg.textContent = "no TCT hour averages yet";
     }
@@ -3092,6 +3126,32 @@ if (el.historicalRatePrediction) {
     renderCycleHistory();
     redrawPrediction();
   });
+}
+
+if (el.historicalRateMaxAge) {
+  const commitMaxAge = () => {
+    const raw = el.historicalRateMaxAge.value.trim();
+    if (raw === "") {
+      state.historicalRateMaxAgeDays = null;
+      savePrefs({ historicalRateMaxAgeDays: null });
+      syncHistoricalRatePredictionUi();
+      renderCycleHistory();
+      redrawPrediction();
+      return;
+    }
+    const days = Number.parseInt(raw, 10);
+    if (!Number.isInteger(days) || days <= 0) {
+      el.historicalRateMaxAge.value =
+        state.historicalRateMaxAgeDays != null ? String(state.historicalRateMaxAgeDays) : "";
+      return;
+    }
+    state.historicalRateMaxAgeDays = days;
+    savePrefs({ historicalRateMaxAgeDays: days });
+    syncHistoricalRatePredictionUi();
+    renderCycleHistory();
+    redrawPrediction();
+  };
+  el.historicalRateMaxAge.addEventListener("change", commitMaxAge);
 }
 
 initSampleExtremaButtons(el.avgButtons, state.avgSamples, "stockoutTiming", ({ mode, n }) => {

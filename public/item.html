@@ -247,14 +247,25 @@
 						<div class="avg-buttons" id="rate-avg-buttons"></div>
 						<span id="rate-avg" class="restock-avg"></span>
 					</div>
-					<label
-						class="checkbox"
-						for="historical-rate-prediction"
-						title="Use Torn City Time hour-of-day average rates (all history) for stock predictions and safe windows (when Use for safe window is on), instead of the avg/min/max buttons"
-					>
-						<input id="historical-rate-prediction" type="checkbox" />
-						Historical depletion rate prediction
-					</label>
+					<div class="historical-rate-row">
+						<label
+							class="checkbox"
+							for="historical-rate-prediction"
+							title="Use Torn City Time hour-of-day average rates for stock predictions and safe windows (when Use for safe window is on), instead of the avg/min/max buttons"
+						>
+							<input id="historical-rate-prediction" type="checkbox" />
+							Historical depletion rate prediction
+						</label>
+						<label
+							class="historical-rate-max-age"
+							for="historical-rate-max-age"
+							title="Only use depletion-rate history newer than this many days when building TCT hour averages. Leave empty for all history."
+						>
+							<span>Max age</span>
+							<input id="historical-rate-max-age" type="number" min="1" step="1" placeholder="All" />
+							<span>days</span>
+						</label>
+					</div>
 					<label class="checkbox rate-safe-window-toggle" for="safe-window-use-rate">
 						<input id="safe-window-use-rate" type="checkbox" checked />
 						Use for safe window

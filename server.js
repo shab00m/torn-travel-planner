@@ -350,6 +350,13 @@ function parseSafeWindowOptions(query = {}, body = {}) {
     opts.historicalRatePrediction =
       src.historicalRatePrediction === true || src.historicalRatePrediction === "true";
   }
+  if (src.historicalRateMaxAgeDays != null && src.historicalRateMaxAgeDays !== "") {
+    const days = Number.parseInt(src.historicalRateMaxAgeDays, 10);
+    if (!Number.isInteger(days) || days <= 0) {
+      throw new Error("historicalRateMaxAgeDays must be a positive integer");
+    }
+    opts.historicalRateMaxAgeDays = days;
+  }
   if (src.predictionHours != null) {
     const hours = Number.parseFloat(src.predictionHours);
     if (Number.isNaN(hours) || hours <= 0) throw new Error("predictionHours must be a positive number");

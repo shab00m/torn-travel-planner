@@ -261,6 +261,8 @@ Used as query params on `GET /api/safe-window/...` or as JSON body fields on `PO
 | `travelType` | string | `"Standard"` | `"Standard"`, `"Airstrip"`, `"Private"`, or `"Business"`. Affects one-way flight time used for leave-by times. |
 | `flightTimeVariance` | boolean | `true` | If `true`, apply ±3% flight-time variance (fast for earliest leave, slow for latest). |
 | `safeWindowUseRateSelection` | boolean | `true` | If `true`, use the selected historical depletion rate for safe-window bounds. If `false`, use the fastest (`max`) historical rate (shorter, pessimistic window). Matches the item page checkbox **“Use for safe window”**. |
+| `historicalRatePrediction` | boolean | `false` | If `true`, use Torn City Time hour-of-day average depletion rates instead of `rateTiming` avg/min/max. Matches **“Historical depletion rate prediction”**. |
+| `historicalRateMaxAgeDays` | integer | _(none)_ | When historical rate prediction is on, only use rate-window history newer than this many days. Omit for all history. Matches **“Max age”**. |
 | `stockoutTiming` | string | `"avg"` | How to pick empty-for duration from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the most recent `avgSamples` restock cycles. Matches **“Avg empty for”** on the item page. |
 | `rateTiming` | string | `"avg"` | How to pick depletion rate from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the most recent `avgRateSamples` in-stock windows. Matches **“Rate avg”** on the item page. |
 | `avgSamples` | integer | `5` | Number of recent out-of-stock periods to average when `stockoutTiming` is `"avg"`. |

@@ -1,6 +1,6 @@
 import { getRestocks, getDepletionRates, getHistory, getRestockAmount as getStoredRestockAmount } from "./db.js";
 import { getFlightSeconds } from "./flight-times.js";
-import { getDepletionRateTod, rateFromTodHours } from "./depletion-rate-tod.js";
+import { getDepletionRateTod, rateFromTodHours, hoursFromRateWindows } from "./depletion-rate-tod.js";
 
 const FLIGHT_TIME_VARIANCE = 0.03;
 
@@ -449,6 +449,7 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
     rateTiming: "avg",
     safeWindowUseRateSelection: true,
     historicalRatePrediction: false,
+    historicalRateMaxAgeDays: null,
     travelType: "Standard",
     flightTimeVariance: true,
     predictionHours: 24,
@@ -458,12 +459,31 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
   const restockAmount =
     opts.restockAmount ?? (await getStoredRestockAmount(country, itemId));
 
+  const historicalRatePrediction = opts.historicalRatePrediction === true;
+  const maxAgeDays =
+    Number.isInteger(opts.historicalRateMaxAgeDays) && opts.historicalRateMaxAgeDays > 0
+      ? opts.historicalRateMaxAgeDays
+      : null;
+
   const [restocks, rates, chartPoints, rateTod] = await Promise.all([
     getRestocks(country, itemId),
     getDepletionRates(country, itemId),
     getHistory(country, itemId, 0),
-    getDepletionRateTod(country, itemId),
+    historicalRatePrediction && maxAgeDays == null
+      ? getDepletionRateTod(country, itemId)
+      : Promise.resolve({ hours: null, updatedAt: null }),
   ]);
+
+  const sinceTs =
+    historicalRatePrediction && maxAgeDays != null
+      ? opts.wallTs - maxAgeDays * 86400
+      : 0;
+  const todFromDb = rateTod.hours?.some((r) => r != null && r > 0);
+  const rateTodHours = !historicalRatePrediction
+    ? null
+    : maxAgeDays != null || !todFromDb
+      ? hoursFromRateWindows(rates, sinceTs)
+      : rateTod.hours;
 
   const current = resolveCurrentStock(chartPoints);
   if (!current) {
@@ -493,8 +513,8 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
     stockoutTiming: opts.stockoutTiming,
     rateTiming: opts.rateTiming,
     safeWindowUseRateSelection: opts.safeWindowUseRateSelection,
-    historicalRatePrediction: opts.historicalRatePrediction === true,
-    rateTodHours: rateTod.hours,
+    historicalRatePrediction,
+    rateTodHours,
     currentQty: startQty,
     currentPollTs: dataTs,
     wallTs: opts.wallTs,

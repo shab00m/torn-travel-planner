@@ -24,9 +24,10 @@ function tctSecondsOfDay(ts) {
 /**
  * Minute-weighted average rate into 24 TCT hour buckets.
  * @param {{ start_ts: number, end_ts: number, rate: number, open?: boolean }[]} windows
+ * @param {number} [sinceTs=0] Clip windows to this unix lower bound (0 = all history).
  * @returns {{ hour: number, avgRate: number, weightMinutes: number }[]}
  */
-export function bucketRatesByTctHour(windows) {
+export function bucketRatesByTctHour(windows, sinceTs = 0) {
   const buckets = Array.from({ length: 24 }, () => ({ sum: 0, weight: 0 }));
 
   for (const w of windows) {
@@ -34,7 +35,13 @@ export function bucketRatesByTctHour(windows) {
     if (w.start_ts == null || w.end_ts == null || w.end_ts <= w.start_ts) continue;
 
     let t = w.start_ts;
-    const end = w.end_ts;
+    let end = w.end_ts;
+    if (sinceTs > 0) {
+      if (end <= sinceTs) continue;
+      t = Math.max(t, sinceTs);
+      if (end <= t) continue;
+    }
+
     while (t < end) {
       const sod = tctSecondsOfDay(t);
       const hour = Math.floor(sod / 3600);
@@ -59,6 +66,15 @@ export function bucketRatesByTctHour(windows) {
     });
   }
   return rows;
+}
+
+/** Build a length-24 hours array from rate windows (optional max-age clip via sinceTs). */
+export function hoursFromRateWindows(windows, sinceTs = 0) {
+  const hours = Array.from({ length: 24 }, () => null);
+  for (const row of bucketRatesByTctHour(windows, sinceTs)) {
+    hours[row.hour] = row.avgRate;
+  }
+  return hours;
 }
 
 async function listItemsWithRateHistory() {

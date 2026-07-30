@@ -22,6 +22,7 @@ const state = {
   stockoutTiming: "avg", // "avg" | "min" | "max"
   rateTiming: "avg", // "avg" | "min" | "max"
   historicalRatePrediction: false,
+  historicalRateMaxAgeDays: null, // null = all history; positive integer = max age in days
   rateTod: null, // { hours: (number|null)[24], updatedAt: number|null } from API
   safeWindowUseRateSelection: true,
   item: null, // { country, itemId, name } on the item detail page
@@ -131,6 +132,11 @@ function applyStoredPrefs() {
     : "avg";
   state.rateTiming = ["avg", "min", "max"].includes(prefs.rateTiming) ? prefs.rateTiming : "avg";
   state.historicalRatePrediction = prefs.historicalRatePrediction === true;
+  {
+    const maxAge = Number.parseInt(prefs.historicalRateMaxAgeDays, 10);
+    state.historicalRateMaxAgeDays =
+      Number.isInteger(maxAge) && maxAge > 0 ? maxAge : null;
+  }
   state.safeWindowUseRateSelection = prefs.safeWindowUseRateSelection !== false;
   state.search = typeof prefs.search === "string" ? prefs.search : "";
   state.countryFilters = parseStringListPref(prefs.countryFilters, prefs.countryFilter);

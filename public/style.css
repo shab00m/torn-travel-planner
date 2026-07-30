@@ -2000,6 +2000,42 @@ body.page-item {
   font-size: 0.84rem;
 }
 
+.historical-rate-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  margin-top: 8px;
+}
+
+.historical-rate-row > .checkbox {
+  margin-top: 0;
+}
+
+.historical-rate-max-age {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 0.84rem;
+}
+
+.historical-rate-max-age input {
+  width: 4.5rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 0.84rem;
+}
+
+.historical-rate-max-age input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .rate-safe-window-toggle {
   margin-top: 8px;
   font-size: 0.84rem;
