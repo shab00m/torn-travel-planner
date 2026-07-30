@@ -1,6 +1,17 @@
 import { getPool, query, withTransaction, closePool } from "./pg.js";
 import { runMigrations } from "./migrate.js";
 import { isCycleOutlier } from "./outliers.js";
+import {
+  backfillAllPersistedRates,
+  computeRateWindowsFromSnapshots,
+  fillRateWindowsForItem,
+  finalizeRateWindowOnDepletion,
+  getDepletionRates,
+  hasMissingPersistedRates,
+  persistRateWindows,
+} from "./depletion-rates.js";
+
+export { getDepletionRates };
 
 /**
  * @param {import("pg").PoolClient | import("pg").Pool} db
@@ -26,6 +37,12 @@ async function many(db, text, params = []) {
 export async function initDb() {
   getPool();
   await runMigrations();
+  if (await hasMissingPersistedRates()) {
+    const result = await backfillAllPersistedRates();
+    console.log(
+      `[depletion-rates] backfilled ${result.itemsUpdated} items (${result.windowsWritten} windows)`
+    );
+  }
 }
 
 export { closePool };
@@ -102,9 +119,20 @@ async function estimateDepletedTs(client, country, itemId, observedZeroTs, prevT
 
 /**
  * @param {import("pg").PoolClient} client
+ * @param {{ persistRates?: boolean }} [options]
+ *   When persistRates is false (history replay), rate columns are filled in bulk after.
  * @returns {Promise<"depleted"|"restocked"|null>}
  */
-async function applyTransition(client, country, itemId, ts, prevTs, prevQuantity, quantity) {
+async function applyTransition(
+  client,
+  country,
+  itemId,
+  ts,
+  prevTs,
+  prevQuantity,
+  quantity,
+  { persistRates = true } = {}
+) {
   if (prevQuantity > 0 && quantity === 0) {
     const depletedTs = await estimateDepletedTs(client, country, itemId, ts, prevTs, prevQuantity);
     const res = await client.query(
@@ -112,7 +140,13 @@ async function applyTransition(client, country, itemId, ts, prevTs, prevQuantity
        ON CONFLICT DO NOTHING`,
       [country, itemId, depletedTs]
     );
-    return res.rowCount > 0 ? "depleted" : null;
+    if (res.rowCount > 0) {
+      if (persistRates) {
+        await finalizeRateWindowOnDepletion(client, country, itemId, depletedTs);
+      }
+      return "depleted";
+    }
+    return null;
   }
   if (prevQuantity === 0 && quantity > 0) {
     let open = await one(
@@ -182,9 +216,13 @@ async function applyTransition(client, country, itemId, ts, prevTs, prevQuantity
     if (depletedTs != null) {
       const res = await client.query(
         `UPDATE restocks
-         SET restocked_ts = $1, duration = $1 - depleted_ts
+         SET restocked_ts = $1,
+             duration = $1 - depleted_ts,
+             rate_start_qty = $5,
+             rate_end_ts = NULL,
+             rate_end_qty = NULL
          WHERE country = $2 AND item_id = $3 AND depleted_ts = $4 AND restocked_ts IS NULL`,
-        [ts, country, itemId, depletedTs]
+        [ts, country, itemId, depletedTs, quantity]
       );
       return res.rowCount > 0 ? "restocked" : null;
     }
@@ -285,7 +323,8 @@ async function replayRestocks(client, scope = {}) {
         row.yata_ts,
         prevTs,
         prevQuantity,
-        row.quantity
+        row.quantity,
+        { persistRates: false }
       );
       if (result === "depleted") opened += 1;
       else if (result === "restocked") closed += 1;
@@ -311,6 +350,36 @@ async function replayRestocks(client, scope = {}) {
          WHERE country = $1 AND item_id = $2 AND depleted_ts = $3`,
         [row.country, row.item_id, match.depleted_ts]
       );
+    }
+  }
+
+  if (scoped) {
+    await fillRateWindowsForItem(client, scope.country, scope.itemId);
+  } else {
+    const eventsByItem = new Map();
+    const allEvents = await many(
+      client,
+      `SELECT country, item_id, depleted_ts, restocked_ts, ignored
+       FROM restocks
+       ORDER BY country, item_id, depleted_ts ASC`
+    );
+    for (const row of allEvents) {
+      const key = `${row.country}:${row.item_id}`;
+      if (!eventsByItem.has(key)) eventsByItem.set(key, []);
+      eventsByItem.get(key).push(row);
+    }
+    const snapsByItem = new Map();
+    for (const row of snapshots) {
+      const key = `${row.country}:${row.item_id}`;
+      if (!snapsByItem.has(key)) snapsByItem.set(key, []);
+      snapsByItem.get(key).push(row);
+    }
+    for (const [key, events] of eventsByItem) {
+      const [country, itemIdStr] = key.split(":");
+      const itemId = Number(itemIdStr);
+      const itemSnaps = snapsByItem.get(key) ?? [];
+      const windows = computeRateWindowsFromSnapshots(events, itemSnaps);
+      await persistRateWindows(client, country, itemId, windows);
     }
   }
 
@@ -651,100 +720,6 @@ export async function deleteSnapshots(country, itemId, yataTsList) {
     }
     return deleted;
   });
-}
-
-/**
- * Last snapshot with quantity > 0 and yata_ts < beforeTs.
- * @param {{ yata_ts: number, quantity: number }[]} snapshots ascending by yata_ts
- */
-function lastPositiveBefore(snapshots, beforeTs) {
-  let lo = 0;
-  let hi = snapshots.length - 1;
-  let idx = -1;
-  while (lo <= hi) {
-    const mid = (lo + hi) >> 1;
-    if (snapshots[mid].yata_ts < beforeTs) {
-      idx = mid;
-      lo = mid + 1;
-    } else {
-      hi = mid - 1;
-    }
-  }
-  for (let i = idx; i >= 0; i--) {
-    if (snapshots[i].quantity > 0) return snapshots[i];
-  }
-  return null;
-}
-
-/**
- * In-stock windows with their depletion rate, newest first.
- * Loads restocks + snapshots in two queries (avoids per-cycle round trips).
- * @param {number | null | undefined} limit Max windows; omit/null for all.
- */
-export async function getDepletionRates(country, itemId, limit) {
-  const pool = getPool();
-  const [events, snapshots] = await Promise.all([
-    many(
-      pool,
-      `SELECT depleted_ts, restocked_ts, ignored FROM restocks
-       WHERE country = $1 AND item_id = $2
-       ORDER BY depleted_ts ASC`,
-      [country, itemId]
-    ),
-    many(
-      pool,
-      `SELECT yata_ts, quantity FROM snapshots
-       WHERE country = $1 AND item_id = $2
-       ORDER BY yata_ts ASC`,
-      [country, itemId]
-    ),
-  ]);
-
-  const qtyAt = new Map();
-  for (const row of snapshots) qtyAt.set(row.yata_ts, row.quantity);
-  const latest = snapshots.length ? snapshots[snapshots.length - 1] : null;
-
-  const windows = [];
-  for (let i = 0; i < events.length; i++) {
-    if (events[i].ignored) continue;
-    const startTs = events[i].restocked_ts;
-    if (startTs == null) continue;
-    const startQty = qtyAt.get(startTs);
-    if (!startQty) continue;
-
-    let endTs;
-    let endQty;
-    let open = false;
-    const nextDepletion = events[i + 1]?.depleted_ts;
-    if (nextDepletion != null) {
-      const lastPositive = lastPositiveBefore(snapshots, nextDepletion);
-      if (lastPositive && lastPositive.yata_ts > startTs) {
-        endTs = lastPositive.yata_ts;
-        endQty = lastPositive.quantity;
-      } else {
-        endTs = nextDepletion;
-        endQty = 0;
-      }
-    } else {
-      if (!latest || latest.quantity === 0) continue;
-      endTs = latest.yata_ts;
-      endQty = latest.quantity;
-      open = true;
-    }
-
-    const minutes = (endTs - startTs) / 60;
-    if (minutes <= 0) continue;
-    windows.push({
-      start_ts: startTs,
-      end_ts: endTs,
-      start_qty: startQty,
-      end_qty: endQty,
-      rate: (startQty - endQty) / minutes,
-      open,
-    });
-  }
-  const ordered = windows.reverse();
-  return limit == null ? ordered : ordered.slice(0, limit);
 }
 
 /** item_id → item_type for rows that have a Torn type. */
