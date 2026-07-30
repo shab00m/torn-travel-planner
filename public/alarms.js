@@ -22,7 +22,7 @@ const ALARM_BEEP_PATTERN = [
 ];
 const ALARM_BEEP_PATTERN_MS = 1320;
 const ALARM_BEEP_PAUSE_MS = 2000;
-const ALARM_BEEP_MAX_MS = 5 * 60 * 1000;
+const ALARM_BEEP_MAX_MS = 60 * 1000;
 
 function defaultAlarmPrefs() {
   return {
@@ -241,7 +241,7 @@ function scheduleBeepPattern(ctx, master, offsetSec) {
   }
 }
 
-/** Repeat the beep pattern (2s pause between) for up to 5 minutes or until dismissed. */
+/** Repeat the beep pattern (2s pause between) for up to 1 minute or until dismissed. */
 function playAlarmBeep(alarmId) {
   stopAlarmSound();
   try {
@@ -331,11 +331,15 @@ function removeAlarmById(id) {
   }
 }
 
-/** Soft-dismiss: keep the record so auto-sync does not recreate it. */
+/** Soft-dismiss auto alarms so sync does not recreate them; hard-delete manual ones. */
 function dismissAlarmById(id) {
   stopAlarmSound(id);
   const alarm = alarmState.alarms.find((a) => a.id === id);
   if (!alarm || alarm.dismissedAt) return;
+  if (!alarm.auto) {
+    removeAlarmById(id);
+    return;
+  }
   alarm.dismissedAt = Math.floor(Date.now() / 1000);
   persistAlarms();
   renderAlarmsPanel();
@@ -360,6 +364,19 @@ async function toggleLeaveAlarm({ type, country, itemId, itemName, windowIndex, 
     return;
   }
   await ensureNotificationPermission();
+  const record = findLeaveAlarmRecord(type, country, itemId, windowIndex);
+  if (record) {
+    record.dismissedAt = null;
+    record.firedAt = null;
+    record.eventTs = leaveEarliest;
+    record.offsetSec = getLeaveAlarmOffsetSec();
+    record.auto = false;
+    record.itemName = itemName || record.itemName;
+    persistAlarms();
+    renderAlarmsPanel();
+    window.dispatchEvent(new CustomEvent("alarmschange"));
+    return;
+  }
   upsertAlarm({
     id: newAlarmId(),
     type,
@@ -383,6 +400,24 @@ async function toggleArrivalAlarm({ country, itemId, itemName, arriveTs, destina
     return;
   }
   await ensureNotificationPermission();
+  const record = findArrivalAlarmRecord();
+  if (record) {
+    record.dismissedAt = null;
+    record.firedAt = null;
+    record.type = "arrival";
+    record.country = country || null;
+    record.itemId = itemId != null ? Number(itemId) : null;
+    record.itemName = itemName || null;
+    record.destination = destination || null;
+    record.windowIndex = null;
+    record.eventTs = arriveTs;
+    record.offsetSec = getArrivalAlarmOffsetSec();
+    record.auto = false;
+    persistAlarms();
+    renderAlarmsPanel();
+    window.dispatchEvent(new CustomEvent("alarmschange"));
+    return;
+  }
   upsertAlarm({
     id: newAlarmId(),
     type: "arrival",
@@ -407,6 +442,24 @@ async function toggleRestockAlarm({ country, itemId, itemName, restockTs }) {
     return;
   }
   await ensureNotificationPermission();
+  const record = alarmState.alarms.find(
+    (a) =>
+      a.type === "restock" &&
+      a.country === country &&
+      Number(a.itemId) === Number(itemId)
+  );
+  if (record) {
+    record.dismissedAt = null;
+    record.firedAt = null;
+    record.eventTs = restockTs;
+    record.offsetSec = getLeaveAlarmOffsetSec();
+    record.auto = false;
+    record.itemName = itemName || record.itemName;
+    persistAlarms();
+    renderAlarmsPanel();
+    window.dispatchEvent(new CustomEvent("alarmschange"));
+    return;
+  }
   upsertAlarm({
     id: newAlarmId(),
     type: "restock",
@@ -502,6 +555,7 @@ function syncFavoriteNextLeaveAlarms(windowsByKey) {
   for (const alarm of alarmState.alarms) {
     if (
       alarm.firedAt ||
+      alarm.dismissedAt ||
       alarm.type !== "leave_safe" ||
       Number(alarm.windowIndex) !== FAVORITE_NEXT_WINDOW_INDEX
     ) {
@@ -549,6 +603,8 @@ function setAutoSafeAlarmsEnabled(country, itemId, enabled) {
 /**
  * Sync auto leave_safe alarms for an item.
  * windows: [{ windowIndex, leaveEarliest, leaveLatest, missed }]
+ * Dismissed/fired records are kept while their window is still relevant so they
+ * are not recreated; obsolete dismissed records are hard-deleted.
  */
 async function syncAutoSafeAlarms(country, itemId, itemName, windows) {
   if (!isAutoSafeAlarmsEnabled(country, itemId)) {
@@ -581,7 +637,7 @@ async function syncAutoSafeAlarms(country, itemId, itemName, windows) {
     if (fire <= Math.floor(Date.now() / 1000)) continue;
     if (!isWithinAutoAlarmHours(fire)) continue;
     desired.add(Number(w.windowIndex));
-    let alarm = findLeaveAlarm("leave_safe", country, itemId, w.windowIndex);
+    let alarm = findLeaveAlarmRecord("leave_safe", country, itemId, w.windowIndex);
     if (!alarm) {
       alarmState.alarms.push({
         id: newAlarmId(),
@@ -594,8 +650,15 @@ async function syncAutoSafeAlarms(country, itemId, itemName, windows) {
         offsetSec,
         auto: true,
         firedAt: null,
+        dismissedAt: null,
       });
       changed = true;
+    } else if (alarm.dismissedAt || alarm.firedAt) {
+      // Keep record so we do not recreate this window's alarm.
+      if (alarm.eventTs !== w.leaveEarliest) {
+        alarm.eventTs = w.leaveEarliest;
+        changed = true;
+      }
     } else {
       if (alarm.eventTs !== w.leaveEarliest) {
         alarm.eventTs = w.leaveEarliest;
@@ -610,13 +673,18 @@ async function syncAutoSafeAlarms(country, itemId, itemName, windows) {
 
   const kept = [];
   for (const alarm of alarmState.alarms) {
-    if (
+    const isAutoSafeForItem =
       alarm.auto &&
       alarm.type === "leave_safe" &&
       alarm.country === country &&
-      Number(alarm.itemId) === Number(itemId) &&
-      !desired.has(Number(alarm.windowIndex))
-    ) {
+      Number(alarm.itemId) === Number(itemId);
+    if (isAutoSafeForItem && !desired.has(Number(alarm.windowIndex))) {
+      // Fired alarms stay visible until the user dismisses them.
+      if (alarm.firedAt && !alarm.dismissedAt) {
+        kept.push(alarm);
+        continue;
+      }
+      // Drop obsolete pending or already-dismissed auto alarms.
       changed = true;
       continue;
     }
@@ -632,7 +700,7 @@ async function syncAutoSafeAlarms(country, itemId, itemName, windows) {
 
 async function syncArrivalFromTravel(travel) {
   const prefs = loadAlarmPrefs();
-  const existing = findArrivalAlarm();
+  const existing = findArrivalAlarmRecord();
   const arriveTs = travel?.arriveTs;
   const inFlight = arriveTs != null && arriveTs > Math.floor(Date.now() / 1000);
 
@@ -644,6 +712,7 @@ async function syncArrivalFromTravel(travel) {
   }
 
   if (existing && !existing.auto) {
+    if (existing.dismissedAt || existing.firedAt) return;
     if (existing.eventTs !== arriveTs) {
       existing.eventTs = arriveTs;
       existing.country = travel.country ?? existing.country;
@@ -663,12 +732,25 @@ async function syncArrivalFromTravel(travel) {
   const offsetSec = getArrivalAlarmOffsetSec();
   const fire = arriveTs - offsetSec;
   if (!isWithinAutoAlarmHours(fire) || fire <= Math.floor(Date.now() / 1000)) {
-    if (existing?.auto) removeAlarmById(existing.id);
+    // Keep dismissed/fired records while still in flight so sync does not recreate.
+    if (existing?.auto && !existing.dismissedAt && !existing.firedAt) {
+      removeAlarmById(existing.id);
+    }
     return;
   }
 
   await ensureNotificationPermission();
   if (existing?.auto) {
+    // Dismissed or fired for this flight: keep the record, never recreate.
+    if (existing.dismissedAt || existing.firedAt) {
+      if (existing.eventTs !== arriveTs) {
+        existing.eventTs = arriveTs;
+        existing.country = travel.country ?? existing.country;
+        existing.destination = travel.destination ?? existing.destination;
+        persistAlarms();
+      }
+      return;
+    }
     existing.eventTs = arriveTs;
     existing.offsetSec = existing.offsetSec ?? offsetSec;
     existing.country = travel.country ?? null;
@@ -691,6 +773,7 @@ async function syncArrivalFromTravel(travel) {
     offsetSec,
     auto: true,
     firedAt: null,
+    dismissedAt: null,
   });
 }
 
@@ -898,7 +981,7 @@ function injectAlarmsPanel() {
   panel.addEventListener("click", (e) => {
     const dismiss = e.target.closest(".alarms-dismiss-btn");
     if (dismiss) {
-      removeAlarmById(dismiss.dataset.alarmId);
+      dismissAlarmById(dismiss.dataset.alarmId);
       return;
     }
   });
@@ -1029,7 +1112,7 @@ function injectAlarmSettings() {
 function tickAlarms() {
   const now = Math.floor(Date.now() / 1000);
   for (const alarm of alarmState.alarms) {
-    if (alarm.firedAt) continue;
+    if (alarm.firedAt || alarm.dismissedAt) continue;
     if (fireAt(alarm) <= now) fireAlarm(alarm);
   }
   updateAlarmsCountdowns();
