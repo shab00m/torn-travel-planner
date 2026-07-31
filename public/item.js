@@ -4,6 +4,7 @@ Chart.register(window["chartjs-plugin-annotation"]);
 const el = {
   status: document.getElementById("status"),
   itemTitle: document.getElementById("item-title"),
+  itemHeaderQty: document.getElementById("item-header-qty"),
   itemSubtitle: document.getElementById("item-subtitle"),
   itemEmpty: document.getElementById("item-empty"),
   rangeButtons: document.getElementById("range-buttons"),
@@ -2271,6 +2272,19 @@ function refreshChart(timeline) {
   updateChartMarkers(state.chart);
 }
 
+function setHeaderStockQty(quantity) {
+  if (!el.itemHeaderQty) return;
+  if (quantity == null) {
+    el.itemHeaderQty.hidden = true;
+    el.itemHeaderQty.textContent = "";
+    el.itemHeaderQty.className = "item-header-qty";
+    return;
+  }
+  el.itemHeaderQty.hidden = false;
+  el.itemHeaderQty.textContent = fmtNum(quantity);
+  el.itemHeaderQty.className = `item-header-qty ${quantity === 0 ? "qty-zero" : "qty-ok"}`;
+}
+
 async function loadCurrentStock() {
   if (!state.item) return;
   try {
@@ -2283,6 +2297,7 @@ async function loadCurrentStock() {
     if (!item || !countryData) {
       el.currentStock.classList.add("hidden");
       el.profitEstimate?.classList.add("hidden");
+      setHeaderStockQty(null);
       syncCurrentStockDepletion(null, null);
       return;
     }
@@ -2290,6 +2305,7 @@ async function loadCurrentStock() {
     el.currentQty.textContent = fmtNum(item.quantity);
     el.currentQty.className = `current-qty ${item.quantity === 0 ? "qty-zero" : "qty-ok"}`;
     el.currentMeta.textContent = `${fmtMoney(item.cost)} each · updated ${fmtTime(countryData.update)}`;
+    setHeaderStockQty(item.quantity);
     noteStockTimestamp(data.timestamp);
     syncCurrentStockDepletion(item.quantity, countryData.update);
     renderProfitEstimate(item, marketPrice);
@@ -2298,6 +2314,7 @@ async function loadCurrentStock() {
     el.currentQty.textContent = "—";
     el.currentQty.className = "current-qty";
     el.currentMeta.textContent = `Stock unavailable: ${err.message}`;
+    setHeaderStockQty(null);
     syncCurrentStockDepletion(null, null);
     el.profitEstimate?.classList.add("hidden");
   }

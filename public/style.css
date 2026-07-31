@@ -993,6 +993,13 @@ body.page-item {
   margin: 0;
 }
 
+.item-header-qty {
+  font-size: 1.15rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
 .item-title-row .favorite-btn,
 .item-title-row .hide-btn {
   font-size: 1.35rem;
