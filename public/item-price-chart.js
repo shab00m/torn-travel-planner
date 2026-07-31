@@ -15,11 +15,14 @@ function buyPriceChartTimeUnit(spanMs) {
 }
 
 function buyPriceChartDataFromPoints(points) {
-  return points.map((p) => ({
-    x: p.yata_ts * 1000,
-    y: p.cost,
-    yata_ts: p.yata_ts,
-  }));
+  // Drop zero/invalid costs — bad snapshots flatten the y-scale to 0.
+  return points
+    .filter((p) => Number.isFinite(p.cost) && p.cost > 0)
+    .map((p) => ({
+      x: p.yata_ts * 1000,
+      y: p.cost,
+      yata_ts: p.yata_ts,
+    }));
 }
 
 function buyPriceChartRange(data) {
@@ -109,8 +112,8 @@ function syncBuyPriceChart() {
   if (typeof isItemChartView === "function" && !isItemChartView("buy-price")) return;
   if (!buyPriceChartEl.canvas || !buyPriceChartEl.wrap) return;
 
-  const points = state.chartPoints ?? [];
-  const hasPoints = points.length > 0;
+  const data = buyPriceChartDataFromPoints(state.chartPoints ?? []);
+  const hasPoints = data.length > 0;
   buyPriceChartEl.empty?.classList.toggle("hidden", hasPoints);
   buyPriceChartEl.canvas.classList.toggle("hidden", !hasPoints);
 
@@ -119,7 +122,6 @@ function syncBuyPriceChart() {
     return;
   }
 
-  const data = buyPriceChartDataFromPoints(points);
   const { xMin, xMax } = buyPriceChartRange(data);
   const options = buyPriceChartOptions(xMin, xMax);
   const dataset = buyPriceChartDataset(data);

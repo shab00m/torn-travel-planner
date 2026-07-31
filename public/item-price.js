@@ -20,16 +20,16 @@ async function drawChart() {
     const history = await fetchJson(`/api/history/${country}/${itemId}?hours=${state.rangeHours}`);
     state.chartPoints = history.points;
 
-    el.itemEmpty.classList.toggle("hidden", history.points.length > 0);
+    const data = buyPriceChartDataFromPoints(history.points);
+    el.itemEmpty.classList.toggle("hidden", data.length > 0);
     el.status.textContent = `${history.points.length} snapshots in range — updates when YATA polls (~every minute)`;
     el.status.classList.remove("error");
 
-    if (!history.points.length) {
+    if (!data.length) {
       destroyChart();
       return;
     }
 
-    const data = buyPriceChartDataFromPoints(history.points);
     const { xMin, xMax } = buyPriceChartRange(data);
     const options = buyPriceChartOptions(xMin, xMax);
     const dataset = buyPriceChartDataset(data);
