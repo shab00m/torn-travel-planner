@@ -14,15 +14,31 @@ function buyPriceChartTimeUnit(spanMs) {
   return spanHours <= 6 ? "minute" : spanHours <= 48 ? "hour" : "day";
 }
 
+/** Median of positive numbers; null if fewer than `minSamples`. */
+function buyPriceMedian(values, minSamples = 5) {
+  if (values.length < minSamples) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Drop invalid costs and clear snapshot glitches (e.g. 734 instead of 734000)
+ * that spike the stepped line and collapse the y-scale.
+ */
 function buyPriceChartDataFromPoints(points) {
-  // Drop zero/invalid costs — bad snapshots flatten the y-scale to 0.
-  return points
-    .filter((p) => Number.isFinite(p.cost) && p.cost > 0)
-    .map((p) => ({
-      x: p.yata_ts * 1000,
-      y: p.cost,
-      yata_ts: p.yata_ts,
-    }));
+  const positive = points.filter((p) => Number.isFinite(p.cost) && p.cost > 0);
+  const median = buyPriceMedian(positive.map((p) => p.cost));
+  const usable =
+    median == null
+      ? positive
+      : positive.filter((p) => p.cost >= median / 10 && p.cost <= median * 10);
+
+  return usable.map((p) => ({
+    x: p.yata_ts * 1000,
+    y: p.cost,
+    yata_ts: p.yata_ts,
+  }));
 }
 
 function buyPriceChartRange(data) {
