@@ -124,6 +124,31 @@ async function estimateDepletedTs(client, country, itemId, observedZeroTs, prevT
 }
 
 /**
+ * Market sell-backs can briefly put 1–2 units in stock after a real stockout.
+ * Ignore transitions whose quantity is below this fraction of the configured restock.
+ */
+const MIN_RESTOCK_QTY_FRACTION = 0.01;
+
+/**
+ * @param {import("pg").PoolClient | import("pg").Pool} db
+ * @returns {Promise<number|null>}
+ */
+async function fetchRestockAmount(db, country, itemId) {
+  const row = await one(
+    db,
+    `SELECT amount FROM restock_amounts WHERE country = $1 AND item_id = $2`,
+    [country, itemId]
+  );
+  return row?.amount ?? null;
+}
+
+/** True when qty is a negligible fraction of the configured full restock (sell-back noise). */
+function isNegligibleRestockQty(quantity, restockAmount) {
+  if (restockAmount == null || restockAmount <= 0 || quantity <= 0) return false;
+  return quantity < restockAmount * MIN_RESTOCK_QTY_FRACTION;
+}
+
+/**
  * @param {import("pg").PoolClient} client
  * @param {{ persistRates?: boolean }} [options]
  *   When persistRates is false (history replay), rate columns are filled in bulk after.
@@ -140,6 +165,18 @@ async function applyTransition(
   { persistRates = true } = {}
 ) {
   if (prevQuantity > 0 && quantity === 0) {
+    // Sell-back clear-out while still waiting for a real restock: keep the open cycle.
+    const restockAmount = await fetchRestockAmount(client, country, itemId);
+    if (isNegligibleRestockQty(prevQuantity, restockAmount)) {
+      const openWhileEmpty = await one(
+        client,
+        `SELECT depleted_ts FROM restocks
+         WHERE country = $1 AND item_id = $2 AND restocked_ts IS NULL AND depleted_ts < $3
+         LIMIT 1`,
+        [country, itemId, ts]
+      );
+      if (openWhileEmpty) return null;
+    }
     const depletedTs = await estimateDepletedTs(client, country, itemId, ts, prevTs, prevQuantity);
     const res = await client.query(
       `INSERT INTO restocks (country, item_id, depleted_ts) VALUES ($1, $2, $3)
@@ -155,6 +192,10 @@ async function applyTransition(
     return null;
   }
   if (prevQuantity === 0 && quantity > 0) {
+    const restockAmount = await fetchRestockAmount(client, country, itemId);
+    if (isNegligibleRestockQty(quantity, restockAmount)) {
+      return null;
+    }
     let open = await one(
       client,
       `SELECT depleted_ts FROM restocks
@@ -805,12 +846,7 @@ export async function getStaleMarketItemIds(staleBeforeTs, limit) {
 }
 
 export async function getRestockAmount(country, itemId) {
-  const row = await one(
-    getPool(),
-    `SELECT amount FROM restock_amounts WHERE country = $1 AND item_id = $2`,
-    [country, itemId]
-  );
-  return row?.amount ?? null;
+  return fetchRestockAmount(getPool(), country, itemId);
 }
 
 /** All stored restock amounts keyed as "country:itemId". */
