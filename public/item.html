@@ -166,6 +166,7 @@
 					<button type="button" data-chart="stock" class="active">Stock</button>
 					<button type="button" data-chart="empty-for">Empty for</button>
 					<button type="button" data-chart="rate-tod">Rate by hour</button>
+					<button type="button" data-chart="buy-price">Buy price</button>
 				</div>
 				<button type="button" id="empty-for-swap-axes" class="empty-for-swap-axes hidden" title="Swap empty-for and time axes">
 					Swap axes
@@ -189,6 +190,10 @@
 				<div class="chart-wrap chart-wrap-rate-tod hidden" id="rate-tod-chart-wrap">
 					<canvas id="rate-tod-chart"></canvas>
 					<p id="rate-tod-chart-empty" class="item-empty hidden">No depletion-rate data in this history range yet.</p>
+				</div>
+				<div class="chart-wrap chart-wrap-buy-price hidden" id="buy-price-chart-wrap">
+					<canvas id="buy-price-chart"></canvas>
+					<p id="buy-price-chart-empty" class="item-empty hidden">No snapshots recorded for this range yet.</p>
 				</div>
 			</div>
 			<div id="snapshot-inspector" class="snapshot-inspector hidden">
@@ -326,5 +331,6 @@
 		<script src="/item-chart-views.js"></script>
 		<script src="/item-empty-for-chart.js"></script>
 		<script src="/item-rate-tod-chart.js"></script>
+		<script src="/item-price-chart.js"></script>
 	</body>
 </html>

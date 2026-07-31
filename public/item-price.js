@@ -5,13 +5,6 @@ const el = {
   itemEmpty: document.getElementById("item-empty"),
 };
 
-const tsMs = (ts) => ts * 1000;
-
-function chartTimeUnitForSpan(spanMs) {
-  const spanHours = spanMs / 3_600_000;
-  return spanHours <= 6 ? "minute" : spanHours <= 48 ? "hour" : "day";
-}
-
 function destroyChart() {
   if (state.chart) {
     state.chart.destroy();
@@ -19,54 +12,6 @@ function destroyChart() {
   }
   const existing = Chart.getChart(el.chartCanvas);
   if (existing) existing.destroy();
-}
-
-function priceChartOptions(xMin, xMax) {
-  const timeUnit = chartTimeUnitForSpan(xMax - xMin);
-  return {
-    responsive: true,
-    maintainAspectRatio: false,
-    interaction: { mode: "nearest", axis: "x", intersect: false },
-    plugins: {
-      legend: { display: false },
-      tooltip: {
-        backgroundColor: "rgba(23, 28, 38, 0.95)",
-        titleColor: "#e6ebf2",
-        bodyColor: "#e6ebf2",
-        callbacks: {
-          title: (items) => fmtTime(Math.round(items[0].parsed.x / 1000)),
-          label: (ctx) => `Buy price: ${fmtMoney(ctx.parsed.y)}`,
-        },
-      },
-    },
-    scales: {
-      x: {
-        type: "time",
-        min: xMin,
-        max: xMax,
-        time: {
-          unit: timeUnit,
-          stepSize: timeUnit === "minute" ? 1 : undefined,
-          displayFormats: chartTimeDisplayFormats(),
-        },
-        ticks: {
-          color: "#8b96a8",
-          maxTicksLimit: 14,
-          callback: chartTimeTickCallback,
-        },
-        grid: { color: "#2a3345" },
-      },
-      y: {
-        beginAtZero: false,
-        grace: "5%",
-        ticks: {
-          color: "#8b96a8",
-          callback: (v) => fmtMoney(v),
-        },
-        grid: { color: "#2a3345" },
-      },
-    },
-  };
 }
 
 async function drawChart() {
@@ -84,28 +29,10 @@ async function drawChart() {
       return;
     }
 
-    const data = history.points.map((p) => ({
-      x: tsMs(p.yata_ts),
-      y: p.cost,
-      yata_ts: p.yata_ts,
-    }));
-
-    const xMin = data[0].x;
-    const nowTs = Math.floor(Date.now() / 1000);
-    const lastTs = history.points[history.points.length - 1].yata_ts;
-    const xMax = tsMs(Math.max(nowTs, lastTs));
-    const options = priceChartOptions(xMin, xMax);
-    const dataset = {
-      label: "Buy price",
-      data,
-      borderColor: "#4f9cf9",
-      backgroundColor: "rgba(79, 156, 249, 0.08)",
-      fill: true,
-      stepped: true,
-      pointRadius: data.length > 200 ? 0 : 2,
-      pointHoverRadius: 5,
-      borderWidth: 2,
-    };
+    const data = buyPriceChartDataFromPoints(history.points);
+    const { xMin, xMax } = buyPriceChartRange(data);
+    const options = buyPriceChartOptions(xMin, xMax);
+    const dataset = buyPriceChartDataset(data);
 
     if (state.chart) {
       state.chart.data.datasets = [dataset];

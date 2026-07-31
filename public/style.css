@@ -1714,17 +1714,20 @@ body.page-item {
 }
 
 .page-item .chart-wrap-empty-for,
-.page-item .chart-wrap-rate-tod {
+.page-item .chart-wrap-rate-tod,
+.page-item .chart-wrap-buy-price {
   padding-top: 16px;
 }
 
 #empty-for-chart.hidden,
-#rate-tod-chart.hidden {
+#rate-tod-chart.hidden,
+#buy-price-chart.hidden {
   display: none;
 }
 
 .chart-wrap-empty-for .item-empty,
-.chart-wrap-rate-tod .item-empty {
+.chart-wrap-rate-tod .item-empty,
+.chart-wrap-buy-price .item-empty {
   position: absolute;
   inset: 0;
   display: flex;
@@ -1734,7 +1737,8 @@ body.page-item {
 }
 
 .chart-wrap-empty-for .item-empty.hidden,
-.chart-wrap-rate-tod .item-empty.hidden {
+.chart-wrap-rate-tod .item-empty.hidden,
+.chart-wrap-buy-price .item-empty.hidden {
   display: none;
 }
 

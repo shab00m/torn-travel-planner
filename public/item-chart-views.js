@@ -1,5 +1,5 @@
-// Shared stock / empty-for / rate-by-hour chart view toggle on the item page.
-const ITEM_CHART_TYPES = ["stock", "empty-for", "rate-tod"];
+// Shared stock / empty-for / rate-by-hour / buy-price chart view toggle on the item page.
+const ITEM_CHART_TYPES = ["stock", "empty-for", "rate-tod", "buy-price"];
 
 const itemChartViewUi = {
   type: "stock",
@@ -11,6 +11,7 @@ const itemChartViewEl = {
     stock: document.getElementById("stock-chart-wrap"),
     "empty-for": document.getElementById("empty-for-chart-wrap"),
     "rate-tod": document.getElementById("rate-tod-chart-wrap"),
+    "buy-price": document.getElementById("buy-price-chart-wrap"),
   },
 };
 
@@ -24,6 +25,8 @@ function syncActiveItemChartView() {
     syncEmptyForChart();
   } else if (itemChartViewUi.type === "rate-tod" && typeof syncRateTodChart === "function") {
     syncRateTodChart();
+  } else if (itemChartViewUi.type === "buy-price" && typeof syncBuyPriceChart === "function") {
+    syncBuyPriceChart();
   }
   if (typeof syncEmptyForSwapAxesButton === "function") syncEmptyForSwapAxesButton();
 }
