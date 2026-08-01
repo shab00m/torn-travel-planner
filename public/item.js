@@ -1572,9 +1572,17 @@ function syncItemRestockAlarm(nextRestock) {
       armedCycleRestockedTs = closed.restocked_ts;
     } else if (
       currentStockSnapshot.quantity > 0 &&
-      Number(alarm.depletedTs) <= now
+      Number(alarm.depletedTs) <= now &&
+      !(
+        typeof isNegligibleRestockQty === "function" &&
+        isNegligibleRestockQty(
+          currentStockSnapshot.quantity,
+          getRestockAmount(country, itemId)
+        )
+      )
     ) {
       // Stocks can show qty before the restocks row closes — treat as restocked now.
+      // Skip sell-back noise (same fraction rule as server restock detection).
       armedCycleRestockedTs = currentStockSnapshot.pollTs ?? now;
     }
   } else if (alarm) {
@@ -2317,7 +2325,7 @@ async function loadCurrentStock() {
     noteStockTimestamp(data.timestamp);
     syncCurrentStockDepletion(item.quantity, countryData.update);
     if (typeof refreshRestockAlarmsFromStocks === "function") {
-      refreshRestockAlarmsFromStocks(data);
+      void refreshRestockAlarmsFromStocks(data);
     }
     renderProfitEstimate(item, marketPrice);
   } catch (err) {

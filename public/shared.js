@@ -598,6 +598,23 @@ function getRestockAmount(country, itemId) {
   return typeof v === "number" && v > 0 ? v : null;
 }
 
+/** Bound from /restock-qty.js — same rule the server uses for restock cycles. */
+let isNegligibleRestockQtyFn = null;
+import("/restock-qty.js")
+  .then((mod) => {
+    isNegligibleRestockQtyFn = mod.isNegligibleRestockQty;
+  })
+  .catch(() => {
+    /* alarms treat missing helper as "not negligible" until load succeeds */
+  });
+
+/** Sell-back noise check; requires a configured restock amount (same as server). */
+function isNegligibleRestockQty(quantity, restockAmount) {
+  if (isNegligibleRestockQtyFn) return isNegligibleRestockQtyFn(quantity, restockAmount);
+  // Module not loaded yet — do not filter (same as amount unset on the server).
+  return false;
+}
+
 async function migrateLocalRestockAmounts() {
   if (localStorage.getItem(RESTOCK_AMOUNTS_MIGRATED_KEY)) return;
   const raw = localStorage.getItem(LEGACY_RESTOCK_AMOUNTS_KEY);

@@ -639,6 +639,7 @@ async function resolveDueRestockAlarm(alarm) {
   const due = fireAt(alarm) <= now;
 
   try {
+    await ensureRestockAmountsForArmedAlarms();
     const [restockRes, stocksRes] = await Promise.all([
       fetch(`/api/restocks/${encodeURIComponent(alarm.country)}/${alarm.itemId}`),
       fetch("/api/stocks"),
@@ -652,6 +653,7 @@ async function resolveDueRestockAlarm(alarm) {
 
     // Stock snapshot is authoritative: if we're waiting on a past/open cycle and
     // quantity is already > 0, fire even when the restocks row hasn't closed yet.
+    // Negligible sell-back spikes are ignored (same rule as server restock detection).
     if (tryFireRestockAlarmOnStock(alarm, quantity, now, restocks)) return;
 
     // Before countdown: only fire on confirmed restock (early). Don't reschedule yet.
@@ -704,13 +706,21 @@ async function resolveDueRestockAlarm(alarm) {
   }
 }
 
+/** Same sell-back noise filter as server restock detection (needs configured restock amount). */
+function isNegligibleAlarmStockQty(quantity, country, itemId) {
+  if (typeof isNegligibleRestockQty !== "function" || typeof getRestockAmount !== "function") {
+    return false;
+  }
+  return isNegligibleRestockQty(quantity, getRestockAmount(country, itemId));
+}
+
 /**
  * Fire immediately when stock is back for a cycle we were waiting on.
- * Ignores future predicted deplete timestamps (in-stock multi-cycle alarms).
+ * Ignores future predicted deplete timestamps (in-stock multi-cycle alarms)
+ * and negligible sell-back spikes (same rule as server restock detection).
  */
 function tryFireRestockAlarmOnStock(alarm, quantity, now = Math.floor(Date.now() / 1000), restocks = null) {
   if (!alarm || alarm.firedAt || alarm.dismissedAt || alarm.type !== "restock") return false;
-  if (quantity == null || quantity <= 0) return false;
 
   if (alarm.depletedTs != null) {
     if (Number(alarm.depletedTs) > now) return false;
@@ -720,7 +730,18 @@ function tryFireRestockAlarmOnStock(alarm, quantity, now = Math.floor(Date.now()
             Number(r.depleted_ts) === Number(alarm.depletedTs) && r.restocked_ts != null
         )
       : null;
-    alarm.eventTs = closed?.restocked_ts ?? now;
+    // Server-closed cycle already passed the negligible filter.
+    if (closed) {
+      alarm.eventTs = closed.restocked_ts;
+      alarm.awaitActual = false;
+      persistAlarms();
+      fireAlarm(alarm);
+      return true;
+    }
+    // Stocks can lead the restocks row — only fire on a non-negligible qty.
+    if (quantity == null || quantity <= 0) return false;
+    if (isNegligibleAlarmStockQty(quantity, alarm.country, alarm.itemId)) return false;
+    alarm.eventTs = now;
     alarm.awaitActual = false;
     persistAlarms();
     fireAlarm(alarm);
@@ -729,6 +750,8 @@ function tryFireRestockAlarmOnStock(alarm, quantity, now = Math.floor(Date.now()
 
   // Legacy: only when already due / awaiting, so in-stock future alarms don't false-fire.
   if (!(alarm.awaitActual || fireAt(alarm) <= now)) return false;
+  if (quantity == null || quantity <= 0) return false;
+  if (isNegligibleAlarmStockQty(quantity, alarm.country, alarm.itemId)) return false;
   const recent = Array.isArray(restocks)
     ? restocks
         .filter(
@@ -746,9 +769,33 @@ function tryFireRestockAlarmOnStock(alarm, quantity, now = Math.floor(Date.now()
   return true;
 }
 
+async function ensureRestockAmountsForArmedAlarms() {
+  if (typeof loadRestockAmountForItem !== "function") return;
+  const armed = alarmState.alarms.filter(
+    (a) => a.type === "restock" && !a.firedAt && !a.dismissedAt
+  );
+  await Promise.all(
+    armed.map(async (a) => {
+      if (typeof getRestockAmount === "function" && getRestockAmount(a.country, a.itemId) != null) {
+        return;
+      }
+      try {
+        await loadRestockAmountForItem(a.country, a.itemId);
+      } catch {
+        /* amount stays unknown → negligible check is a no-op (same as server) */
+      }
+    })
+  );
+}
+
 /** Called when a fresh /api/stocks payload arrives — fire without waiting on the ticker throttle. */
-function refreshRestockAlarmsFromStocks(stocksPayload) {
+async function refreshRestockAlarmsFromStocks(stocksPayload) {
   if (!stocksPayload) return;
+  const armed = alarmState.alarms.some(
+    (a) => a.type === "restock" && !a.firedAt && !a.dismissedAt
+  );
+  if (!armed) return;
+  await ensureRestockAmountsForArmedAlarms();
   const now = Math.floor(Date.now() / 1000);
   for (const alarm of alarmState.alarms) {
     if (alarm.firedAt || alarm.dismissedAt || alarm.type !== "restock") continue;
@@ -758,14 +805,10 @@ function refreshRestockAlarmsFromStocks(stocksPayload) {
 }
 
 async function refreshRestockAlarmsOnStockUpdate() {
-  const armed = alarmState.alarms.some(
-    (a) => a.type === "restock" && !a.firedAt && !a.dismissedAt
-  );
-  if (!armed) return;
   try {
     const res = await fetch("/api/stocks");
     if (!res.ok) return;
-    refreshRestockAlarmsFromStocks(await res.json());
+    await refreshRestockAlarmsFromStocks(await res.json());
   } catch {
     /* ticker will retry */
   }

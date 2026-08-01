@@ -10,6 +10,7 @@ import {
   hasMissingPersistedRates,
   persistRateWindows,
 } from "./depletion-rates.js";
+import { isNegligibleRestockQty } from "../public/restock-qty.js";
 
 export { getDepletionRates };
 
@@ -124,12 +125,6 @@ async function estimateDepletedTs(client, country, itemId, observedZeroTs, prevT
 }
 
 /**
- * Market sell-backs can briefly put 1–2 units in stock after a real stockout.
- * Ignore transitions whose quantity is below this fraction of the configured restock.
- */
-const MIN_RESTOCK_QTY_FRACTION = 0.01;
-
-/**
  * @param {import("pg").PoolClient | import("pg").Pool} db
  * @returns {Promise<number|null>}
  */
@@ -140,12 +135,6 @@ async function fetchRestockAmount(db, country, itemId) {
     [country, itemId]
   );
   return row?.amount ?? null;
-}
-
-/** True when qty is a negligible fraction of the configured full restock (sell-back noise). */
-function isNegligibleRestockQty(quantity, restockAmount) {
-  if (restockAmount == null || restockAmount <= 0 || quantity <= 0) return false;
-  return quantity < restockAmount * MIN_RESTOCK_QTY_FRACTION;
 }
 
 /**
