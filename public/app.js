@@ -598,6 +598,9 @@ async function loadStocks() {
     state.stocks = data.stocks;
     lastStockTimestamp = data.timestamp;
     noteStockTimestamp(data.timestamp);
+    if (typeof refreshRestockAlarmsFromStocks === "function") {
+      refreshRestockAlarmsFromStocks(data);
+    }
     clearPageError();
     el.status.textContent = `Last update: ${fmtTime(data.timestamp)} — updates when YATA polls (~every minute)`;
     populateItemTypeFilter();

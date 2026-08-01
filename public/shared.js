@@ -465,9 +465,12 @@ const STOCK_UPDATE_PERIOD_SEC = 60;
 const STOCK_UPDATE_SLACK_SEC = 1;
 const STOCK_UPDATE_FAST_POLL_MS = 5000;
 
-function noteStockTimestamp(timestamp) {
-  if (Number.isInteger(timestamp) && timestamp > 0) {
-    lastKnownStockTimestamp = timestamp;
+function noteStockTimestamp(timestamp, { announce = false } = {}) {
+  if (!Number.isInteger(timestamp) || timestamp <= 0) return;
+  const prev = lastKnownStockTimestamp;
+  lastKnownStockTimestamp = timestamp;
+  if (announce && prev != null && prev !== timestamp) {
+    window.dispatchEvent(new CustomEvent("stocksupdated", { detail: { timestamp } }));
   }
 }
 
@@ -518,7 +521,7 @@ function startStockUpdateWatcher(onUpdate) {
         return;
       }
 
-      lastKnownStockTimestamp = data.timestamp;
+      noteStockTimestamp(data.timestamp, { announce: true });
       await onUpdate(data.timestamp);
       schedule(msUntilExpectedStockUpdate(data.timestamp));
     } catch {

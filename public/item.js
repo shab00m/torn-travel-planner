@@ -1561,17 +1561,25 @@ function syncItemRestockAlarm(nextRestock) {
   const itemId = state.item.itemId;
   const alarm =
     typeof findRestockAlarm === "function" ? findRestockAlarm(country, itemId) : null;
+  const now = Math.floor(Date.now() / 1000);
   let armedCycleRestockedTs = null;
   if (alarm?.depletedTs != null) {
     const closed = state.restocks.find(
       (r) =>
         Number(r.depleted_ts) === Number(alarm.depletedTs) && r.restocked_ts != null
     );
-    if (closed) armedCycleRestockedTs = closed.restocked_ts;
+    if (closed) {
+      armedCycleRestockedTs = closed.restocked_ts;
+    } else if (
+      currentStockSnapshot.quantity > 0 &&
+      Number(alarm.depletedTs) <= now
+    ) {
+      // Stocks can show qty before the restocks row closes — treat as restocked now.
+      armedCycleRestockedTs = currentStockSnapshot.pollTs ?? now;
+    }
   } else if (alarm) {
     // Legacy alarm (no depletedTs): a restock that closed before the armed time,
     // or being in stock while prediction jumped to a later cycle, means it happened early.
-    const now = Math.floor(Date.now() / 1000);
     const justClosed = state.restocks
       .filter(
         (r) =>
@@ -2308,6 +2316,9 @@ async function loadCurrentStock() {
     setHeaderStockQty(item.quantity);
     noteStockTimestamp(data.timestamp);
     syncCurrentStockDepletion(item.quantity, countryData.update);
+    if (typeof refreshRestockAlarmsFromStocks === "function") {
+      refreshRestockAlarmsFromStocks(data);
+    }
     renderProfitEstimate(item, marketPrice);
   } catch (err) {
     el.currentStock.classList.remove("hidden");

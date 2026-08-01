@@ -16,8 +16,8 @@ const alarmState = {
   restockCheckInFlight: new Set(),
 };
 
-const RESTOCK_CHECK_INTERVAL_DUE_SEC = 30;
-const RESTOCK_CHECK_INTERVAL_ARMED_SEC = 60;
+const RESTOCK_CHECK_INTERVAL_DUE_SEC = 15;
+const RESTOCK_CHECK_INTERVAL_ARMED_SEC = 30;
 
 const ALARM_BEEP_PATTERN = [
   { t: 0, freq: 880, dur: 0.16 },
@@ -650,53 +650,9 @@ async function resolveDueRestockAlarm(alarm) {
     const rates = restockData.rates || [];
     const quantity = stockQuantityForAlarm(stocksData, alarm.country, alarm.itemId);
 
-    const open = restocks.find((r) => r.restocked_ts == null);
-    if (alarm.depletedTs != null) {
-      const closed = restocks.find(
-        (r) =>
-          Number(r.depleted_ts) === Number(alarm.depletedTs) && r.restocked_ts != null
-      );
-      if (closed) {
-        alarm.eventTs = closed.restocked_ts;
-        alarm.awaitActual = false;
-        persistAlarms();
-        fireAlarm(alarm);
-        return;
-      }
-      // Past/open cycle rolled over / in stock again without a matching close row.
-      // Skip future predicted deplete timestamps (in-stock multi-cycle alarms).
-      if (
-        quantity > 0 &&
-        Number(alarm.depletedTs) <= now &&
-        (!open || Number(open.depleted_ts) !== Number(alarm.depletedTs))
-      ) {
-        const recent = restocks
-          .filter((r) => r.restocked_ts != null)
-          .sort((a, b) => b.restocked_ts - a.restocked_ts)[0];
-        alarm.eventTs = recent?.restocked_ts ?? now;
-        alarm.awaitActual = false;
-        persistAlarms();
-        fireAlarm(alarm);
-        return;
-      }
-    } else if (due && quantity > 0) {
-      // Legacy alarm without depletedTs: only treat as restocked if a cycle just closed.
-      const recent = restocks
-        .filter(
-          (r) =>
-            r.restocked_ts != null &&
-            r.restocked_ts <= alarm.eventTs &&
-            r.restocked_ts >= now - 300
-        )
-        .sort((a, b) => b.restocked_ts - a.restocked_ts)[0];
-      if (recent) {
-        alarm.eventTs = recent.restocked_ts;
-        alarm.awaitActual = false;
-        persistAlarms();
-        fireAlarm(alarm);
-        return;
-      }
-    }
+    // Stock snapshot is authoritative: if we're waiting on a past/open cycle and
+    // quantity is already > 0, fire even when the restocks row hasn't closed yet.
+    if (tryFireRestockAlarmOnStock(alarm, quantity, now, restocks)) return;
 
     // Before countdown: only fire on confirmed restock (early). Don't reschedule yet.
     if (!due) return;
@@ -748,12 +704,79 @@ async function resolveDueRestockAlarm(alarm) {
   }
 }
 
-function scheduleRestockAlarmCheck(alarm, now) {
+/**
+ * Fire immediately when stock is back for a cycle we were waiting on.
+ * Ignores future predicted deplete timestamps (in-stock multi-cycle alarms).
+ */
+function tryFireRestockAlarmOnStock(alarm, quantity, now = Math.floor(Date.now() / 1000), restocks = null) {
+  if (!alarm || alarm.firedAt || alarm.dismissedAt || alarm.type !== "restock") return false;
+  if (quantity == null || quantity <= 0) return false;
+
+  if (alarm.depletedTs != null) {
+    if (Number(alarm.depletedTs) > now) return false;
+    const closed = Array.isArray(restocks)
+      ? restocks.find(
+          (r) =>
+            Number(r.depleted_ts) === Number(alarm.depletedTs) && r.restocked_ts != null
+        )
+      : null;
+    alarm.eventTs = closed?.restocked_ts ?? now;
+    alarm.awaitActual = false;
+    persistAlarms();
+    fireAlarm(alarm);
+    return true;
+  }
+
+  // Legacy: only when already due / awaiting, so in-stock future alarms don't false-fire.
+  if (!(alarm.awaitActual || fireAt(alarm) <= now)) return false;
+  const recent = Array.isArray(restocks)
+    ? restocks
+        .filter(
+          (r) =>
+            r.restocked_ts != null &&
+            r.restocked_ts <= alarm.eventTs &&
+            r.restocked_ts >= now - 300
+        )
+        .sort((a, b) => b.restocked_ts - a.restocked_ts)[0]
+    : null;
+  alarm.eventTs = recent?.restocked_ts ?? now;
+  alarm.awaitActual = false;
+  persistAlarms();
+  fireAlarm(alarm);
+  return true;
+}
+
+/** Called when a fresh /api/stocks payload arrives — fire without waiting on the ticker throttle. */
+function refreshRestockAlarmsFromStocks(stocksPayload) {
+  if (!stocksPayload) return;
+  const now = Math.floor(Date.now() / 1000);
+  for (const alarm of alarmState.alarms) {
+    if (alarm.firedAt || alarm.dismissedAt || alarm.type !== "restock") continue;
+    const qty = stockQuantityForAlarm(stocksPayload, alarm.country, alarm.itemId);
+    if (tryFireRestockAlarmOnStock(alarm, qty, now)) continue;
+  }
+}
+
+async function refreshRestockAlarmsOnStockUpdate() {
+  const armed = alarmState.alarms.some(
+    (a) => a.type === "restock" && !a.firedAt && !a.dismissedAt
+  );
+  if (!armed) return;
+  try {
+    const res = await fetch("/api/stocks");
+    if (!res.ok) return;
+    refreshRestockAlarmsFromStocks(await res.json());
+  } catch {
+    /* ticker will retry */
+  }
+}
+
+function scheduleRestockAlarmCheck(alarm, now, { force = false } = {}) {
   if (!alarm?.id || alarmState.restockCheckInFlight.has(alarm.id)) return;
   const due = fireAt(alarm) <= now;
   const interval = due || alarm.awaitActual ? RESTOCK_CHECK_INTERVAL_DUE_SEC : RESTOCK_CHECK_INTERVAL_ARMED_SEC;
   const last = alarmState.restockCheckAt[alarm.id] || 0;
-  if (now - last < interval) return;
+  if (!force && now - last < interval) return;
   alarmState.restockCheckAt[alarm.id] = now;
   alarmState.restockCheckInFlight.add(alarm.id);
   resolveDueRestockAlarm(alarm).finally(() => {
@@ -1463,6 +1486,9 @@ function initAlarms() {
   startTravelPollForAlarms();
 
   window.addEventListener("timeformatchange", () => renderAlarmsPanel());
+  window.addEventListener("stocksupdated", () => {
+    void refreshRestockAlarmsOnStockUpdate();
+  });
 }
 
 if (document.readyState === "loading") {
