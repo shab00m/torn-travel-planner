@@ -10,7 +10,14 @@ const alarmState = {
   settingsBound: false,
   /** @type {{ ctx: AudioContext | null, timers: number[], alarmId: string | null } | null} */
   sound: null,
+  /** @type {Record<string, number>} last resolve attempt (unix sec) per restock alarm id */
+  restockCheckAt: {},
+  /** @type {Set<string>} */
+  restockCheckInFlight: new Set(),
 };
+
+const RESTOCK_CHECK_INTERVAL_DUE_SEC = 30;
+const RESTOCK_CHECK_INTERVAL_ARMED_SEC = 60;
 
 const ALARM_BEEP_PATTERN = [
   { t: 0, freq: 880, dur: 0.16 },
@@ -486,8 +493,7 @@ async function toggleRestockAlarm({ country, itemId, itemName, restockTs, deplet
 
 /**
  * Keep next-restock (#1) alarm in sync with the latest prediction.
- * Fires if the armed cycle has already restocked (including early), or if the
- * updated fire time is already due after a settings/prediction change.
+ * Fires only when the armed cycle has actually restocked — never on prediction time alone.
  *
  * @param {string} country
  * @param {number} itemId
@@ -537,10 +543,199 @@ function syncRestockAlarmForItem(country, itemId, info) {
     changed = true;
   }
 
-  // Overdue open cycle: keep waiting for the actual restock (don't timer-fire).
-  if (nextTs <= now) {
+  // Overdue / inside offset window: wait for actual restock (ticker verifies + may reschedule).
+  const due = fireAt(existing) <= now;
+  if (due || nextTs <= now) {
     if (!existing.awaitActual) {
       existing.awaitActual = true;
+      changed = true;
+    }
+  } else if (existing.awaitActual) {
+    existing.awaitActual = false;
+    changed = true;
+  }
+
+  if (changed) {
+    persistAlarms();
+    renderAlarmsPanel();
+    window.dispatchEvent(new CustomEvent("alarmschange"));
+  }
+}
+
+function usableRestockDurations(restocks) {
+  return (restocks || [])
+    .filter((r) => !r.ignored && r.duration != null && r.duration > 0)
+    .map((r) => r.duration);
+}
+
+function selectedStockoutSec(restocks) {
+  const prefs = typeof loadPrefs === "function" ? loadPrefs() : {};
+  const rows = (restocks || []).filter((r) => !r.ignored && r.duration != null && r.duration > 0);
+  if (!rows.length) return null;
+  const timing = ["avg", "min", "max"].includes(prefs.stockoutTiming) ? prefs.stockoutTiming : "avg";
+  const durations = rows.map((r) => r.duration);
+  if (timing === "min") return Math.min(...durations);
+  if (timing === "max") return Math.max(...durations);
+  const n = Number(prefs.avgSamples);
+  const sample = rows.slice(0, Number.isFinite(n) && n > 0 ? n : 5);
+  return sample.reduce((sum, r) => sum + r.duration, 0) / sample.length;
+}
+
+function selectedDepletionRate(rates) {
+  const prefs = typeof loadPrefs === "function" ? loadPrefs() : {};
+  const rows = (rates || []).filter((w) => !w.open && w.rate != null && w.rate > 0);
+  if (!rows.length) return null;
+  const timing = ["avg", "min", "max"].includes(prefs.rateTiming) ? prefs.rateTiming : "avg";
+  const values = rows.map((w) => w.rate);
+  if (timing === "min") return Math.min(...values);
+  if (timing === "max") return Math.max(...values);
+  const n = Number(prefs.avgRateSamples);
+  const sample = rows.slice(0, Number.isFinite(n) && n > 0 ? n : 3);
+  return sample.reduce((sum, w) => sum + w.rate, 0) / sample.length;
+}
+
+/** Next predicted restock after now for alarm reschedule (open-cycle step or deplete+restock). */
+function computeNextRestockAlarmTarget({ restocks, rates, quantity, now }) {
+  const restockSec = selectedStockoutSec(restocks);
+  if (restockSec == null) return null;
+  const open = (restocks || []).find((r) => r.restocked_ts == null);
+
+  if (quantity === 0 || open) {
+    if (!open?.depleted_ts) return null;
+    const depletedTs = open.depleted_ts;
+    if (depletedTs + restockSec > now) {
+      return { ts: Math.round(depletedTs + restockSec), depletedTs };
+    }
+    const nextDur = [...new Set(usableRestockDurations(restocks))]
+      .sort((a, b) => a - b)
+      .find((d) => depletedTs + d > now);
+    if (nextDur == null) return null;
+    return { ts: Math.round(depletedTs + nextDur), depletedTs };
+  }
+
+  if (quantity == null || quantity <= 0) return null;
+  const rate = selectedDepletionRate(rates);
+  if (rate == null || rate <= 0) return null;
+  const depleteTs = Math.round(now + (quantity / rate) * 60);
+  const restockTs = Math.round(depleteTs + restockSec);
+  if (restockTs <= now) return null;
+  return { ts: restockTs, depletedTs: depleteTs };
+}
+
+function stockQuantityForAlarm(stocksPayload, country, itemId) {
+  const countryData = stocksPayload?.stocks?.[country];
+  const item = countryData?.stocks?.find((i) => Number(i.id) === Number(itemId));
+  return item?.quantity;
+}
+
+/**
+ * When a restock alarm's countdown is due (or while awaiting actual): fire only if the
+ * cycle has restocked; otherwise reschedule to the next future prediction.
+ */
+async function resolveDueRestockAlarm(alarm) {
+  if (!alarm || alarm.firedAt || alarm.dismissedAt || alarm.type !== "restock") return;
+  if (alarm.country == null || alarm.itemId == null) return;
+  const now = Math.floor(Date.now() / 1000);
+  const due = fireAt(alarm) <= now;
+
+  try {
+    const [restockRes, stocksRes] = await Promise.all([
+      fetch(`/api/restocks/${encodeURIComponent(alarm.country)}/${alarm.itemId}`),
+      fetch("/api/stocks"),
+    ]);
+    if (!restockRes.ok) throw new Error("restocks failed");
+    const restockData = await restockRes.json();
+    const stocksData = stocksRes.ok ? await stocksRes.json() : null;
+    const restocks = restockData.restocks || [];
+    const rates = restockData.rates || [];
+    const quantity = stockQuantityForAlarm(stocksData, alarm.country, alarm.itemId);
+
+    const open = restocks.find((r) => r.restocked_ts == null);
+    if (alarm.depletedTs != null) {
+      const closed = restocks.find(
+        (r) =>
+          Number(r.depleted_ts) === Number(alarm.depletedTs) && r.restocked_ts != null
+      );
+      if (closed) {
+        alarm.eventTs = closed.restocked_ts;
+        alarm.awaitActual = false;
+        persistAlarms();
+        fireAlarm(alarm);
+        return;
+      }
+      // Past/open cycle rolled over / in stock again without a matching close row.
+      // Skip future predicted deplete timestamps (in-stock multi-cycle alarms).
+      if (
+        quantity > 0 &&
+        Number(alarm.depletedTs) <= now &&
+        (!open || Number(open.depleted_ts) !== Number(alarm.depletedTs))
+      ) {
+        const recent = restocks
+          .filter((r) => r.restocked_ts != null)
+          .sort((a, b) => b.restocked_ts - a.restocked_ts)[0];
+        alarm.eventTs = recent?.restocked_ts ?? now;
+        alarm.awaitActual = false;
+        persistAlarms();
+        fireAlarm(alarm);
+        return;
+      }
+    } else if (due && quantity > 0) {
+      // Legacy alarm without depletedTs: only treat as restocked if a cycle just closed.
+      const recent = restocks
+        .filter(
+          (r) =>
+            r.restocked_ts != null &&
+            r.restocked_ts <= alarm.eventTs &&
+            r.restocked_ts >= now - 300
+        )
+        .sort((a, b) => b.restocked_ts - a.restocked_ts)[0];
+      if (recent) {
+        alarm.eventTs = recent.restocked_ts;
+        alarm.awaitActual = false;
+        persistAlarms();
+        fireAlarm(alarm);
+        return;
+      }
+    }
+
+    // Before countdown: only fire on confirmed restock (early). Don't reschedule yet.
+    if (!due) return;
+
+    const next = computeNextRestockAlarmTarget({ restocks, rates, quantity, now });
+    if (next?.ts != null && next.ts - (alarm.offsetSec || 0) > now) {
+      let changed = false;
+      if (alarm.eventTs !== next.ts) {
+        alarm.eventTs = next.ts;
+        changed = true;
+      }
+      if (next.depletedTs != null && Number(alarm.depletedTs) !== Number(next.depletedTs)) {
+        alarm.depletedTs = next.depletedTs;
+        changed = true;
+      }
+      if (alarm.awaitActual) {
+        alarm.awaitActual = false;
+        changed = true;
+      }
+      if (changed) {
+        persistAlarms();
+        renderAlarmsPanel();
+        window.dispatchEvent(new CustomEvent("alarmschange"));
+      }
+      return;
+    }
+
+    // No future fire time — keep waiting for the actual restock.
+    let changed = false;
+    if (next?.ts != null && alarm.eventTs !== next.ts) {
+      alarm.eventTs = next.ts;
+      changed = true;
+    }
+    if (next?.depletedTs != null && Number(alarm.depletedTs) !== Number(next.depletedTs)) {
+      alarm.depletedTs = next.depletedTs;
+      changed = true;
+    }
+    if (!alarm.awaitActual) {
+      alarm.awaitActual = true;
       changed = true;
     }
     if (changed) {
@@ -548,23 +743,22 @@ function syncRestockAlarmForItem(country, itemId, info) {
       renderAlarmsPanel();
       window.dispatchEvent(new CustomEvent("alarmschange"));
     }
-    return;
+  } catch {
+    /* retry on next throttle window — never fire on a failed check */
   }
+}
 
-  if (existing.awaitActual) {
-    existing.awaitActual = false;
-    changed = true;
-  }
-  if (changed) {
-    persistAlarms();
-    renderAlarmsPanel();
-    window.dispatchEvent(new CustomEvent("alarmschange"));
-  }
-
-  // Prediction moved earlier (settings / open-cycle step) so the offset is already due.
-  if (!existing.firedAt && !existing.dismissedAt && fireAt(existing) <= now) {
-    fireAlarm(existing);
-  }
+function scheduleRestockAlarmCheck(alarm, now) {
+  if (!alarm?.id || alarmState.restockCheckInFlight.has(alarm.id)) return;
+  const due = fireAt(alarm) <= now;
+  const interval = due || alarm.awaitActual ? RESTOCK_CHECK_INTERVAL_DUE_SEC : RESTOCK_CHECK_INTERVAL_ARMED_SEC;
+  const last = alarmState.restockCheckAt[alarm.id] || 0;
+  if (now - last < interval) return;
+  alarmState.restockCheckAt[alarm.id] = now;
+  alarmState.restockCheckInFlight.add(alarm.id);
+  resolveDueRestockAlarm(alarm).finally(() => {
+    alarmState.restockCheckInFlight.delete(alarm.id);
+  });
 }
 
 /** Favorites dashboard "next safe leave" alarms use this index (not item prediction #). */
@@ -1189,8 +1383,11 @@ function tickAlarms() {
   const now = Math.floor(Date.now() / 1000);
   for (const alarm of alarmState.alarms) {
     if (alarm.firedAt || alarm.dismissedAt) continue;
-    // Overdue restock alarms wait for the cycle to close (sync), not the clock.
-    if (alarm.type === "restock" && alarm.awaitActual) continue;
+    if (alarm.type === "restock") {
+      // Never timer-fire: confirm actual restock, else reschedule when due.
+      scheduleRestockAlarmCheck(alarm, now);
+      continue;
+    }
     if (fireAt(alarm) <= now) fireAlarm(alarm);
   }
   updateAlarmsCountdowns();
