@@ -83,6 +83,14 @@ function createContext({
   }
 
   function adjustedRestockRecord(r) {
+    // Prefer server-persisted adjustment when present.
+    if (r.adjusted_restocked_ts != null && r.adjusted_duration != null) {
+      return {
+        ...r,
+        adjusted_restocked_ts: r.adjusted_restocked_ts,
+        adjusted_duration: r.adjusted_duration,
+      };
+    }
     if (!restockAmount || r.restocked_ts == null) {
       return { ...r, adjusted_restocked_ts: r.restocked_ts, adjusted_duration: r.duration };
     }
@@ -108,14 +116,17 @@ function createContext({
   function adjustedRateWindow(w) {
     if (!restockAmount || w.start_qty >= restockAmount) return w;
     const restock = restocks.find((r) => r.restocked_ts === w.start_ts);
-    const startTs = adjustRestockTime(
-      lastZeroLookup,
-      w.start_ts,
-      w.start_qty,
-      w.rate,
-      restockAmount,
-      restock?.depleted_ts
-    );
+    const startTs =
+      restock?.adjusted_restocked_ts != null
+        ? restock.adjusted_restocked_ts
+        : adjustRestockTime(
+            lastZeroLookup,
+            w.start_ts,
+            w.start_qty,
+            w.rate,
+            restockAmount,
+            restock?.depleted_ts
+          );
     const rate = rateFromEndpoints(startTs, w.end_ts, restockAmount, w.end_qty) ?? w.rate;
     return { ...w, start_ts: startTs, start_qty: restockAmount, rate };
   }

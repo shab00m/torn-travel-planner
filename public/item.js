@@ -665,6 +665,14 @@ function rateWindowForRestock(restockedTs) {
 }
 
 function adjustedRestockRecord(r) {
+  // Prefer server-persisted adjustment (independent of loaded History snapshots).
+  if (r.adjusted_restocked_ts != null && r.adjusted_duration != null) {
+    return {
+      ...r,
+      adjusted_restocked_ts: r.adjusted_restocked_ts,
+      adjusted_duration: r.adjusted_duration,
+    };
+  }
   const amount = currentRestockAmount();
   if (!amount || r.restocked_ts == null) {
     return { ...r, adjusted_restocked_ts: r.restocked_ts, adjusted_duration: r.duration };
@@ -697,13 +705,16 @@ function adjustedRateWindow(w) {
   const amount = currentRestockAmount();
   if (!amount || w.start_qty >= amount) return w;
   const restock = state.restocks.find((r) => r.restocked_ts === w.start_ts);
-  const startTs = adjustRestockTime(
-    w.start_ts,
-    w.start_qty,
-    w.rate,
-    amount,
-    restock?.depleted_ts
-  );
+  const startTs =
+    restock?.adjusted_restocked_ts != null
+      ? restock.adjusted_restocked_ts
+      : adjustRestockTime(
+          w.start_ts,
+          w.start_qty,
+          w.rate,
+          amount,
+          restock?.depleted_ts
+        );
   const rate = rateFromWindowEndpoints(startTs, w.end_ts, amount, w.end_qty) ?? w.rate;
   return { ...w, start_ts: startTs, start_qty: amount, rate };
 }
@@ -3081,17 +3092,19 @@ el.restockAmount.addEventListener("change", async () => {
   try {
     if (raw === "") {
       await setRestockAmount(item.country, item.itemId, null);
-      refreshRestockAdjustments();
-      return;
+    } else {
+      const amount = Number.parseInt(raw, 10);
+      if (!Number.isInteger(amount) || amount <= 0) {
+        el.restockAmount.value = prev ?? "";
+        return;
+      }
+      await setRestockAmount(item.country, item.itemId, amount);
+      el.restockAmount.value = amount;
     }
-    const amount = Number.parseInt(raw, 10);
-    if (!Number.isInteger(amount) || amount <= 0) {
-      el.restockAmount.value = prev ?? "";
-      return;
-    }
-    await setRestockAmount(item.country, item.itemId, amount);
-    el.restockAmount.value = amount;
-    refreshRestockAdjustments();
+    // Reload so list/charts use freshly persisted adjusted_* columns.
+    const data = await fetchJson(`/api/restocks/${item.country}/${item.itemId}`);
+    loadRestockData(data);
+    refreshRestockViews();
   } catch {
     el.restockAmount.value = prev ?? "";
   }

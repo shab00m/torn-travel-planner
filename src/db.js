@@ -11,8 +11,13 @@ import {
   persistRateWindows,
 } from "./depletion-rates.js";
 import { isNegligibleRestockQty } from "../public/restock-qty.js";
+import {
+  ensureAdjustedRestocks,
+  recomputeAdjustedRestockCycle,
+  recomputeAdjustedRestocksForItem,
+} from "./adjusted-restocks.js";
 
-export { getDepletionRates };
+export { getDepletionRates, ensureAdjustedRestocks };
 
 /**
  * @param {import("pg").PoolClient | import("pg").Pool} db
@@ -260,7 +265,11 @@ async function applyTransition(
          WHERE country = $2 AND item_id = $3 AND depleted_ts = $4 AND restocked_ts IS NULL`,
         [ts, country, itemId, depletedTs, quantity]
       );
-      return res.rowCount > 0 ? "restocked" : null;
+      if (res.rowCount > 0) {
+        await recomputeAdjustedRestockCycle(client, country, itemId, depletedTs);
+        return "restocked";
+      }
+      return null;
     }
   }
   return null;
@@ -391,6 +400,7 @@ async function replayRestocks(client, scope = {}) {
 
   if (scoped) {
     await fillRateWindowsForItem(client, scope.country, scope.itemId);
+    await recomputeAdjustedRestocksForItem(scope.country, scope.itemId, client);
   } else {
     const eventsByItem = new Map();
     const allEvents = await many(
@@ -410,12 +420,17 @@ async function replayRestocks(client, scope = {}) {
       if (!snapsByItem.has(key)) snapsByItem.set(key, []);
       snapsByItem.get(key).push(row);
     }
+    const amountRows = await many(client, `SELECT country, item_id FROM restock_amounts`);
+    const itemsWithAmount = new Set(amountRows.map((r) => `${r.country}:${r.item_id}`));
     for (const [key, events] of eventsByItem) {
       const [country, itemIdStr] = key.split(":");
       const itemId = Number(itemIdStr);
       const itemSnaps = snapsByItem.get(key) ?? [];
       const windows = computeRateWindowsFromSnapshots(events, itemSnaps);
       await persistRateWindows(client, country, itemId, windows);
+      if (itemsWithAmount.has(key)) {
+        await recomputeAdjustedRestocksForItem(country, itemId, client);
+      }
     }
   }
 
@@ -558,7 +573,8 @@ export async function getRestocks(country, itemId, limit) {
   }
   const rows = await many(
     getPool(),
-    `SELECT depleted_ts, restocked_ts, duration, ignored
+    `SELECT depleted_ts, restocked_ts, duration, ignored,
+            adjusted_restocked_ts, adjusted_duration
      FROM restocks
      WHERE country = $1 AND item_id = $2
      ORDER BY depleted_ts DESC${limitSql}`,
@@ -852,16 +868,22 @@ export async function setRestockAmount(country, itemId, amount) {
   if (!Number.isInteger(amount) || amount <= 0) {
     throw new Error("amount must be a positive integer");
   }
-  await query(
-    `INSERT INTO restock_amounts (country, item_id, amount) VALUES ($1, $2, $3)
-     ON CONFLICT (country, item_id) DO UPDATE SET amount = EXCLUDED.amount`,
-    [country, itemId, amount]
-  );
+  await withTransaction(async (client) => {
+    await client.query(
+      `INSERT INTO restock_amounts (country, item_id, amount) VALUES ($1, $2, $3)
+       ON CONFLICT (country, item_id) DO UPDATE SET amount = EXCLUDED.amount`,
+      [country, itemId, amount]
+    );
+    await recomputeAdjustedRestocksForItem(country, itemId, client);
+  });
 }
 
 export async function deleteRestockAmount(country, itemId) {
-  await query(`DELETE FROM restock_amounts WHERE country = $1 AND item_id = $2`, [
-    country,
-    itemId,
-  ]);
+  await withTransaction(async (client) => {
+    await client.query(`DELETE FROM restock_amounts WHERE country = $1 AND item_id = $2`, [
+      country,
+      itemId,
+    ]);
+    await recomputeAdjustedRestocksForItem(country, itemId, client);
+  });
 }

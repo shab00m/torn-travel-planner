@@ -6,6 +6,7 @@ import { getFlightMatrix } from "./src/flight-times.js";
 import {
   initDb,
   ensurePersistedRates,
+  ensureAdjustedRestocks,
   getHistory,
   getRestocks,
   getDepletionRates,
@@ -651,4 +652,15 @@ server = app.listen(PORT, () => {
   void ensurePersistedRates().catch((err) => {
     console.error(`[depletion-rates] backfill failed: ${err.message}`);
   });
+  void ensureAdjustedRestocks()
+    .then((result) => {
+      if (result.itemsUpdated > 0) {
+        console.log(
+          `[adjusted-restocks] backfilled ${result.itemsUpdated} items (${result.cyclesUpdated} cycles)`
+        );
+      }
+    })
+    .catch((err) => {
+      console.error(`[adjusted-restocks] backfill failed: ${err.message}`);
+    });
 });

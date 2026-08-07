@@ -4,6 +4,7 @@
  * snapshot scans. Open windows use the unfinished restock row + latest qty.
  */
 import { getPool, withTransaction } from "./pg.js";
+import { recomputeAdjustedRestockCycle } from "./adjusted-restocks.js";
 
 async function one(db, text, params = []) {
   const { rows } = await db.query(text, params);
@@ -191,6 +192,8 @@ export async function finalizeRateWindowOnDepletion(client, country, itemId, dep
      WHERE country = $4 AND item_id = $5 AND depleted_ts = $6`,
     [startQty, endTs, endQty, country, itemId, prev.depleted_ts]
   );
+  // Rate window completion improves fallback rate for restock-time adjustment.
+  await recomputeAdjustedRestockCycle(client, country, itemId, prev.depleted_ts);
 }
 
 /**
