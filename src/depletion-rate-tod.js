@@ -6,10 +6,6 @@ async function many(db, text, params = []) {
   return rows;
 }
 
-const REBUILD_CHECK_MS = 60 * 60 * 1000; // hourly check; rebuild at most once per UTC day
-let rebuildTimer = null;
-let lastRebuildUtcDay = null;
-
 /** UTC (Torn City Time) hour 0–23 for a unix timestamp. */
 export function tctHourOfDay(ts) {
   return new Date(ts * 1000).getUTCHours();
@@ -174,39 +170,3 @@ export function rateFromTodHours(ts, hours, fallback) {
   return fallback;
 }
 
-function utcDayKey(ms = Date.now()) {
-  return Math.floor(ms / 86_400_000);
-}
-
-async function maybeRebuildDepletionRateTod() {
-  const day = utcDayKey();
-  if (lastRebuildUtcDay === day) return;
-
-  const latest = await many(
-    getPool(),
-    `SELECT MAX(updated_at) AS "updatedAt" FROM depletion_rate_tod`
-  );
-  const updatedAt = latest[0]?.updatedAt;
-  if (updatedAt != null && utcDayKey(updatedAt * 1000) === day) {
-    lastRebuildUtcDay = day;
-    return;
-  }
-
-  console.log("[depletion-rate-tod] rebuilding daily TCT hour averages…");
-  const result = await rebuildAllDepletionRateTod();
-  lastRebuildUtcDay = day;
-  console.log(
-    `[depletion-rate-tod] rebuilt ${result.itemsUpdated} items (${result.hoursWritten} hour rows)`
-  );
-}
-
-export function startDepletionRateTodRebuild() {
-  if (rebuildTimer) return;
-  const tick = () => {
-    void maybeRebuildDepletionRateTod().catch((err) => {
-      console.error("[depletion-rate-tod] rebuild failed:", err);
-    });
-  };
-  tick();
-  rebuildTimer = setInterval(tick, REBUILD_CHECK_MS);
-}

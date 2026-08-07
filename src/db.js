@@ -320,33 +320,139 @@ async function trackRestock(client, country, itemId, ts, quantity, prevHint) {
 }
 
 /**
+ * Oldest snapshot timestamp for an item, or null if none remain.
+ * @param {import("pg").PoolClient} client
+ */
+async function minSnapshotTs(client, country, itemId) {
+  const row = await one(
+    client,
+    `SELECT MIN(yata_ts) AS min_ts FROM snapshots
+     WHERE country = $1 AND item_id = $2`,
+    [country, itemId]
+  );
+  return row?.min_ts ?? null;
+}
+
+/**
  * Replay snapshot history through transition logic.
+ * Closed restock cycles older than the oldest remaining snapshot are kept —
+ * rebuild only replaces cycles that can still be derived from snapshots
+ * (plus any open/incomplete cycles).
  * @param {import("pg").PoolClient} client
  * @param {{ country?: string, itemId?: number }} [scope]
  *   When set, only that country/item is rebuilt.
  */
 async function replayRestocks(client, scope = {}) {
   const scoped = scope.country != null && scope.itemId != null;
-  const ignoredRows = scoped
-    ? await many(
-        client,
-        `SELECT country, item_id, depleted_ts FROM restocks
-         WHERE ignored = 1 AND country = $1 AND item_id = $2`,
-        [scope.country, scope.itemId]
-      )
-    : await many(
-        client,
-        `SELECT country, item_id, depleted_ts FROM restocks WHERE ignored = 1`
-      );
 
   if (scoped) {
-    await client.query(`DELETE FROM restocks WHERE country = $1 AND item_id = $2`, [
-      scope.country,
-      scope.itemId,
-    ]);
-  } else {
-    await client.query("DELETE FROM restocks");
+    const minTs = await minSnapshotTs(client, scope.country, scope.itemId);
+    if (minTs == null) {
+      return { opened: 0, closed: 0 };
+    }
+
+    const ignoredRows = await many(
+      client,
+      `SELECT country, item_id, depleted_ts FROM restocks
+       WHERE ignored = 1 AND country = $1 AND item_id = $2
+         AND (depleted_ts >= $3 OR restocked_ts IS NULL)`,
+      [scope.country, scope.itemId, minTs]
+    );
+
+    await client.query(
+      `DELETE FROM restocks
+       WHERE country = $1 AND item_id = $2
+         AND (depleted_ts >= $3 OR restocked_ts IS NULL)`,
+      [scope.country, scope.itemId, minTs]
+    );
+
+    let opened = 0;
+    let closed = 0;
+    let prevTs = null;
+    let prevQuantity = null;
+
+    const snapshots = await many(
+      client,
+      `SELECT country, item_id, yata_ts, quantity
+       FROM snapshots
+       WHERE country = $1 AND item_id = $2
+       ORDER BY yata_ts ASC`,
+      [scope.country, scope.itemId]
+    );
+
+    for (const row of snapshots) {
+      if (prevTs != null) {
+        const result = await applyTransition(
+          client,
+          row.country,
+          row.item_id,
+          row.yata_ts,
+          prevTs,
+          prevQuantity,
+          row.quantity,
+          { persistRates: false }
+        );
+        if (result === "depleted") opened += 1;
+        else if (result === "restocked") closed += 1;
+      }
+      prevTs = row.yata_ts;
+      prevQuantity = row.quantity;
+    }
+
+    for (const row of ignoredRows) {
+      const match = await one(
+        client,
+        `SELECT depleted_ts FROM restocks
+         WHERE country = $1 AND item_id = $2
+           AND depleted_ts <= $3
+           AND depleted_ts >= $4
+           AND (restocked_ts IS NULL OR restocked_ts > $3)
+         ORDER BY depleted_ts DESC LIMIT 1`,
+        [row.country, row.item_id, row.depleted_ts, minTs]
+      );
+      if (match) {
+        await client.query(
+          `UPDATE restocks SET ignored = 1
+           WHERE country = $1 AND item_id = $2 AND depleted_ts = $3`,
+          [row.country, row.item_id, match.depleted_ts]
+        );
+      }
+    }
+
+    await fillRateWindowsForItem(client, scope.country, scope.itemId, {
+      sinceDepletedTs: minTs,
+    });
+    await recomputeAdjustedRestocksForItem(scope.country, scope.itemId, client, {
+      sinceDepletedTs: minTs,
+    });
+
+    return { opened, closed };
   }
+
+  // Global rebuild: per-item snapshot floor so history beyond retained snapshots survives.
+  const ignoredRows = await many(
+    client,
+    `SELECT r.country, r.item_id, r.depleted_ts
+     FROM restocks r
+     INNER JOIN (
+       SELECT country, item_id, MIN(yata_ts) AS min_ts
+       FROM snapshots
+       GROUP BY country, item_id
+     ) s ON s.country = r.country AND s.item_id = r.item_id
+     WHERE r.ignored = 1
+       AND (r.depleted_ts >= s.min_ts OR r.restocked_ts IS NULL)`
+  );
+
+  await client.query(
+    `DELETE FROM restocks r
+     USING (
+       SELECT country, item_id, MIN(yata_ts) AS min_ts
+       FROM snapshots
+       GROUP BY country, item_id
+     ) s
+     WHERE r.country = s.country AND r.item_id = s.item_id
+       AND (r.depleted_ts >= s.min_ts OR r.restocked_ts IS NULL)`
+  );
 
   let opened = 0;
   let closed = 0;
@@ -354,24 +460,17 @@ async function replayRestocks(client, scope = {}) {
   let prevTs = null;
   let prevQuantity = null;
 
-  const snapshots = scoped
-    ? await many(
-        client,
-        `SELECT country, item_id, yata_ts, quantity
-         FROM snapshots
-         WHERE country = $1 AND item_id = $2
-         ORDER BY yata_ts ASC`,
-        [scope.country, scope.itemId]
-      )
-    : await many(
-        client,
-        `SELECT country, item_id, yata_ts, quantity
-         FROM snapshots
-         ORDER BY country, item_id, yata_ts ASC`
-      );
+  const snapshots = await many(
+    client,
+    `SELECT country, item_id, yata_ts, quantity
+     FROM snapshots
+     ORDER BY country, item_id, yata_ts ASC`
+  );
 
+  const minTsByItem = new Map();
   for (const row of snapshots) {
     const rowKey = `${row.country}:${row.item_id}`;
+    if (!minTsByItem.has(rowKey)) minTsByItem.set(rowKey, row.yata_ts);
     if (rowKey === key) {
       const result = await applyTransition(
         client,
@@ -392,14 +491,17 @@ async function replayRestocks(client, scope = {}) {
   }
 
   for (const row of ignoredRows) {
+    const minTs = minTsByItem.get(`${row.country}:${row.item_id}`);
+    if (minTs == null) continue;
     const match = await one(
       client,
       `SELECT depleted_ts FROM restocks
        WHERE country = $1 AND item_id = $2
          AND depleted_ts <= $3
+         AND depleted_ts >= $4
          AND (restocked_ts IS NULL OR restocked_ts > $3)
        ORDER BY depleted_ts DESC LIMIT 1`,
-      [row.country, row.item_id, row.depleted_ts]
+      [row.country, row.item_id, row.depleted_ts, minTs]
     );
     if (match) {
       await client.query(
@@ -410,39 +512,38 @@ async function replayRestocks(client, scope = {}) {
     }
   }
 
-  if (scoped) {
-    await fillRateWindowsForItem(client, scope.country, scope.itemId);
-    await recomputeAdjustedRestocksForItem(scope.country, scope.itemId, client);
-  } else {
-    const eventsByItem = new Map();
-    const allEvents = await many(
-      client,
-      `SELECT country, item_id, depleted_ts, restocked_ts, ignored
-       FROM restocks
-       ORDER BY country, item_id, depleted_ts ASC`
-    );
-    for (const row of allEvents) {
-      const key = `${row.country}:${row.item_id}`;
-      if (!eventsByItem.has(key)) eventsByItem.set(key, []);
-      eventsByItem.get(key).push(row);
-    }
-    const snapsByItem = new Map();
-    for (const row of snapshots) {
-      const key = `${row.country}:${row.item_id}`;
-      if (!snapsByItem.has(key)) snapsByItem.set(key, []);
-      snapsByItem.get(key).push(row);
-    }
-    const amountRows = await many(client, `SELECT country, item_id FROM restock_amounts`);
-    const itemsWithAmount = new Set(amountRows.map((r) => `${r.country}:${r.item_id}`));
-    for (const [key, events] of eventsByItem) {
-      const [country, itemIdStr] = key.split(":");
-      const itemId = Number(itemIdStr);
-      const itemSnaps = snapsByItem.get(key) ?? [];
-      const windows = computeRateWindowsFromSnapshots(events, itemSnaps);
-      await persistRateWindows(client, country, itemId, windows);
-      if (itemsWithAmount.has(key)) {
-        await recomputeAdjustedRestocksForItem(country, itemId, client);
-      }
+  const eventsByItem = new Map();
+  const allEvents = await many(
+    client,
+    `SELECT country, item_id, depleted_ts, restocked_ts, ignored
+     FROM restocks
+     ORDER BY country, item_id, depleted_ts ASC`
+  );
+  for (const row of allEvents) {
+    const itemKey = `${row.country}:${row.item_id}`;
+    const minTs = minTsByItem.get(itemKey);
+    if (minTs == null || row.depleted_ts < minTs) continue;
+    if (!eventsByItem.has(itemKey)) eventsByItem.set(itemKey, []);
+    eventsByItem.get(itemKey).push(row);
+  }
+  const snapsByItem = new Map();
+  for (const row of snapshots) {
+    const itemKey = `${row.country}:${row.item_id}`;
+    if (!snapsByItem.has(itemKey)) snapsByItem.set(itemKey, []);
+    snapsByItem.get(itemKey).push(row);
+  }
+  const amountRows = await many(client, `SELECT country, item_id FROM restock_amounts`);
+  const itemsWithAmount = new Set(amountRows.map((r) => `${r.country}:${r.item_id}`));
+  for (const [itemKey, events] of eventsByItem) {
+    const [country, itemIdStr] = itemKey.split(":");
+    const itemId = Number(itemIdStr);
+    const itemSnaps = snapsByItem.get(itemKey) ?? [];
+    const windows = computeRateWindowsFromSnapshots(events, itemSnaps);
+    await persistRateWindows(client, country, itemId, windows);
+    if (itemsWithAmount.has(itemKey)) {
+      await recomputeAdjustedRestocksForItem(country, itemId, client, {
+        sinceDepletedTs: minTsByItem.get(itemKey),
+      });
     }
   }
 

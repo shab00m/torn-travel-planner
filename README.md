@@ -35,7 +35,7 @@ Then open http://localhost:3000.
 
 `DATABASE_URL` is required. Schema is applied by `npm run migrate` (also runs on server startup).
 
-`npm run backfill` replays all stored snapshots through the restock detection logic and rebuilds the restocks table from scratch.
+`npm run backfill` replays stored snapshots through the restock detection logic. Closed restocks older than the oldest remaining snapshot per item are preserved.
 
 To import an old SQLite file into Postgres (requires Node >= 23.4 for `node:sqlite`):
 
@@ -53,17 +53,32 @@ Production project (do not create a second one):
 | Project ID | `18b99ba3-c5d4-42a3-a572-4342dca87fd9` |
 | Environment | production (`7cae12f4-51c9-43d0-b65b-a0a810d8f83d`) |
 | App service | torn-travel-planner (`8daf31fe-ce79-4d68-bd2d-3e813ad431a4`) |
+| Cron service | torn-travel-planner-cron (`bf4e9c38-c473-4611-affb-e8bd5eafc118`) |
 | Database | Postgres (`8cbfa40a-04c3-4c31-9308-612200e19bf1`) |
 
-The app service should have `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
+Both app and cron services should have `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
+
+### Daily cron service
+
+`torn-travel-planner-cron` runs `node scripts/cron-daily.mjs` daily at **04:00 UTC** (`railway.cron.toml`). It:
+
+1. Deletes `snapshots` older than 30 days (restock/depletion events in `restocks` are kept)
+2. Rebuilds `depletion_rate_tod` averages
+
+Config-as-code path on that service is `railway.cron.toml` (do **not** point the web app at that file). Local run: `npm run cron-daily`.
+
+Rebuild restocks only replaces cycles that still have matching snapshot history; closed restocks older than the oldest remaining snapshot are preserved.
 
 ## Project structure
 
 | Path | Purpose |
 | --- | --- |
 | `server.js` | Express app, API routes, static file serving |
+| `scripts/cron-daily.mjs` | Railway cron entrypoint (snapshot purge + TOD rebuild) |
+| `railway.cron.toml` | Config-as-code for the cron service only |
 | `src/yata.js` | YATA API polling loop |
 | `src/db.js` | Postgres access, snapshot writes, history queries |
+| `src/snapshot-retention.js` | Snapshot age purge (keeps restocks) |
 | `src/migrate.js` | SQL migration runner |
 | `migrations/` | Versioned schema SQL |
 | `src/countries.js` | Country code -> name/flag mapping |

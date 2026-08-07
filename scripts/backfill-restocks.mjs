@@ -1,5 +1,6 @@
 // Replays all stored snapshots through the restock transition logic.
-// Safe to run repeatedly — rebuilds restocks from snapshot history.
+// Safe to run repeatedly. Closed restocks older than the oldest remaining
+// snapshot per item are preserved; only in-window cycles are rebuilt.
 // Usage: npm run backfill
 import { initDb, backfillRestocks, closePool } from "../src/db.js";
 

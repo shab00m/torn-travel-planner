@@ -33,10 +33,7 @@ import {
 } from "./src/market.js";
 import { getCachedItemTypes, ensureItemTypesPopulated } from "./src/item-types.js";
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
-import {
-  getDepletionRateTod,
-  startDepletionRateTodRebuild,
-} from "./src/depletion-rate-tod.js";
+import { getDepletionRateTod } from "./src/depletion-rate-tod.js";
 import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
 import { listUsers, createUser, updateUser, deleteUser, seedBootstrapAdmin } from "./src/users.js";
 import { recordPageView, listPageViews, getClientIp } from "./src/analytics.js";
@@ -647,7 +644,6 @@ server = app.listen(PORT, () => {
   console.log(`Torn Travel Planner running at http://localhost:${PORT}`);
   startPolling();
   startMarketRefresh();
-  startDepletionRateTodRebuild();
   void ensureItemTypesPopulated();
   void ensurePersistedRates().catch((err) => {
     console.error(`[depletion-rates] backfill failed: ${err.message}`);

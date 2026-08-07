@@ -118,16 +118,23 @@ export async function persistRateWindows(db, country, itemId, windows) {
 /**
  * Recompute and persist rate windows for one item from its snapshots.
  * @param {import("pg").PoolClient | import("pg").Pool} db
+ * @param {{ sinceDepletedTs?: number }} [options]
+ *   When set, only cycles with depleted_ts >= sinceDepletedTs are updated
+ *   (older persisted rate windows are left untouched).
  */
-export async function fillRateWindowsForItem(db, country, itemId) {
+export async function fillRateWindowsForItem(db, country, itemId, options = {}) {
+  const sinceDepletedTs = options.sinceDepletedTs;
+  const eventParams = [country, itemId];
+  let eventSql = `SELECT depleted_ts, restocked_ts, ignored FROM restocks
+       WHERE country = $1 AND item_id = $2`;
+  if (sinceDepletedTs != null) {
+    eventSql += ` AND depleted_ts >= $3`;
+    eventParams.push(sinceDepletedTs);
+  }
+  eventSql += ` ORDER BY depleted_ts ASC`;
+
   const [events, snapshots] = await Promise.all([
-    many(
-      db,
-      `SELECT depleted_ts, restocked_ts, ignored FROM restocks
-       WHERE country = $1 AND item_id = $2
-       ORDER BY depleted_ts ASC`,
-      [country, itemId]
-    ),
+    many(db, eventSql, eventParams),
     many(
       db,
       `SELECT yata_ts, quantity FROM snapshots
