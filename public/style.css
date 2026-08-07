@@ -1898,14 +1898,20 @@ body.page-item {
 .cycle-history th:nth-child(2),
 .cycle-history td:nth-child(2),
 .cycle-history th:nth-child(3),
-.cycle-history td:nth-child(3) {
+.cycle-history td:nth-child(3),
+.cycle-history th:nth-child(4),
+.cycle-history td:nth-child(4) {
   text-align: left;
 }
 
-.cycle-history th:nth-child(4),
 .cycle-history th:nth-child(5),
-.cycle-history td:nth-child(4),
-.cycle-history td:nth-child(5) {
+.cycle-history th:nth-child(6),
+.cycle-history th:nth-child(7),
+.cycle-history th:nth-child(8),
+.cycle-history td:nth-child(5),
+.cycle-history td:nth-child(6),
+.cycle-history td:nth-child(7),
+.cycle-history td:nth-child(8) {
   text-align: right;
 }
 

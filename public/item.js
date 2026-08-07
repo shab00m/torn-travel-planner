@@ -1166,12 +1166,21 @@ function getCycleHistoryRows() {
     .filter((r) => includeIgnored || !r.ignored)
     .map((r) => {
       const origIdx = state.rates.findIndex((w) => w.start_ts === r.restocked_ts);
-      const rate = origIdx >= 0 ? adjustedRates[origIdx]?.rate : null;
+      const observedRate = origIdx >= 0 ? state.rates[origIdx]?.rate : null;
+      const adjustedRate = origIdx >= 0 ? adjustedRates[origIdx]?.rate : null;
+      const adjustedRestocked = r.adjusted_restocked_ts ?? r.restocked_ts;
+      const adjustedEmptyFor = r.adjusted_duration ?? r.duration;
       return {
         depleted_ts: r.depleted_ts,
-        restocked_ts: r.adjusted_restocked_ts,
-        rate,
-        emptyForSec: r.adjusted_duration,
+        // Effective (adjusted) fields — used by Empty-for chart + History filter.
+        restocked_ts: adjustedRestocked,
+        emptyForSec: adjustedEmptyFor,
+        observed_restocked_ts: r.restocked_ts,
+        adjusted_restocked_ts: r.adjusted_restocked_ts,
+        rate: observedRate,
+        adjusted_rate: adjustedRate,
+        observed_emptyForSec: r.duration,
+        adjusted_emptyForSec: r.adjusted_duration,
         ignored: Boolean(r.ignored),
       };
     })
@@ -1273,7 +1282,7 @@ function renderCycleHistory() {
 
   if (!rows.length) {
     el.cycleHistoryBody.innerHTML =
-      `<tr><td colspan="5" class="empty-note">No depletion/restock cycles observed yet.</td></tr>`;
+      `<tr><td colspan="8" class="empty-note">No depletion/restock cycles observed yet.</td></tr>`;
     renderCycleHistoryPager(0);
     return;
   }
@@ -1305,12 +1314,23 @@ function renderCycleHistory() {
       ]
         .filter(Boolean)
         .join(" ");
+      const adjRestocked =
+        r.adjusted_restocked_ts != null ? fmtTime(r.adjusted_restocked_ts) : "—";
+      const adjRate =
+        r.adjusted_rate != null ? `${fmtRate(r.adjusted_rate)}/min` : "—";
+      const adjEmpty =
+        r.adjusted_emptyForSec != null ? fmtDuration(r.adjusted_emptyForSec) : "—";
       return `<tr class="${classes}" data-depleted-ts="${r.depleted_ts}">
         ${countCell}
-        <td>${fmtTime(r.restocked_ts)}</td>
+        <td>${fmtTime(r.observed_restocked_ts)}</td>
+        <td>${adjRestocked}</td>
         <td>${fmtTime(r.depleted_ts)}</td>
         <td class="rate-cell">${r.rate != null ? `${fmtRate(r.rate)}/min` : "—"}</td>
-        <td class="duration-cell">${fmtDuration(r.emptyForSec)}</td>
+        <td class="rate-cell">${adjRate}</td>
+        <td class="duration-cell">${
+          r.observed_emptyForSec != null ? fmtDuration(r.observed_emptyForSec) : "—"
+        }</td>
+        <td class="duration-cell">${adjEmpty}</td>
       </tr>`;
     })
     .join("");
