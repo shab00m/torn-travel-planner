@@ -86,7 +86,10 @@ Out-of-stock periods and in-stock depletion-rate windows (newest first, full his
 
 **Response:** `{ restocks, rates, rateTod }`
 
-- `restocks[]` — `{ depleted_ts, restocked_ts, duration, ignored, adjusted_restocked_ts, adjusted_duration }` (`adjusted_*` are null when no restock amount is configured or the cycle is still open; otherwise the back-extrapolated restock time / empty-for duration)
+- `restocks[]` — `{ depleted_ts, restocked_ts, duration, ignored, adjusted_depleted_ts, adjusted_restocked_ts, adjusted_duration }`
+  - `depleted_ts` / `restocked_ts` — first observed qty=0 / first in-stock snapshots
+  - `adjusted_depleted_ts` — rate-extrapolated empty start (always set when known)
+  - `adjusted_restocked_ts` / `adjusted_duration` — restock-amount back-extrapolation and effective empty-for (`adjusted_restocked − adjusted_depleted`); `adjusted_restocked_ts` is null when no restock amount is configured
 - `rates[]` — `{ start_ts, end_ts, start_qty, end_qty, rate, open }` (rate in items/minute)
 - `rateTod` — `{ hours: (number|null)[24], updatedAt: number|null }` minute-weighted average depletion rate by Torn City Time (UTC) hour-of-day, rebuilt daily from all completed non-ignored rate windows. Missing hours are `null`.
 

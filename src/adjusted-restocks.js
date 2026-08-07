@@ -86,13 +86,25 @@ function resolveStartQty(cycle, points) {
   return snap?.quantity ?? null;
 }
 
+/** Effective empty-start for clamps / adjusted empty-for. */
+function effectiveDepletedTs(cycle) {
+  return cycle.adjusted_depleted_ts ?? cycle.depleted_ts;
+}
+
 /**
+ * Clear restock-amount back-extrapolation; keep adjusted_depleted_ts and
+ * refresh adjusted_duration from observed restock − adjusted deplete.
  * @param {import("pg").PoolClient | import("pg").Pool} db
  */
 async function clearAdjustedRestocks(db, country, itemId) {
   await db.query(
     `UPDATE restocks
-     SET adjusted_restocked_ts = NULL, adjusted_duration = NULL
+     SET adjusted_restocked_ts = NULL,
+         adjusted_duration = CASE
+           WHEN restocked_ts IS NOT NULL
+           THEN restocked_ts - COALESCE(adjusted_depleted_ts, depleted_ts)
+           ELSE NULL
+         END
      WHERE country = $1 AND item_id = $2`,
     [country, itemId]
   );
@@ -101,32 +113,49 @@ async function clearAdjustedRestocks(db, country, itemId) {
 /**
  * @param {import("pg").PoolClient | import("pg").Pool} db
  */
-async function writeAdjusted(db, country, itemId, depletedTs, adjustedTs, adjustedDuration) {
+async function writeAdjusted(
+  db,
+  country,
+  itemId,
+  depletedTs,
+  adjustedRestockedTs,
+  adjustedDuration
+) {
   await db.query(
     `UPDATE restocks
      SET adjusted_restocked_ts = $1, adjusted_duration = $2
      WHERE country = $3 AND item_id = $4 AND depleted_ts = $5`,
-    [adjustedTs, adjustedDuration, country, itemId, depletedTs]
+    [adjustedRestockedTs, adjustedDuration, country, itemId, depletedTs]
   );
 }
 
 /**
- * Compute and persist adjusted restock time for one closed cycle.
+ * Compute and persist adjusted restock time / empty-for for one closed cycle.
  * @param {import("pg").PoolClient | import("pg").Pool} db
  */
 export async function recomputeAdjustedRestockCycle(db, country, itemId, depletedTs) {
   const amount = await fetchRestockAmount(db, country, itemId);
   const cycle = await one(
     db,
-    `SELECT depleted_ts, restocked_ts, duration, rate_start_qty, rate_end_ts, rate_end_qty
+    `SELECT depleted_ts, restocked_ts, duration, rate_start_qty, rate_end_ts, rate_end_qty,
+            adjusted_depleted_ts
      FROM restocks
      WHERE country = $1 AND item_id = $2 AND depleted_ts = $3`,
     [country, itemId, depletedTs]
   );
   if (!cycle?.restocked_ts) return false;
 
+  const adjDepleted = effectiveDepletedTs(cycle);
+
   if (amount == null) {
-    await writeAdjusted(db, country, itemId, depletedTs, null, null);
+    await writeAdjusted(
+      db,
+      country,
+      itemId,
+      depletedTs,
+      null,
+      cycle.restocked_ts - adjDepleted
+    );
     return true;
   }
 
@@ -137,11 +166,18 @@ export async function recomputeAdjustedRestockCycle(db, country, itemId, deplete
      WHERE country = $1 AND item_id = $2
        AND yata_ts >= $3 AND yata_ts <= $4
      ORDER BY yata_ts ASC`,
-    [country, itemId, cycle.depleted_ts, cycle.restocked_ts + 3600]
+    [country, itemId, adjDepleted, cycle.restocked_ts + 3600]
   );
   const startQty = resolveStartQty(cycle, points);
   if (startQty == null || startQty <= 0) {
-    await writeAdjusted(db, country, itemId, depletedTs, cycle.restocked_ts, cycle.duration);
+    await writeAdjusted(
+      db,
+      country,
+      itemId,
+      depletedTs,
+      null,
+      cycle.restocked_ts - adjDepleted
+    );
     return true;
   }
 
@@ -151,24 +187,18 @@ export async function recomputeAdjustedRestockCycle(db, country, itemId, deplete
     observedQty: startQty,
     fallbackRatePerMin: fallbackRatePerMin(cycle, startQty),
     restockAmount: amount,
-    depletedTs: cycle.depleted_ts,
-    lastZero: lastZeroBeforeRestock(lookup, cycle.restocked_ts, cycle.depleted_ts),
+    depletedTs: adjDepleted,
+    lastZero: lastZeroBeforeRestock(lookup, cycle.restocked_ts, adjDepleted),
     points,
   });
-  await writeAdjusted(
-    db,
-    country,
-    itemId,
-    depletedTs,
-    adjustedTs,
-    adjustedTs - cycle.depleted_ts
-  );
+  await writeAdjusted(db, country, itemId, depletedTs, adjustedTs, adjustedTs - adjDepleted);
   return true;
 }
 
 /**
  * Recompute adjusted columns for every closed cycle of one item.
- * Clears columns when no restock amount is configured.
+ * When no restock amount: clears adjusted_restocked_ts but keeps adjusted empty-for
+ * from adjusted_depleted_ts.
  * @param {string} country
  * @param {number} itemId
  * @param {import("pg").PoolClient | import("pg").Pool} [db]
@@ -182,7 +212,8 @@ export async function recomputeAdjustedRestocksForItem(country, itemId, db = get
 
   const cycles = await many(
     db,
-    `SELECT depleted_ts, restocked_ts, duration, rate_start_qty, rate_end_ts, rate_end_qty
+    `SELECT depleted_ts, restocked_ts, duration, rate_start_qty, rate_end_ts, rate_end_qty,
+            adjusted_depleted_ts
      FROM restocks
      WHERE country = $1 AND item_id = $2 AND restocked_ts IS NOT NULL
      ORDER BY depleted_ts ASC`,
@@ -190,7 +221,7 @@ export async function recomputeAdjustedRestocksForItem(country, itemId, db = get
   );
   if (!cycles.length) return { updated: 0, cleared: false };
 
-  const minTs = Math.min(...cycles.map((c) => c.depleted_ts));
+  const minTs = Math.min(...cycles.map((c) => effectiveDepletedTs(c)));
   const maxTs = Math.max(...cycles.map((c) => c.restocked_ts)) + 3600;
   const points = await many(
     db,
@@ -204,22 +235,28 @@ export async function recomputeAdjustedRestocksForItem(country, itemId, db = get
   let updated = 0;
 
   for (const cycle of cycles) {
+    const adjDepleted = effectiveDepletedTs(cycle);
     const startQty = resolveStartQty(cycle, points);
     let adjustedTs = cycle.restocked_ts;
-    let adjustedDuration = cycle.duration;
     if (startQty != null && startQty > 0) {
       adjustedTs = adjustRestockTime({
         restockedTs: cycle.restocked_ts,
         observedQty: startQty,
         fallbackRatePerMin: fallbackRatePerMin(cycle, startQty),
         restockAmount: amount,
-        depletedTs: cycle.depleted_ts,
-        lastZero: lastZeroBeforeRestock(lookup, cycle.restocked_ts, cycle.depleted_ts),
+        depletedTs: adjDepleted,
+        lastZero: lastZeroBeforeRestock(lookup, cycle.restocked_ts, adjDepleted),
         points,
       });
-      adjustedDuration = adjustedTs - cycle.depleted_ts;
     }
-    await writeAdjusted(db, country, itemId, cycle.depleted_ts, adjustedTs, adjustedDuration);
+    await writeAdjusted(
+      db,
+      country,
+      itemId,
+      cycle.depleted_ts,
+      adjustedTs,
+      adjustedTs - adjDepleted
+    );
     updated += 1;
   }
   return { updated, cleared: false };

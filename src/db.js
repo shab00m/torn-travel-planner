@@ -171,15 +171,25 @@ async function applyTransition(
       );
       if (openWhileEmpty) return null;
     }
-    const depletedTs = await estimateDepletedTs(client, country, itemId, ts, prevTs, prevQuantity);
+    // depleted_ts = first observed zero snapshot; adjusted_depleted_ts = rate estimate.
+    const observedDepletedTs = ts;
+    const adjustedDepletedTs = await estimateDepletedTs(
+      client,
+      country,
+      itemId,
+      observedDepletedTs,
+      prevTs,
+      prevQuantity
+    );
     const res = await client.query(
-      `INSERT INTO restocks (country, item_id, depleted_ts) VALUES ($1, $2, $3)
+      `INSERT INTO restocks (country, item_id, depleted_ts, adjusted_depleted_ts)
+       VALUES ($1, $2, $3, $4)
        ON CONFLICT DO NOTHING`,
-      [country, itemId, depletedTs]
+      [country, itemId, observedDepletedTs, adjustedDepletedTs]
     );
     if (res.rowCount > 0) {
       if (persistRates) {
-        await finalizeRateWindowOnDepletion(client, country, itemId, depletedTs);
+        await finalizeRateWindowOnDepletion(client, country, itemId, observedDepletedTs);
       }
       return "depleted";
     }
@@ -229,7 +239,7 @@ async function applyTransition(
            ORDER BY yata_ts DESC LIMIT 1`,
           [country, itemId, observedZero]
         );
-        depletedTs =
+        const adjustedDepletedTs =
           prev && prev.quantity > 0
             ? await estimateDepletedTs(
                 client,
@@ -240,6 +250,7 @@ async function applyTransition(
                 prev.quantity
               )
             : observedZero;
+        depletedTs = observedZero;
         const existing = await one(
           client,
           `SELECT depleted_ts, restocked_ts FROM restocks
@@ -248,9 +259,10 @@ async function applyTransition(
         );
         if (existing?.restocked_ts != null) return null;
         await client.query(
-          `INSERT INTO restocks (country, item_id, depleted_ts) VALUES ($1, $2, $3)
+          `INSERT INTO restocks (country, item_id, depleted_ts, adjusted_depleted_ts)
+           VALUES ($1, $2, $3, $4)
            ON CONFLICT DO NOTHING`,
-          [country, itemId, depletedTs]
+          [country, itemId, depletedTs, adjustedDepletedTs]
         );
       }
     }
@@ -574,7 +586,7 @@ export async function getRestocks(country, itemId, limit) {
   const rows = await many(
     getPool(),
     `SELECT depleted_ts, restocked_ts, duration, ignored,
-            adjusted_restocked_ts, adjusted_duration
+            adjusted_depleted_ts, adjusted_restocked_ts, adjusted_duration
      FROM restocks
      WHERE country = $1 AND item_id = $2
      ORDER BY depleted_ts DESC${limitSql}`,

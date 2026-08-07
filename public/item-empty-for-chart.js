@@ -28,6 +28,7 @@ function getEmptyForChartPoints() {
         x: swapped ? timeMs : r.emptyForSec,
         y: swapped ? r.emptyForSec : timeMs,
         depleted_ts: r.depleted_ts,
+        adjusted_depleted_ts: r.adjusted_depleted_ts ?? r.effective_depleted_ts ?? r.depleted_ts,
         restocked_ts: r.restocked_ts,
         emptyForSec: r.emptyForSec,
       };
@@ -145,6 +146,13 @@ function emptyForChartOptions(points) {
           afterLabel: (ctx) => {
             const raw = ctx.raw;
             if (!raw) return "";
+            const adj = raw.adjusted_depleted_ts;
+            if (adj != null && adj !== raw.depleted_ts) {
+              return [
+                `Depleted: ${fmtTime(raw.depleted_ts)}`,
+                `Adj. depleted: ${fmtTime(adj)}`,
+              ];
+            }
             return `Depleted: ${fmtTime(raw.depleted_ts)}`;
           },
         },

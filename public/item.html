@@ -303,21 +303,23 @@
 						<col />
 						<col />
 						<col />
-						<col style="width: 6.5rem" />
-						<col style="width: 6.5rem" />
-						<col style="width: 6.5rem" />
-						<col style="width: 6.5rem" />
+						<col />
+						<col style="width: 6rem" />
+						<col style="width: 6rem" />
+						<col style="width: 6rem" />
+						<col style="width: 6rem" />
 					</colgroup>
 					<thead>
 						<tr>
 							<th class="cycle-count-header" title="Include in averages, min/max, and predictions">Count</th>
 							<th title="First observed in-stock snapshot">Restocked</th>
 							<th title="Back-extrapolated restock time from restock amount">Adj. restocked</th>
-							<th>Depleted</th>
+							<th title="First observed qty=0 snapshot">Depleted</th>
+							<th title="Rate-extrapolated empty start between last positive and first zero">Adj. depleted</th>
 							<th title="Observed depletion rate from first in-stock snapshot">Rate</th>
 							<th title="Depletion rate using adjusted restock time and full restock amount">Adj. rate</th>
 							<th title="Observed empty duration (restocked − depleted)">Empty for</th>
-							<th title="Adjusted empty duration (adj. restocked − depleted)">Adj. empty for</th>
+							<th title="Adjusted empty duration (adj. restocked − adj. depleted)">Adj. empty for</th>
 						</tr>
 					</thead>
 					<tbody id="cycle-history-body"></tbody>

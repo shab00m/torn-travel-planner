@@ -664,34 +664,52 @@ function rateWindowForRestock(restockedTs) {
   return state.rates.find((w) => w.start_ts === restockedTs);
 }
 
+function effectiveDepletedTs(r) {
+  return r.adjusted_depleted_ts ?? r.depleted_ts;
+}
+
 function adjustedRestockRecord(r) {
+  const adjDepleted = effectiveDepletedTs(r);
   // Prefer server-persisted adjustment (independent of loaded History snapshots).
-  if (r.adjusted_restocked_ts != null && r.adjusted_duration != null) {
+  if (r.adjusted_duration != null) {
     return {
       ...r,
-      adjusted_restocked_ts: r.adjusted_restocked_ts,
+      adjusted_depleted_ts: adjDepleted,
+      adjusted_restocked_ts: r.adjusted_restocked_ts ?? r.restocked_ts,
       adjusted_duration: r.adjusted_duration,
     };
   }
   const amount = currentRestockAmount();
   if (!amount || r.restocked_ts == null) {
-    return { ...r, adjusted_restocked_ts: r.restocked_ts, adjusted_duration: r.duration };
+    return {
+      ...r,
+      adjusted_depleted_ts: adjDepleted,
+      adjusted_restocked_ts: r.restocked_ts,
+      adjusted_duration:
+        r.restocked_ts != null && adjDepleted != null ? r.restocked_ts - adjDepleted : r.duration,
+    };
   }
   const window = rateWindowForRestock(r.restocked_ts);
   if (!window) {
-    return { ...r, adjusted_restocked_ts: r.restocked_ts, adjusted_duration: r.duration };
+    return {
+      ...r,
+      adjusted_depleted_ts: adjDepleted,
+      adjusted_restocked_ts: r.restocked_ts,
+      adjusted_duration: r.restocked_ts - adjDepleted,
+    };
   }
   const adjustedTs = adjustRestockTime(
     r.restocked_ts,
     window.start_qty,
     window.rate,
     amount,
-    r.depleted_ts
+    adjDepleted
   );
   return {
     ...r,
+    adjusted_depleted_ts: adjDepleted,
     adjusted_restocked_ts: adjustedTs,
-    adjusted_duration: adjustedTs - r.depleted_ts,
+    adjusted_duration: adjustedTs - adjDepleted,
   };
 }
 
@@ -713,7 +731,7 @@ function adjustedRateWindow(w) {
           w.start_qty,
           w.rate,
           amount,
-          restock?.depleted_ts
+          restock ? effectiveDepletedTs(restock) : null
         );
   const rate = rateFromWindowEndpoints(startTs, w.end_ts, amount, w.end_qty) ?? w.rate;
   return { ...w, start_ts: startTs, start_qty: amount, rate };
@@ -844,7 +862,8 @@ function simulatePredictions(startTs, endTs, startQty, averages, nowTs = startTs
   let t = startTs;
   let qty = startQty;
   let outOfStock = startQty === 0;
-  let depletedTs = open?.depleted_ts ?? null;
+  const openCycleKey = open?.depleted_ts ?? null;
+  let depletedTs = open ? effectiveDepletedTs(open) : null;
   let firstOpenCycle = outOfStock;
 
   while (t < endTs) {
@@ -853,12 +872,13 @@ function simulatePredictions(startTs, endTs, startQty, averages, nowTs = startTs
         firstOpenCycle && depletedTs != null
           ? openCycleRestockSec(depletedTs, restockSec, nowTs)
           : restockSec;
+      const cycleKey = firstOpenCycle ? openCycleKey : depletedTs;
       firstOpenCycle = false;
       const restockTs = Math.round(
         depletedTs ? Math.max(t, depletedTs + sec) : t + sec
       );
       if (restockTs > endTs) break;
-      events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: depletedTs });
+      events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: cycleKey });
       t = restockTs;
       qty = restockQty;
       outOfStock = false;
@@ -1032,6 +1052,7 @@ function buildAnnotations(restocks, rates, timeline) {
 
   restocks.filter((r) => !r.ignored).forEach((r, i) => {
     const adjusted = adjustedRestockRecord(r);
+    const boxStart = effectiveDepletedTs(adjusted);
     let boxEnd = adjusted.adjusted_restocked_ts;
     let durationSec = adjusted.adjusted_duration;
 
@@ -1041,13 +1062,13 @@ function buildAnnotations(restocks, rates, timeline) {
         events.find((e) => e.type === "restock" && e.depleted_ts === r.depleted_ts) ??
         events.find((e) => e.type === "restock" && e.ts >= dataTs);
       boxEnd = nextPred?.ts ?? Math.max(dataTs, wallTs);
-      durationSec = boxEnd - r.depleted_ts;
+      durationSec = boxEnd - boxStart;
     }
 
-    if (tsMs(boxEnd) < xMin || tsMs(r.depleted_ts) > xMax) return;
+    if (tsMs(boxEnd) < xMin || tsMs(boxStart) > xMax) return;
     annotations[`restock${i}`] = {
       type: "box",
-      xMin: tsMs(r.depleted_ts),
+      xMin: tsMs(boxStart),
       xMax: tsMs(boxEnd),
       backgroundColor: "rgba(242, 106, 106, 0.12)",
       borderColor: "rgba(242, 106, 106, 0.45)",
@@ -1169,6 +1190,7 @@ function getCycleHistoryRows() {
       const observedRate = origIdx >= 0 ? state.rates[origIdx]?.rate : null;
       const adjustedRate = origIdx >= 0 ? adjustedRates[origIdx]?.rate : null;
       const adjustedRestocked = r.adjusted_restocked_ts ?? r.restocked_ts;
+      const adjustedDepleted = r.adjusted_depleted_ts ?? r.depleted_ts;
       const adjustedEmptyFor = r.adjusted_duration ?? r.duration;
       return {
         depleted_ts: r.depleted_ts,
@@ -1177,11 +1199,15 @@ function getCycleHistoryRows() {
         emptyForSec: adjustedEmptyFor,
         observed_restocked_ts: r.restocked_ts,
         adjusted_restocked_ts: r.adjusted_restocked_ts,
+        observed_depleted_ts: r.depleted_ts,
+        adjusted_depleted_ts: r.adjusted_depleted_ts,
         rate: observedRate,
         adjusted_rate: adjustedRate,
         observed_emptyForSec: r.duration,
         adjusted_emptyForSec: r.adjusted_duration,
         ignored: Boolean(r.ignored),
+        // For chart box start when needed by callers.
+        effective_depleted_ts: adjustedDepleted,
       };
     })
     .filter((r) => isInHistoryRange(r.restocked_ts));
@@ -1221,7 +1247,8 @@ function renderCycleHistory() {
   const open = state.restocks.find((r) => r.restocked_ts == null);
   el.cycleOpenNote.classList.toggle("hidden", !open);
   if (open) {
-    el.cycleOpenNote.textContent = `Currently empty since ${fmtTime(open.depleted_ts)} — not restocked yet`;
+    const sinceTs = effectiveDepletedTs(open);
+    el.cycleOpenNote.textContent = `Currently empty since ${fmtTime(sinceTs)} — not restocked yet`;
   }
 
   const rows = getCycleHistoryRows();
@@ -1282,7 +1309,7 @@ function renderCycleHistory() {
 
   if (!rows.length) {
     el.cycleHistoryBody.innerHTML =
-      `<tr><td colspan="8" class="empty-note">No depletion/restock cycles observed yet.</td></tr>`;
+      `<tr><td colspan="9" class="empty-note">No depletion/restock cycles observed yet.</td></tr>`;
     renderCycleHistoryPager(0);
     return;
   }
@@ -1316,6 +1343,8 @@ function renderCycleHistory() {
         .join(" ");
       const adjRestocked =
         r.adjusted_restocked_ts != null ? fmtTime(r.adjusted_restocked_ts) : "—";
+      const adjDepleted =
+        r.adjusted_depleted_ts != null ? fmtTime(r.adjusted_depleted_ts) : "—";
       const adjRate =
         r.adjusted_rate != null ? `${fmtRate(r.adjusted_rate)}/min` : "—";
       const adjEmpty =
@@ -1324,7 +1353,8 @@ function renderCycleHistory() {
         ${countCell}
         <td>${fmtTime(r.observed_restocked_ts)}</td>
         <td>${adjRestocked}</td>
-        <td>${fmtTime(r.depleted_ts)}</td>
+        <td>${fmtTime(r.observed_depleted_ts)}</td>
+        <td>${adjDepleted}</td>
         <td class="rate-cell">${r.rate != null ? `${fmtRate(r.rate)}/min` : "—"}</td>
         <td class="rate-cell">${adjRate}</td>
         <td class="duration-cell">${
@@ -1408,7 +1438,8 @@ function initialDepletionEnvelope(dataTs, startQty, depletionRate) {
   if (startQty === 0) {
     const open = state.restocks.find((r) => r.restocked_ts == null);
     if (open?.depleted_ts == null) return null;
-    return { earliestDepleted: open.depleted_ts, latestDepleted: open.depleted_ts };
+    const depleted = effectiveDepletedTs(open);
+    return { earliestDepleted: depleted, latestDepleted: depleted };
   }
   if (startQty > 0) {
     const openWindow = getOpenRateWindow();
@@ -2182,11 +2213,12 @@ function updateEventMarkers(chart) {
     .filter((r) => !r.ignored)
     .forEach((r) => {
       const adjusted = adjustedRestockRecord(r);
+      const depletedMarkerTs = effectiveDepletedTs(adjusted);
       appendVerticalChartMarker(el.eventMarkers, chart, {
-        ts: r.depleted_ts,
+        ts: depletedMarkerTs,
         lineClass: "event-marker depleted",
         labelClass: "event-marker-label depleted",
-        labelHtml: `Depleted<br>${fmtTimeShort(r.depleted_ts)}`,
+        labelHtml: `Depleted<br>${fmtTimeShort(depletedMarkerTs)}`,
         labelYAdjust: CHART_EVENT_DEPLETED_LABEL_Y_ADJUST,
       });
       if (adjusted.adjusted_restocked_ts == null) return;

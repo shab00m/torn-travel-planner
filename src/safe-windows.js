@@ -82,21 +82,38 @@ function createContext({
     return Boolean(restock?.ignored);
   }
 
+  function effectiveDepletedTs(r) {
+    return r.adjusted_depleted_ts ?? r.depleted_ts;
+  }
+
   function adjustedRestockRecord(r) {
+    const adjDepleted = effectiveDepletedTs(r);
     // Prefer server-persisted adjustment when present.
-    if (r.adjusted_restocked_ts != null && r.adjusted_duration != null) {
+    if (r.adjusted_duration != null) {
       return {
         ...r,
-        adjusted_restocked_ts: r.adjusted_restocked_ts,
+        adjusted_depleted_ts: adjDepleted,
+        adjusted_restocked_ts: r.adjusted_restocked_ts ?? r.restocked_ts,
         adjusted_duration: r.adjusted_duration,
       };
     }
     if (!restockAmount || r.restocked_ts == null) {
-      return { ...r, adjusted_restocked_ts: r.restocked_ts, adjusted_duration: r.duration };
+      return {
+        ...r,
+        adjusted_depleted_ts: adjDepleted,
+        adjusted_restocked_ts: r.restocked_ts,
+        adjusted_duration:
+          r.restocked_ts != null && adjDepleted != null ? r.restocked_ts - adjDepleted : r.duration,
+      };
     }
     const window = rateWindowForRestock(r.restocked_ts);
     if (!window) {
-      return { ...r, adjusted_restocked_ts: r.restocked_ts, adjusted_duration: r.duration };
+      return {
+        ...r,
+        adjusted_depleted_ts: adjDepleted,
+        adjusted_restocked_ts: r.restocked_ts,
+        adjusted_duration: r.restocked_ts - adjDepleted,
+      };
     }
     const adjustedTs = adjustRestockTime(
       lastZeroLookup,
@@ -104,12 +121,13 @@ function createContext({
       window.start_qty,
       window.rate,
       restockAmount,
-      r.depleted_ts
+      adjDepleted
     );
     return {
       ...r,
+      adjusted_depleted_ts: adjDepleted,
       adjusted_restocked_ts: adjustedTs,
-      adjusted_duration: adjustedTs - r.depleted_ts,
+      adjusted_duration: adjustedTs - adjDepleted,
     };
   }
 
@@ -125,7 +143,7 @@ function createContext({
             w.start_qty,
             w.rate,
             restockAmount,
-            restock?.depleted_ts
+            restock ? effectiveDepletedTs(restock) : null
           );
     const rate = rateFromEndpoints(startTs, w.end_ts, restockAmount, w.end_qty) ?? w.rate;
     return { ...w, start_ts: startTs, start_qty: restockAmount, rate };
@@ -266,7 +284,8 @@ function createContext({
     let t = startTs;
     let qty = startQty;
     let outOfStock = startQty === 0;
-    let depletedTs = open?.depleted_ts ?? null;
+    const openCycleKey = open?.depleted_ts ?? null;
+    let depletedTs = open ? effectiveDepletedTs(open) : null;
     let firstOpenCycle = outOfStock;
 
     while (t < endTs) {
@@ -275,12 +294,13 @@ function createContext({
           firstOpenCycle && depletedTs != null
             ? openCycleRestockSec(depletedTs, restockSec, nowTs)
             : restockSec;
+        const cycleKey = firstOpenCycle ? openCycleKey : depletedTs;
         firstOpenCycle = false;
         const restockTs = Math.round(
           depletedTs ? Math.max(t, depletedTs + sec) : t + sec
         );
         if (restockTs > endTs) break;
-        events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: depletedTs });
+        events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: cycleKey });
         t = restockTs;
         qty = restockQty;
         outOfStock = false;
@@ -341,7 +361,8 @@ function createContext({
     if (startQty === 0) {
       const open = restocks.find((r) => r.restocked_ts == null);
       if (open?.depleted_ts == null) return null;
-      return { earliestDepleted: open.depleted_ts, latestDepleted: open.depleted_ts };
+      const depleted = effectiveDepletedTs(open);
+      return { earliestDepleted: depleted, latestDepleted: depleted };
     }
     if (startQty > 0) {
       const openWindow = getOpenRateWindow();
