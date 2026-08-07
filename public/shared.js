@@ -91,6 +91,13 @@ function historyRangeSinceTs(nowTs = Math.floor(Date.now() / 1000)) {
   if (!state.rangeHours) return 0;
   return nowTs - Math.round(state.rangeHours * 3600);
 }
+
+/** True when `ts` is inside the selected History Time Range (`All` ⇒ always true). */
+function isInHistoryRange(ts, nowTs = Math.floor(Date.now() / 1000)) {
+  const sinceTs = historyRangeSinceTs(nowTs);
+  if (sinceTs === 0) return true;
+  return ts != null && ts >= sinceTs;
+}
 const PREDICTION_HOURS_OPTIONS = [0, 1, 2, 3, 6, 12, 24];
 const TIME_FORMATS = ["european", "us"];
 const TIME_ZONES = ["local", "tct"];

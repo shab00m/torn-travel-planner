@@ -12,7 +12,7 @@ const emptyForChartEl = {
 };
 
 function getEmptyForChartPoints() {
-  const sinceTs = historyRangeSinceTs();
+  // History range is already applied in getCycleHistoryRows().
   const swapped = emptyForChartUi.axesSwapped;
   return getCycleHistoryRows()
     .filter(
@@ -20,8 +20,7 @@ function getEmptyForChartPoints() {
         !r.ignored &&
         r.emptyForSec != null &&
         r.emptyForSec >= 0 &&
-        r.restocked_ts != null &&
-        (sinceTs === 0 || r.restocked_ts >= sinceTs)
+        r.restocked_ts != null
     )
     .map((r) => {
       const timeMs = r.restocked_ts * 1000;

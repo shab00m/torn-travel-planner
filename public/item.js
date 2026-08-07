@@ -713,7 +713,10 @@ function getAdjustedCompletedRestocks() {
 }
 
 function getUsableCompletedRestocks() {
-  return getAdjustedCompletedRestocks().filter((r) => !r.ignored);
+  return getAdjustedCompletedRestocks().filter((r) => {
+    if (r.ignored) return false;
+    return isInHistoryRange(r.adjusted_restocked_ts ?? r.restocked_ts);
+  });
 }
 
 function isRateWindowIgnored(startTs) {
@@ -722,8 +725,12 @@ function isRateWindowIgnored(startTs) {
 }
 
 function getUsableRates() {
-  // Filter on raw start_ts before adjustment — adjusted timestamps no longer match restocks.
-  return state.rates.filter((w) => !isRateWindowIgnored(w.start_ts)).map(adjustedRateWindow);
+  // Filter ignored on raw start_ts before adjustment — adjusted timestamps no longer match restocks.
+  // History range uses the adjusted start_ts so MIN/MAX match the Empty-for / list views.
+  return state.rates
+    .filter((w) => !isRateWindowIgnored(w.start_ts))
+    .map(adjustedRateWindow)
+    .filter((w) => isInHistoryRange(w.start_ts));
 }
 
 function getAdjustedRates() {
@@ -1156,7 +1163,8 @@ function getCycleHistoryRows() {
         emptyForSec: r.adjusted_duration,
         ignored: Boolean(r.ignored),
       };
-    });
+    })
+    .filter((r) => isInHistoryRange(r.restocked_ts));
 }
 
 function getCycleHistoryPageCount(rowCount) {
@@ -3096,6 +3104,7 @@ el.rangeButtons.addEventListener("click", (e) => {
   savePrefs({ rangeHours: state.rangeHours });
   syncHourButtons(el.rangeButtons, state.rangeHours);
   resetChartView = true;
+  cycleHistoryPage = 0;
   drawChart();
 });
 
