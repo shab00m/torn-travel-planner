@@ -1,0 +1,6 @@
+# Config-as-code for the market-price cron service only.
+# In Railway: market cron service → Settings → Config-as-code → set path to railway.market-cron.toml
+# (Do not point the web app or daily cron at this file.)
+[deploy]
+startCommand = "node scripts/cron-market.mjs"
+cronSchedule = "*/5 * * * *"

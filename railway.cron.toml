@@ -1,6 +1,6 @@
 # Config-as-code for the daily cron service only.
 # In Railway: cron service → Settings → Config-as-code → set path to railway.cron.toml
-# (Do not point the web app service at this file — it would schedule the API process as a cron.)
+# (Do not point the web app or market cron at this file.)
 [deploy]
 startCommand = "node scripts/cron-daily.mjs"
 cronSchedule = "0 4 * * *"

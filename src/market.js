@@ -6,18 +6,17 @@ import {
 } from "./db.js";
 
 const TORN_V2_MARKET_URL = "https://api.torn.com/v2/market";
+const STALE_QUERY_BATCH = 50;
 
 const CACHE_TTL_SEC = Number.parseInt(process.env.MARKET_CACHE_TTL_SEC ?? "300", 10);
 const CALLS_PER_MINUTE = Number.parseInt(process.env.MARKET_CALLS_PER_MINUTE ?? "50", 10);
-const REFRESH_BATCH_SIZE = Number.parseInt(process.env.MARKET_REFRESH_BATCH_SIZE ?? "50", 10);
-const REFRESH_INTERVAL_MS = Number.parseInt(process.env.MARKET_REFRESH_INTERVAL_MS ?? "30000", 10);
 
-const refreshQueue = new Set();
-let refreshRunning = false;
-let refreshTimer = null;
-
-function resolveApiKey(userKey) {
+function resolveUserApiKey(userKey) {
   if (typeof userKey === "string" && userKey.trim()) return userKey.trim();
+  return null;
+}
+
+function resolveCronApiKey() {
   const envKey = process.env.TORN_API_KEY;
   if (typeof envKey === "string" && envKey.trim()) return envKey.trim();
   return null;
@@ -113,58 +112,44 @@ export async function getCachedMarketPrices() {
   return { prices, fetchedAt };
 }
 
-function scheduleMarketRefresh(itemIds) {
-  for (const itemId of itemIds) refreshQueue.add(itemId);
-  void runRefreshQueue();
-}
-
-export async function enqueueStaleMarketRefresh(limit = REFRESH_BATCH_SIZE) {
-  const apiKey = resolveApiKey(null);
-  if (!apiKey) return false;
+/** Cron-only: refresh every stale/missing market price using TORN_API_KEY. */
+export async function refreshStaleMarketPrices() {
+  const apiKey = resolveCronApiKey();
+  if (!apiKey) {
+    throw new Error("TORN_API_KEY is required for market refresh");
+  }
 
   const staleBeforeTs = Math.floor(Date.now() / 1000) - CACHE_TTL_SEC;
-  const itemIds = await getStaleMarketItemIds(staleBeforeTs, limit);
-  if (!itemIds.length) return false;
+  let refreshed = 0;
+  let failed = 0;
 
-  scheduleMarketRefresh(itemIds);
-  return true;
-}
+  for (;;) {
+    const itemIds = await getStaleMarketItemIds(staleBeforeTs, STALE_QUERY_BATCH);
+    if (!itemIds.length) break;
 
-async function runRefreshQueue() {
-  if (refreshRunning) return;
-
-  const apiKey = resolveApiKey(null);
-  if (!apiKey || refreshQueue.size === 0) return;
-
-  refreshRunning = true;
-  try {
-    while (refreshQueue.size > 0) {
-      const itemId = refreshQueue.values().next().value;
-      refreshQueue.delete(itemId);
-
-      const cached = await readCachedMarketPrice(itemId);
-      if (cached?.fresh) continue;
-
+    for (const itemId of itemIds) {
       await rateLimiter.acquire();
       try {
         await fetchAndStoreMarketPrice(itemId, apiKey);
+        refreshed++;
       } catch (err) {
+        failed++;
         console.error(`[market] refresh item ${itemId} failed: ${err.message}`);
       }
     }
-  } finally {
-    refreshRunning = false;
   }
+
+  return { refreshed, failed };
 }
 
-/** Item market average price; reads DB cache first, then rate-limited Torn fetch. */
+/** Item page: DB cache first; live Torn fetch only with the visitor's API key. */
 export async function getMarketPrice(itemId, userApiKey) {
   const cached = await readCachedMarketPrice(itemId);
   if (cached?.fresh && cached.marketPrice != null) {
     return cached.marketPrice;
   }
 
-  const apiKey = resolveApiKey(userApiKey);
+  const apiKey = resolveUserApiKey(userApiKey);
   if (!apiKey) {
     if (cached?.marketPrice != null) return cached.marketPrice;
     throw new Error("API key required for market prices");
@@ -180,14 +165,6 @@ export async function getMarketPrice(itemId, userApiKey) {
     throw new Error("Item market average price unavailable");
   }
   return marketPrice;
-}
-
-export function startMarketRefresh() {
-  if (refreshTimer) return;
-
-  refreshTimer = setInterval(() => {
-    void enqueueStaleMarketRefresh();
-  }, REFRESH_INTERVAL_MS);
 }
 
 export { averageMarketPrice, CACHE_TTL_SEC };

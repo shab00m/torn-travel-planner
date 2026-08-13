@@ -412,7 +412,7 @@ Requires **Minimal** access (or Custom with `user: travel`).
 
 Fetch market price for one item (uses server cache when possible).
 
-**Body:** `{ "itemId": 206, "apiKey": "..." }` — `apiKey` optional if `TORN_API_KEY` is set on the server.
+**Body:** `{ "itemId": 206, "apiKey": "..." }` — `apiKey` optional when a cached price exists. Live Torn fetch uses the visitor's key only; the server key is reserved for cron.
 
 **Response:** `{ itemId, marketPrice }`
 

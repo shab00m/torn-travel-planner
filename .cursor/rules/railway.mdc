@@ -14,10 +14,11 @@ This app is already deployed on Railway. **Do not create a new Railway project.*
 | Project ID | `18b99ba3-c5d4-42a3-a572-4342dca87fd9` |
 | Environment | production (`7cae12f4-51c9-43d0-b65b-a0a810d8f83d`) |
 | App service | torn-travel-planner (`8daf31fe-ce79-4d68-bd2d-3e813ad431a4`) |
-| Cron service | torn-travel-planner-cron (`bf4e9c38-c473-4611-affb-e8bd5eafc118`) |
+| Daily cron | torn-travel-planner-cron (`bf4e9c38-c473-4611-affb-e8bd5eafc118`) |
+| Market cron | torn-travel-planner-market-cron (`3315805b-fe01-4379-84c1-a939d0987685`) |
 | Postgres service | Postgres (`8cbfa40a-04c3-4c31-9308-612200e19bf1`) |
 
-The cron service uses config file `railway.cron.toml` (start `node scripts/cron-daily.mjs`, schedule `0 4 * * *` UTC). Do not point the web app at that file.
+The daily cron uses `railway.cron.toml` (start `node scripts/cron-daily.mjs`, schedule `0 4 * * *` UTC). The market cron uses `railway.market-cron.toml` (start `node scripts/cron-market.mjs`, schedule `*/5 * * * *` UTC). Do not point the web app at either cron config file. Both crons need `DATABASE_URL=${{Postgres.DATABASE_URL}}`; the market cron also needs `TORN_API_KEY`.
 
 ## When using the Railway MCP
 

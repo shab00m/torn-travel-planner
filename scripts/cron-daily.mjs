@@ -1,10 +1,10 @@
 /**
- * Railway cron entrypoint: short-lived daily maintenance.
- * Runs snapshot retention purge, then rebuilds depletion-rate TOD averages.
+ * Railway daily cron entrypoint: snapshot retention purge, then TOD rebuild.
  * Must exit cleanly (close the DB pool) so the next cron tick is not skipped.
  *
  * Usage: node scripts/cron-daily.mjs
  */
+import "./load-local-env.mjs";
 import { initDb, closePool } from "../src/db.js";
 import { purgeOldSnapshots, SNAPSHOT_RETENTION_DAYS } from "../src/snapshot-retention.js";
 import { rebuildAllDepletionRateTod } from "../src/depletion-rate-tod.js";

@@ -504,7 +504,7 @@ function profitHrCell(country, item) {
   }
   const title =
     getSellPrice(country, item.id) == null && state.marketPricesStatus === "empty"
-      ? "Market prices not cached yet — set TORN_API_KEY on the server or log in on an item page"
+      ? "Market prices not cached yet — wait for the next cron refresh or log in on an item page"
       : marketPriceTitle(country, item);
   return `<td class="profit-hr profit-unavailable"${title ? ` title="${escapeHtml(title)}"` : ""}>—</td>`;
 }

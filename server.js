@@ -27,8 +27,6 @@ import { getTravelStatus } from "./src/torn.js";
 import {
   getMarketPrice,
   getCachedMarketPrices,
-  enqueueStaleMarketRefresh,
-  startMarketRefresh,
   CACHE_TTL_SEC,
 } from "./src/market.js";
 import { getCachedItemTypes, ensureItemTypesPopulated } from "./src/item-types.js";
@@ -177,7 +175,6 @@ app.post("/api/market", async (req, res) => {
 
 app.get("/api/markets", async (_req, res) => {
   const { prices, fetchedAt } = await getCachedMarketPrices();
-  void enqueueStaleMarketRefresh();
   res.json({ prices, fetchedAt, cacheTtlSec: CACHE_TTL_SEC });
 });
 
@@ -643,7 +640,6 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 server = app.listen(PORT, () => {
   console.log(`Torn Travel Planner running at http://localhost:${PORT}`);
   startPolling();
-  startMarketRefresh();
   void ensureItemTypesPopulated();
   void ensurePersistedRates().catch((err) => {
     console.error(`[depletion-rates] backfill failed: ${err.message}`);
