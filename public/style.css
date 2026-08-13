@@ -862,7 +862,7 @@ h1 {
 	width: 2.5rem;
 }
 .itemlist-card .col-total-cost {
-	width: 6.5rem;
+	width: 6rem;
 }
 .itemlist-card .col-profit {
 	width: 7rem;
@@ -1016,6 +1016,13 @@ tr.is-hidden-row {
 
 @media (max-width: 950px) {
 	.favorites-card .col-label-full {
+		display: none;
+	}
+}
+
+@media (max-width: 900px) {
+	.itemlist-card .col-cost,
+	.itemlist-card .col-items {
 		display: none;
 	}
 }

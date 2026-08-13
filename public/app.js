@@ -141,7 +141,8 @@ function sortableTableHead(columns, sortState, sortTarget) {
 			if (!key) return "<th></th>";
 			const active = column === key;
 			const indicator = active ? (dir === "asc" ? " ▲" : " ▼") : "";
-			return `<th class="sort-col-${key}"><button type="button" class="column-sort${active ? " active" : ""}" data-sort="${key}" data-sort-target="${sortTarget}">${label}${indicator}</button></th>`;
+			const colClass = STOCK_COL_CLASS[key] ? ` ${STOCK_COL_CLASS[key]}` : "";
+			return `<th class="sort-col-${key}${colClass}"><button type="button" class="column-sort${active ? " active" : ""}" data-sort="${key}" data-sort-target="${sortTarget}">${label}${indicator}</button></th>`;
 		})
 		.join("");
 	return `<thead><tr>${cells}</tr></thead>`;
@@ -409,8 +410,8 @@ function purchaseQtyCellsHtml(country, item) {
 		titleParts.push(`budget ${fmtMoney(state.maxBudget)}`);
 	const title = titleParts.join(" · ");
 	return `
-          <td title="${escapeHtml(title)}">${fmtNum(qty)}</td>
-          <td title="${escapeHtml(title)}">${fmtListMoneyHtml(item.cost * qty)}</td>`;
+          <td class="col-items" title="${escapeHtml(title)}">${fmtNum(qty)}</td>
+          <td class="col-total-cost" title="${escapeHtml(title)}">${fmtListMoneyHtml(item.cost * qty)}</td>`;
 }
 
 function favoriteRowHtml(country, item) {
@@ -422,7 +423,7 @@ function favoriteRowHtml(country, item) {
           <td class="favorite-cell">${favoriteButtonHtml(country, item.id)}</td>
           <td>${nameCell}</td>
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
-          <td>${fmtListMoneyHtml(item.cost)}</td>
+          <td class="col-cost">${fmtListMoneyHtml(item.cost)}</td>
           ${purchaseQtyCellsHtml(country, item)}
           ${profitHrCell(country, item)}
           ${safeWindowCell(country, item.id)}
@@ -541,7 +542,7 @@ function stockRowHtml(country, item) {
           <td>${highlight(item.name, state.search.trim())}</td>
           ${extraCols.join("")}
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
-          <td>${fmtListMoneyHtml(item.cost)}</td>
+          <td class="col-cost">${fmtListMoneyHtml(item.cost)}</td>
           ${purchaseQtyCellsHtml(country, item)}
           ${profitHrCell(country, item)}
         </tr>`;
