@@ -8,6 +8,7 @@
     "start": "node scripts/start.mjs",
     "migrate": "node scripts/migrate.mjs",
     "backfill": "node scripts/backfill-restocks.mjs",
+    "backfill-depletion-rates": "node scripts/backfill-depletion-rates.mjs",
     "cron-daily": "node scripts/cron-daily.mjs",
     "cron-market": "node scripts/cron-market.mjs",
     "import-sqlite": "node scripts/import-sqlite-to-postgres.mjs",

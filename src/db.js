@@ -47,15 +47,13 @@ export async function initDb() {
 
 /**
  * Fill any non-ignored closed cycles still missing rate columns.
- * Safe to run after listen — does not need to block startup.
+ * Manual maintenance only — not run on server startup.
  */
 export async function ensurePersistedRates() {
-  if (!(await hasMissingPersistedRates())) return;
-  const result = await backfillAllPersistedRates();
-  const failedNote = result.failed ? `, ${result.failed} failed` : "";
-  console.log(
-    `[depletion-rates] backfilled ${result.itemsUpdated} items (${result.windowsWritten} windows${failedNote})`
-  );
+  if (!(await hasMissingPersistedRates())) {
+    return { itemsUpdated: 0, windowsWritten: 0, failed: 0 };
+  }
+  return backfillAllPersistedRates();
 }
 
 export { closePool };

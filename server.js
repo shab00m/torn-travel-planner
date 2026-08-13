@@ -5,7 +5,6 @@ import { COUNTRIES } from "./src/countries.js";
 import { getFlightMatrix } from "./src/flight-times.js";
 import {
   initDb,
-  ensurePersistedRates,
   ensureAdjustedRestocks,
   getHistory,
   getRestocks,
@@ -641,9 +640,6 @@ server = app.listen(PORT, () => {
   console.log(`Torn Travel Planner running at http://localhost:${PORT}`);
   startPolling();
   void ensureItemTypesPopulated();
-  void ensurePersistedRates().catch((err) => {
-    console.error(`[depletion-rates] backfill failed: ${err.message}`);
-  });
   void ensureAdjustedRestocks()
     .then((result) => {
       if (result.itemsUpdated > 0) {

@@ -37,6 +37,8 @@ Then open http://localhost:3000.
 
 `npm run backfill` replays stored snapshots through the restock detection logic. Closed restocks older than the oldest remaining snapshot per item are preserved.
 
+`npm run backfill-depletion-rates` fills closed restock cycles that are still missing persisted depletion-rate columns. This is not run on server startup.
+
 To import an old SQLite file into Postgres (requires Node >= 23.4 for `node:sqlite`):
 
 ```bash
@@ -81,6 +83,7 @@ Rebuild restocks only replaces cycles that still have matching snapshot history;
 | Path | Purpose |
 | --- | --- |
 | `server.js` | Express app, API routes, static file serving |
+| `scripts/backfill-depletion-rates.mjs` | Manual backfill of missing depletion-rate windows |
 | `scripts/cron-daily.mjs` | Daily cron entrypoint (snapshot purge + TOD rebuild) |
 | `scripts/cron-market.mjs` | Market cron entrypoint (stale Torn price refresh) |
 | `railway.cron.toml` | Config-as-code for the daily cron service only |

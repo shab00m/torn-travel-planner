@@ -292,7 +292,7 @@ export async function hasMissingPersistedRates() {
   return Boolean(row?.missing);
 }
 
-/** One-time / startup backfill of persisted rate windows for items still missing them. */
+/** Backfill persisted rate windows for items still missing them. */
 export async function backfillAllPersistedRates() {
   const items = await many(
     getPool(),
