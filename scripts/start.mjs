@@ -1,9 +1,15 @@
 import { execSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const PORT = Number(process.env.PORT) || 3000;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+const envPath = path.join(root, ".env");
+if (existsSync(envPath) && typeof process.loadEnvFile === "function") {
+  process.loadEnvFile(envPath);
+}
 
 /** Local-dev only: free the port if a previous node process is still bound. */
 function pidsListeningOnPort(port) {

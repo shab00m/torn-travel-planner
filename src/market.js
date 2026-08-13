@@ -185,12 +185,9 @@ export async function getMarketPrice(itemId, userApiKey) {
 export function startMarketRefresh() {
   if (refreshTimer) return;
 
-  const tick = () => {
+  refreshTimer = setInterval(() => {
     void enqueueStaleMarketRefresh();
-  };
-
-  tick();
-  refreshTimer = setInterval(tick, REFRESH_INTERVAL_MS);
+  }, REFRESH_INTERVAL_MS);
 }
 
 export { averageMarketPrice, CACHE_TTL_SEC };
