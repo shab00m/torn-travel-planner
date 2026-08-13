@@ -667,8 +667,8 @@ async function loadSafeWindows() {
 function favoritesCardHtml(favorites) {
   const rows = favorites.map(({ country, item }) => favoriteRowHtml(country, item)).join("");
   return `
-    <section class="country-card favorites-card">
-      <div class="country-header">
+    <section class="itemlist-card favorites-card">
+      <div class="itemlist-header">
         <h2>⭐ Favorites</h2>
         <span class="country-updated">${favorites.length} item${favorites.length === 1 ? "" : "s"}</span>
       </div>
@@ -692,7 +692,7 @@ function renderFavoritesOnly() {
     el.favorites.innerHTML = favoritesCardHtml(favorites);
     return;
   }
-  const header = existingCard.querySelector(".country-header .country-updated");
+  const header = existingCard.querySelector(".itemlist-header .country-updated");
   if (header) {
     header.textContent = `${favorites.length} item${favorites.length === 1 ? "" : "s"}`;
   }
@@ -799,9 +799,9 @@ function buildStockGroups(rows, query) {
 
 function stockGroupCardHtml(group) {
   const card = document.createElement("section");
-  card.className = `country-card${group.fullWidth ? " stock-card-full" : ""}`;
+  card.className = `itemlist-card${group.fullWidth ? " stock-card-full" : ""}`;
   card.innerHTML = `
-    <div class="country-header">
+    <div class="itemlist-header">
       <h2>${escapeHtml(group.title)}</h2>
       <span class="country-updated">${escapeHtml(group.meta)}</span>
     </div>`;
