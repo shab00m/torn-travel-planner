@@ -347,7 +347,7 @@ function purchaseQtyCellsHtml(country, item) {
   const title = titleParts.join(" · ");
   return `
           <td title="${escapeHtml(title)}">${fmtNum(qty)}</td>
-          <td title="${escapeHtml(title)}">${fmtMoney(item.cost * qty)}</td>`;
+          <td title="${escapeHtml(title)}">${fmtListMoney(item.cost * qty)}</td>`;
 }
 
 function favoriteRowHtml(country, item) {
@@ -359,7 +359,7 @@ function favoriteRowHtml(country, item) {
           <td class="favorite-cell">${favoriteButtonHtml(country, item.id)}</td>
           <td>${nameCell}</td>
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
-          <td>${fmtMoney(item.cost)}</td>
+          <td>${fmtListMoney(item.cost)}</td>
           ${purchaseQtyCellsHtml(country, item)}
           ${profitHrCell(country, item)}
           ${safeWindowCell(country, item.id)}
@@ -461,7 +461,7 @@ function stockRowHtml(country, item) {
           <td>${highlight(item.name, state.search.trim())}</td>
           ${extraCols.join("")}
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
-          <td>${fmtMoney(item.cost)}</td>
+          <td>${fmtListMoney(item.cost)}</td>
           ${purchaseQtyCellsHtml(country, item)}
           ${profitHrCell(country, item)}
         </tr>`;

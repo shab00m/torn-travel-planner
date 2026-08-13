@@ -187,8 +187,22 @@ function withDisplayTimeZone(options) {
   return timeZone ? { ...options, timeZone } : options;
 }
 
-const fmtNum = (n) => n.toLocaleString("en-US");
+const BILLION = 1_000_000_000;
+const MILLION = 1_000_000;
+const HUNDRED_MILLION = 100 * MILLION;
+const fmtNum = (n, options) => n.toLocaleString("en-US", options);
 const fmtMoney = (n) => "$" + fmtNum(n);
+
+/** Cost / total cost in lists: $450B, $182.43M. */
+function fmtListMoney(n) {
+  const abs = Math.abs(n);
+  if (abs >= BILLION) return `$${fmtNum(Math.round(n / BILLION))}B`;
+  if (abs >= HUNDRED_MILLION) {
+    return `$${fmtNum(n / MILLION, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M`;
+  }
+  return fmtMoney(n);
+}
+
 const fmtTime = (ts) =>
   new Date(ts * 1000).toLocaleString(
     timeLocale(),
