@@ -100,7 +100,9 @@ Rebuild restocks only replaces cycles that still have matching snapshot history;
 | `public/tos.html` | Torn API Terms of Service (key/data disclosure) |
 | `public/api-tos.js` | Shared ToS table markup for `/tos` and login forms |
 | `docs/API.md` | Full HTTP API reference |
+| `docs/ARCHITECTURE.md` | Runtime topology, data flow, schema, and maint commands |
 
-## API
+## Docs
 
-See **[docs/API.md](docs/API.md)** for all endpoints, query/body parameters, defaults, and safe-window response shapes.
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the system is put together (crons, DB, market refresh, maintenance scripts)
+- **[docs/API.md](docs/API.md)** — HTTP endpoints, parameters, and response shapes
