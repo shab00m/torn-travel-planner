@@ -1038,6 +1038,11 @@ tr.is-hidden-row {
 	.itemlist-card:has(.col-country) .item-country-flag {
 		display: inline;
 	}
+	.favorites-card .col-safe-window,
+	.favorites-card .sort-col-safeWindow,
+	.favorites-card .safe-window-cell {
+		display: none;
+	}
 }
 
 .list-money-narrow {
