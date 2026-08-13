@@ -189,18 +189,27 @@ function withDisplayTimeZone(options) {
 
 const BILLION = 1_000_000_000;
 const MILLION = 1_000_000;
+const TEN_MILLION = 10 * MILLION;
 const HUNDRED_MILLION = 100 * MILLION;
 const fmtNum = (n, options) => n.toLocaleString("en-US", options);
 const fmtMoney = (n) => "$" + fmtNum(n);
 
-/** Cost / total cost in lists: $450B, $182.43M. */
-function fmtListMoney(n) {
+function fmtListMoneyAt(n, millionAt) {
   const abs = Math.abs(n);
-  if (abs >= BILLION) return `$${fmtNum(Math.round(n / BILLION))}B`;
-  if (abs >= HUNDRED_MILLION) {
-    return `$${fmtNum(n / MILLION, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M`;
+  const sign = n < 0 ? "-" : "";
+  if (abs >= BILLION) return `${sign}$${fmtNum(Math.round(abs / BILLION))}B`;
+  if (abs >= millionAt) {
+    return `${sign}$${fmtNum(abs / MILLION, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}M`;
   }
-  return fmtMoney(n);
+  return `${sign}${fmtMoney(abs)}`;
+}
+
+/** Cost / total cost in lists: $450B, $182.43M; 10M+ compact under 1000px. */
+function fmtListMoneyHtml(n) {
+  const wide = fmtListMoneyAt(n, HUNDRED_MILLION);
+  const narrow = fmtListMoneyAt(n, TEN_MILLION);
+  if (wide === narrow) return wide;
+  return `<span class="list-money-wide">${wide}</span><span class="list-money-narrow">${narrow}</span>`;
 }
 
 const fmtTime = (ts) =>

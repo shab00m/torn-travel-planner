@@ -865,7 +865,7 @@ h1 {
 	width: 6.5rem;
 }
 .itemlist-card .col-profit {
-	width: 9.25rem;
+	width: 7rem;
 }
 
 .itemlist-card th,
@@ -1000,6 +1000,37 @@ tr.is-hidden-row {
 }
 .favorites-card .col-leave-by {
 	width: 12.5rem;
+}
+
+@media (max-width: 1150px) {
+	.favorites-card .window-range-end {
+		display: none;
+	}
+	.favorites-card .col-safe-window {
+		width: 5rem;
+	}
+	.favorites-card .col-leave-by {
+		width: 7rem;
+	}
+}
+
+@media (max-width: 950px) {
+	.favorites-card .col-label-full {
+		display: none;
+	}
+}
+
+.list-money-narrow {
+	display: none;
+}
+
+@media (max-width: 1000px) {
+	.list-money-wide {
+		display: none;
+	}
+	.list-money-narrow {
+		display: inline;
+	}
 }
 
 .itemlist-card thead th {
