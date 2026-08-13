@@ -9,7 +9,7 @@
 	--green: #3ecf8e;
 	--red: #f26a6a;
 	--itemlist-max-width: 1200px;
-	--itemlist-grouped-width: 750px;
+	--itemlist-grouped-width: 780px;
 }
 
 * {
@@ -847,13 +847,13 @@ h1 {
 	width: auto;
 }
 .itemlist-card .col-country {
-	width: 8.25rem;
+	width: 6rem;
 }
 .itemlist-card .col-type {
 	width: 5rem;
 }
 .itemlist-card .col-stock {
-	width: 3.5rem;
+	width: 3rem;
 }
 .itemlist-card .col-cost {
 	width: 5rem;
@@ -1024,6 +1024,19 @@ tr.is-hidden-row {
 	.itemlist-card .col-cost,
 	.itemlist-card .col-items {
 		display: none;
+	}
+}
+
+.item-country-flag {
+	display: none;
+}
+
+@media (max-width: 760px) {
+	.itemlist-card .col-country {
+		display: none;
+	}
+	.itemlist-card:has(.col-country) .item-country-flag {
+		display: inline;
 	}
 }
 

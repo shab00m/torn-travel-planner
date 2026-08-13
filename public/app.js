@@ -528,7 +528,7 @@ function stockRowHtml(country, item) {
 	const extraCols = [];
 	if (state.stockGroupBy !== "country") {
 		extraCols.push(
-			`<td class="country-cell">${meta.flag} ${escapeHtml(meta.name)}</td>`,
+			`<td class="country-cell col-country">${meta.flag} ${escapeHtml(meta.name)}</td>`,
 		);
 	}
 	if (state.stockGroupBy !== "type") {
@@ -539,7 +539,7 @@ function stockRowHtml(country, item) {
 	return `
         <tr class="${hidden ? "is-hidden-row" : ""}" data-country="${country}" data-item="${item.id}" data-name="${escapeHtml(item.name)}" title="View item history">
           <td class="favorite-cell">${itemActionsHtml(country, item.id)}</td>
-          <td>${highlight(item.name, state.search.trim())}</td>
+          <td class="col-item"><span class="item-country-flag">${meta.flag} </span>${highlight(item.name, state.search.trim())}</td>
           ${extraCols.join("")}
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
           <td class="col-cost">${fmtListMoneyHtml(item.cost)}</td>
