@@ -133,16 +133,15 @@ export async function fillRateWindowsForItem(db, country, itemId, options = {}) 
   }
   eventSql += ` ORDER BY depleted_ts ASC`;
 
-  const [events, snapshots] = await Promise.all([
-    many(db, eventSql, eventParams),
-    many(
-      db,
-      `SELECT yata_ts, quantity FROM snapshots
-       WHERE country = $1 AND item_id = $2
-       ORDER BY yata_ts ASC`,
-      [country, itemId]
-    ),
-  ]);
+  // Sequential: `db` may be a PoolClient, which cannot run two queries at once.
+  const events = await many(db, eventSql, eventParams);
+  const snapshots = await many(
+    db,
+    `SELECT yata_ts, quantity FROM snapshots
+     WHERE country = $1 AND item_id = $2
+     ORDER BY yata_ts ASC`,
+    [country, itemId]
+  );
   const windows = computeRateWindowsFromSnapshots(events, snapshots);
   await persistRateWindows(db, country, itemId, windows);
   return windows.length;
@@ -312,12 +311,20 @@ export async function backfillAllPersistedRates() {
   );
   let itemsUpdated = 0;
   let windowsWritten = 0;
+  let failed = 0;
   for (const item of items) {
-    const n = await withTransaction((client) =>
-      fillRateWindowsForItem(client, item.country, item.itemId)
-    );
-    itemsUpdated += 1;
-    windowsWritten += n;
+    try {
+      const n = await withTransaction((client) =>
+        fillRateWindowsForItem(client, item.country, item.itemId)
+      );
+      itemsUpdated += 1;
+      windowsWritten += n;
+    } catch (err) {
+      failed += 1;
+      console.error(
+        `[depletion-rates] backfill ${item.country}:${item.itemId} failed: ${err.message}`
+      );
+    }
   }
-  return { itemsUpdated, windowsWritten };
+  return { itemsUpdated, windowsWritten, failed };
 }

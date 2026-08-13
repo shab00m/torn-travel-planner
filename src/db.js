@@ -52,8 +52,9 @@ export async function initDb() {
 export async function ensurePersistedRates() {
   if (!(await hasMissingPersistedRates())) return;
   const result = await backfillAllPersistedRates();
+  const failedNote = result.failed ? `, ${result.failed} failed` : "";
   console.log(
-    `[depletion-rates] backfilled ${result.itemsUpdated} items (${result.windowsWritten} windows)`
+    `[depletion-rates] backfilled ${result.itemsUpdated} items (${result.windowsWritten} windows${failedNote})`
   );
 }
 
@@ -948,13 +949,13 @@ export async function upsertMarketPrice(itemId, marketPrice, fetchedAt) {
   );
 }
 
-/** Item ids missing from cache or older than staleBeforeTs, oldest first. */
+/** Travel-item ids missing from cache or older than staleBeforeTs, oldest first. */
 export async function getStaleMarketItemIds(staleBeforeTs, limit) {
   const rows = await many(
     getPool(),
-    `SELECT i.item_id
-     FROM items i
-     LEFT JOIN market_prices m ON m.item_id = i.item_id
+    `SELECT s.item_id
+     FROM (SELECT DISTINCT item_id FROM snapshots) s
+     LEFT JOIN market_prices m ON m.item_id = s.item_id
      WHERE m.item_id IS NULL OR m.fetched_at < $1
      ORDER BY COALESCE(m.fetched_at, 0) ASC
      LIMIT $2`,
