@@ -356,7 +356,7 @@ function favoriteRowHtml(country, item) {
   const hidden = isHidden(country, item.id);
   return `
         <tr class="${hidden ? "is-hidden-row" : ""}" data-country="${country}" data-item="${item.id}" data-name="${escapeHtml(item.name)}" title="View item history">
-          <td class="favorite-cell">${itemActionsHtml(country, item.id)}</td>
+          <td class="favorite-cell">${favoriteButtonHtml(country, item.id)}</td>
           <td>${nameCell}</td>
           <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
           <td>${fmtMoney(item.cost)}</td>

@@ -871,6 +871,20 @@ tr.is-hidden-row {
   color: #f0c674;
 }
 
+.favorites-card {
+  overflow-x: auto;
+}
+
+.favorites-card table {
+  width: max-content;
+  min-width: 100%;
+}
+
+.favorites-card .col-item {
+  min-width: 170px;
+  width: 170px;
+}
+
 .favorites-card .col-safe-window { width: 10.5rem; }
 .favorites-card .col-leave-by { width: 12.5rem; }
 
