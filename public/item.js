@@ -2731,65 +2731,6 @@ function initChartViewControls() {
     });
   });
 
-  el.chartCanvas?.addEventListener("mousedown", (e) => {
-    const timeline = state.lastTimeline;
-    if (!timeline || !canAdjustChartView(timeline) || snapshotInspector.enabled || !state.chart?.chartArea) {
-      return;
-    }
-    const x = chartEventX(e);
-    const y = chartEventY(e);
-    if (x == null || y == null) return;
-    const { left, right, top, bottom } = state.chart.chartArea;
-    if (x < left || x > right || y < top || y > bottom) return;
-    chartPan.active = {
-      startX: x,
-      startY: y,
-      currentX: x,
-      currentY: y,
-      startOffsetSec: state.chartOffsetSec,
-      startScale: state.chartScale,
-      panning: false,
-    };
-  });
-
-  window.addEventListener("mousemove", (e) => {
-    if (isMouseButtonReleased(e)) {
-      endActiveChartDrags();
-      return;
-    }
-    const pan = chartPan.active;
-    const timeline = state.lastTimeline;
-    const chart = state.chart;
-    if (!pan || !timeline || !chart?.chartArea) return;
-    const x = chartEventX(e);
-    const y = chartEventY(e);
-    if (x == null || y == null) return;
-    pan.currentX = x;
-    pan.currentY = y;
-    const deltaX = pan.currentX - pan.startX;
-    const deltaY = pan.currentY - pan.startY;
-    if (!pan.panning) {
-      if (
-        Math.abs(deltaX) <= CHART_PAN_DRAG_THRESHOLD_PX &&
-        Math.abs(deltaY) <= CHART_PAN_DRAG_THRESHOLD_PX
-      ) {
-        return;
-      }
-      pan.panning = true;
-      el.chartWrap?.classList.add("is-panning");
-    }
-    const { offsetSec: nextOffset, scale: nextScale } = dragChartView(
-      timeline,
-      pan,
-      deltaX,
-      deltaY,
-      pan.currentX,
-      chart
-    );
-    applyChartView(timeline, { offsetSec: nextOffset, scale: nextScale });
-  });
-
-  document.addEventListener("mouseup", endChartPan);
   window.addEventListener("blur", endActiveChartDrags);
   document.documentElement.addEventListener("mouseleave", (e) => {
     if (!e.relatedTarget) endActiveChartDrags();

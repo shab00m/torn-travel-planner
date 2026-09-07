@@ -451,69 +451,39 @@ function applyEmptyForChartView(timeline, { offsetSec, scale }) {
 }
 
 function initEmptyForChartPan() {
-  emptyForChartEl.canvas?.addEventListener("mousedown", (e) => {
-    emptyForChartUi.skipNextClick = false;
-    const timeline = emptyForChartUi.timeline;
-    const chart = emptyForChartUi.chart;
-    if (!timeline || !canAdjustChartView(timeline, emptyForChartUi.scale) || !chart?.chartArea) {
-      return;
-    }
-    const pos = chartCanvasEventXY(e, chart);
-    if (!pos) return;
-    const { left, right, top, bottom } = chart.chartArea;
-    if (pos.x < left || pos.x > right || pos.y < top || pos.y > bottom) return;
-    emptyForChartPan.active = {
-      startX: pos.x,
-      startY: pos.y,
-      currentX: pos.x,
-      currentY: pos.y,
-      startOffsetSec: emptyForChartUi.offsetSec,
-      startScale: emptyForChartUi.scale,
-      panning: false,
-    };
-  });
-
-  window.addEventListener("mousemove", (e) => {
-    if (isMouseButtonReleased(e)) {
-      endEmptyForChartPan();
-      return;
-    }
-    const pan = emptyForChartPan.active;
-    const timeline = emptyForChartUi.timeline;
-    const chart = emptyForChartUi.chart;
-    if (!pan || !timeline || !chart?.chartArea) return;
-    const pos = chartCanvasEventXY(e, chart);
-    if (!pos) return;
-    pan.currentX = pos.x;
-    pan.currentY = pos.y;
-    const deltaX = pan.currentX - pan.startX;
-    const deltaY = pan.currentY - pan.startY;
-    if (!pan.panning) {
-      if (
-        Math.abs(deltaX) <= CHART_PAN_DRAG_THRESHOLD_PX &&
-        Math.abs(deltaY) <= CHART_PAN_DRAG_THRESHOLD_PX
-      ) {
-        return;
-      }
-      pan.panning = true;
+  const gestures = attachChartViewportGestures({
+    canvas: emptyForChartEl.canvas,
+    wrap: emptyForChartEl.wrap,
+    panState: emptyForChartPan,
+    getContext: () => {
+      const timeline = emptyForChartUi.timeline;
+      const chart = emptyForChartUi.chart;
+      if (!timeline || !chart?.chartArea) return null;
+      if (!canAdjustChartView(timeline, emptyForChartUi.scale)) return null;
+      return {
+        chart,
+        timeline,
+        offsetSec: emptyForChartUi.offsetSec,
+        scale: emptyForChartUi.scale,
+      };
+    },
+    applyView: (_ctx, view) => applyEmptyForChartView(emptyForChartUi.timeline, view),
+    mouseDragView: emptyForDragChartView,
+    panAxisFor: (ctx) =>
+      emptyForChartUi.axesSwapped
+        ? chartViewportPanAxisYInverted(ctx.chart)
+        : chartViewportPanAxisX(ctx.chart),
+    onPointerDown: () => {
+      emptyForChartUi.skipNextClick = false;
+    },
+    onGestureActive: () => {
       emptyForChartUi.skipNextClick = true;
-      emptyForChartEl.wrap?.classList.add("is-panning");
-    }
-    applyEmptyForChartView(timeline, emptyForDragChartView(
-      timeline,
-      pan,
-      deltaX,
-      deltaY,
-      pan.currentX,
-      pan.currentY,
-      chart
-    ));
+    },
   });
 
-  document.addEventListener("mouseup", endEmptyForChartPan);
-  window.addEventListener("blur", endEmptyForChartPan);
+  window.addEventListener("blur", gestures.end);
   document.documentElement.addEventListener("mouseleave", (e) => {
-    if (!e.relatedTarget) endEmptyForChartPan();
+    if (!e.relatedTarget) gestures.end();
   });
 }
 

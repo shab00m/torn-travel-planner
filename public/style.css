@@ -1654,6 +1654,7 @@ body.page-item {
 .chart-wrap.can-pan,
 .chart-wrap.can-pan canvas {
 	cursor: grab;
+	touch-action: none;
 }
 .chart-wrap.is-panning,
 .chart-wrap.is-panning canvas {
