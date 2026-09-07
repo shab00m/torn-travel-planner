@@ -94,10 +94,13 @@ function attachChartViewportGestures({
   panAxisFor,
   onPointerDown,
   onGestureActive,
+  onGestureEnd,
 }) {
   function end() {
+    const shouldPersist = Boolean(panState.active?.panning);
     panState.active = null;
     wrap?.classList.remove("is-panning");
+    if (shouldPersist) onGestureEnd?.();
   }
 
   function markActive(gesture) {
@@ -263,8 +266,14 @@ function attachChartViewportGestures({
   return { end };
 }
 
+let stockChartGestures = null;
+
+function endStockChartGestures() {
+  stockChartGestures?.end();
+}
+
 function initStockChartGestures() {
-  attachChartViewportGestures({
+  stockChartGestures = attachChartViewportGestures({
     canvas: el.chartCanvas,
     wrap: el.chartWrap,
     panState: chartPan,
@@ -284,6 +293,7 @@ function initStockChartGestures() {
     mouseDragView: (timeline, pan, deltaX, deltaY, currentX, _currentY, chart) =>
       dragChartView(timeline, pan, deltaX, deltaY, currentX, chart),
     panAxisFor: (ctx) => chartViewportPanAxisX(ctx.chart),
+    onGestureEnd: () => saveCurrentItemSettings(),
   });
 }
 

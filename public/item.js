@@ -549,7 +549,8 @@ function isMouseButtonReleased(e) {
 }
 
 function endActiveChartDrags() {
-  endChartPan();
+  if (typeof endStockChartGestures === "function") endStockChartGestures();
+  else endChartPan();
   endSnapshotDrag();
 }
 
@@ -564,11 +565,6 @@ function applyChartView(
   );
   state.chartOffsetSec = clampedOffset;
   state.chartScale = clampedScale;
-  saveCurrentItemSettings({
-    chartOffsetSec: clampedOffset,
-    chartScale: clampedScale,
-    chartFollowLive: isStockChartFollowingLive(),
-  });
   syncOffsetInput(timeline);
   syncScaleInput(timeline);
   syncChartViewInteraction(timeline);
@@ -2744,6 +2740,7 @@ function initChartViewControls() {
       return;
     }
     applyChartView(timeline, { offsetSec });
+    saveCurrentItemSettings();
   });
 
   el.chartScale?.addEventListener("change", () => {
@@ -2759,6 +2756,7 @@ function initChartViewControls() {
       scale,
       offsetSec: offsetSecForScaleAtViewCenter(timeline, scale),
     });
+    saveCurrentItemSettings();
   });
 
   window.addEventListener("blur", endActiveChartDrags);

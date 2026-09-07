@@ -473,7 +473,6 @@ function emptyForDragChartView(timeline, pan, deltaX, deltaY, currentX, currentY
 function applyEmptyForChartView(timeline, { offsetSec, scale }) {
   emptyForChartUi.offsetSec = offsetSec;
   emptyForChartUi.scale = scale;
-  saveCurrentItemSettings({ emptyForOffsetSec: offsetSec, emptyForScale: scale });
   syncEmptyForChart();
 }
 
@@ -506,6 +505,7 @@ function initEmptyForChartPan() {
     onGestureActive: () => {
       emptyForChartUi.skipNextClick = true;
     },
+    onGestureEnd: () => saveCurrentItemSettings(),
   });
 
   window.addEventListener("blur", gestures.end);
