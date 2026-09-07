@@ -830,42 +830,104 @@ function scheduleRestockAlarmCheck(alarm, now, { force = false } = {}) {
 /** Favorites dashboard "next safe leave" alarms use this index (not item prediction #). */
 const FAVORITE_NEXT_WINDOW_INDEX = -1;
 
+function isItemLeaveAlarm(alarm, country, itemId, types) {
+  return (
+    types.includes(alarm.type) &&
+    alarm.country === country &&
+    Number(alarm.itemId) === Number(itemId) &&
+    Number(alarm.windowIndex) !== FAVORITE_NEXT_WINDOW_INDEX
+  );
+}
+
+/**
+ * Bind each alarm to the closest unused window by leave time, not prediction #.
+ * Prediction indices shift when an earlier restock drops off; the leave time stays
+ * with the same window.
+ */
+function assignLeaveAlarmsToWindows(alarms, windows) {
+  const pairs = [];
+  for (const alarm of alarms) {
+    for (const w of windows || []) {
+      if (w.leaveEarliest == null) continue;
+      if (w.type && w.type !== alarm.type) continue;
+      pairs.push({
+        alarm,
+        w,
+        dist: Math.abs(Number(w.leaveEarliest) - Number(alarm.eventTs)),
+      });
+    }
+  }
+  pairs.sort((a, b) => a.dist - b.dist);
+  const usedAlarms = new Set();
+  const usedWindows = new Set();
+  const assigned = new Map();
+  for (const { alarm, w } of pairs) {
+    if (usedAlarms.has(alarm) || usedWindows.has(w)) continue;
+    usedAlarms.add(alarm);
+    usedWindows.add(w);
+    assigned.set(alarm, w);
+  }
+  return assigned;
+}
+
+function applyLeaveWindowToAlarm(alarm, w) {
+  let changed = false;
+  if (Number(alarm.windowIndex) !== Number(w.windowIndex)) {
+    alarm.windowIndex = Number(w.windowIndex);
+    changed = true;
+  }
+  if (alarm.eventTs !== w.leaveEarliest) {
+    alarm.eventTs = w.leaveEarliest;
+    changed = true;
+  }
+  return changed;
+}
+
+/** Follow a window's current index; never push a due alarm onto a later time. */
+function rebindLeaveAlarm(alarm, w, now = Math.floor(Date.now() / 1000)) {
+  if (!w || w.missed || w.leaveEarliest == null) return false;
+  if (fireAt(alarm) <= now && w.leaveEarliest > alarm.eventTs) return false;
+  return applyLeaveWindowToAlarm(alarm, w);
+}
+
 /**
  * Update leave alarm event times from latest predictions; drop missed/stale.
+ * Follows the same physical window when prediction #s are reordered.
  * windows: [{ windowIndex, type, leaveEarliest, leaveLatest, missed }]
  */
 function syncLeaveAlarmsForItem(country, itemId, windows) {
   if (!country || itemId == null) return;
-  const byKey = new Map(
-    (windows || []).map((w) => [`${w.type}:${w.windowIndex}`, w])
+  const types = ["leave_regular", "leave_safe"];
+  const now = Math.floor(Date.now() / 1000);
+  const tracked = alarmState.alarms.filter(
+    (a) =>
+      !a.firedAt &&
+      !a.dismissedAt &&
+      isItemLeaveAlarm(a, country, itemId, types)
   );
+  const assigned = assignLeaveAlarmsToWindows(tracked, windows || []);
   let changed = false;
   const next = [];
   for (const alarm of alarmState.alarms) {
     if (
       alarm.firedAt ||
       alarm.dismissedAt ||
-      (alarm.type !== "leave_regular" && alarm.type !== "leave_safe") ||
-      alarm.country !== country ||
-      Number(alarm.itemId) !== Number(itemId)
+      !isItemLeaveAlarm(alarm, country, itemId, types)
     ) {
       next.push(alarm);
       continue;
     }
-    // Kept in sync from the favorites safe-window API, not item predictions.
-    if (Number(alarm.windowIndex) === FAVORITE_NEXT_WINDOW_INDEX) {
+    const w = assigned.get(alarm);
+    if (fireAt(alarm) <= now) {
+      if (rebindLeaveAlarm(alarm, w, now)) changed = true;
       next.push(alarm);
       continue;
     }
-    const w = byKey.get(`${alarm.type}:${alarm.windowIndex}`);
     if (!w || w.missed || w.leaveEarliest == null) {
       changed = true;
       continue;
     }
-    if (alarm.eventTs !== w.leaveEarliest) {
-      alarm.eventTs = w.leaveEarliest;
-      changed = true;
-    }
+    if (rebindLeaveAlarm(alarm, w, now)) changed = true;
     next.push(alarm);
   }
   if (changed) {
@@ -960,8 +1022,20 @@ async function syncAutoSafeAlarms(country, itemId, itemName, windows) {
   }
 
   await ensureNotificationPermission();
-  const desired = new Set();
+  const records = alarmState.alarms.filter(
+    (a) =>
+      !a.firedAt &&
+      !a.dismissedAt &&
+      isItemLeaveAlarm(a, country, itemId, ["leave_safe"])
+  );
+  const assigned = assignLeaveAlarmsToWindows(records, windows || []);
   let changed = false;
+  const now = Math.floor(Date.now() / 1000);
+  for (const [alarm, w] of assigned) {
+    if (rebindLeaveAlarm(alarm, w, now)) changed = true;
+  }
+
+  const desired = new Set();
   const offsetSec = getLeaveAlarmOffsetSec();
 
   for (const w of windows || []) {
@@ -988,15 +1062,9 @@ async function syncAutoSafeAlarms(country, itemId, itemName, windows) {
       changed = true;
     } else if (alarm.dismissedAt || alarm.firedAt) {
       // Keep record so we do not recreate this window's alarm.
-      if (alarm.eventTs !== w.leaveEarliest) {
-        alarm.eventTs = w.leaveEarliest;
-        changed = true;
-      }
+      if (applyLeaveWindowToAlarm(alarm, w)) changed = true;
     } else {
-      if (alarm.eventTs !== w.leaveEarliest) {
-        alarm.eventTs = w.leaveEarliest;
-        changed = true;
-      }
+      if (applyLeaveWindowToAlarm(alarm, w)) changed = true;
       if (!alarm.auto) {
         // Keep manual alarm; mark as covering this window
         desired.add(Number(w.windowIndex));
