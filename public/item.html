@@ -168,9 +168,15 @@
 					<button type="button" data-chart="rate-tod">Rate by hour</button>
 					<button type="button" data-chart="buy-price">Buy price</button>
 				</div>
-				<button type="button" id="empty-for-swap-axes" class="empty-for-swap-axes hidden" title="Swap empty-for and time axes">
+			</div>
+			<div class="chart-options hidden" id="empty-for-chart-options">
+				<button type="button" id="empty-for-swap-axes" class="chart-option-btn" title="Swap empty-for and time axes" aria-pressed="false">
 					Swap axes
 				</button>
+				<label class="checkbox chart-option-toggle" for="empty-for-show-excluded" title="When off, excluded restock cycles are omitted from the chart">
+					<input id="empty-for-show-excluded" type="checkbox" checked />
+					Show excluded
+				</label>
 			</div>
 			<div class="chart-panels">
 				<div class="chart-wrap" id="stock-chart-wrap">

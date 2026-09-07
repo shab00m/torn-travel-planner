@@ -2,10 +2,13 @@
 const emptyForChartUi = {
   chart: null,
   axesSwapped: false,
+  showExcluded: loadPrefs().emptyForShowExcluded !== false,
 };
 
 const emptyForChartEl = {
+  options: document.getElementById("empty-for-chart-options"),
   swapAxes: document.getElementById("empty-for-swap-axes"),
+  showExcluded: document.getElementById("empty-for-show-excluded"),
   wrap: document.getElementById("empty-for-chart-wrap"),
   canvas: document.getElementById("empty-for-chart"),
   empty: document.getElementById("empty-for-chart-empty"),
@@ -222,25 +225,29 @@ function emptyForChartDataset(points, { excluded = false } = {}) {
   };
 }
 
-function syncEmptyForSwapAxesButton() {
-  if (!emptyForChartEl.swapAxes) return;
+function syncEmptyForChartOptions() {
   const onEmptyFor = typeof isItemChartView === "function" && isItemChartView("empty-for");
-  emptyForChartEl.swapAxes.classList.toggle("hidden", !onEmptyFor);
-  emptyForChartEl.swapAxes.classList.toggle("active", emptyForChartUi.axesSwapped);
-  emptyForChartEl.swapAxes.setAttribute(
+  emptyForChartEl.options?.classList.toggle("hidden", !onEmptyFor);
+  if (!onEmptyFor) return;
+  emptyForChartEl.swapAxes?.classList.toggle("active", emptyForChartUi.axesSwapped);
+  emptyForChartEl.swapAxes?.setAttribute(
     "aria-pressed",
     emptyForChartUi.axesSwapped ? "true" : "false"
   );
+  if (emptyForChartEl.showExcluded) {
+    emptyForChartEl.showExcluded.checked = emptyForChartUi.showExcluded;
+  }
 }
 
 /** Build or update the empty-for chart. No-op unless that view is active. */
 function syncEmptyForChart() {
-  syncEmptyForSwapAxesButton();
+  syncEmptyForChartOptions();
   if (typeof isItemChartView === "function" && !isItemChartView("empty-for")) return;
   if (!emptyForChartEl.canvas || !emptyForChartEl.wrap) return;
 
   const { included, excluded } = getEmptyForChartData();
-  const points = included.concat(excluded);
+  const visibleExcluded = emptyForChartUi.showExcluded ? excluded : [];
+  const points = included.concat(visibleExcluded);
   const hasPoints = points.length > 0;
   emptyForChartEl.empty?.classList.toggle("hidden", hasPoints);
   emptyForChartEl.canvas.classList.toggle("hidden", !hasPoints);
@@ -253,7 +260,7 @@ function syncEmptyForChart() {
   const bounds = currentEmptyForChartBounds();
   const options = emptyForChartOptions(points, bounds);
   const datasets = [emptyForChartDataset(included)];
-  if (excluded.length) datasets.push(emptyForChartDataset(excluded, { excluded: true }));
+  if (visibleExcluded.length) datasets.push(emptyForChartDataset(visibleExcluded, { excluded: true }));
 
   if (emptyForChartUi.chart) {
     emptyForChartUi.chart.data.datasets = datasets;
@@ -278,10 +285,23 @@ function setEmptyForAxesSwapped(swapped) {
   syncEmptyForChart();
 }
 
-function initEmptyForSwapAxesButton() {
+function setEmptyForShowExcluded(show) {
+  emptyForChartUi.showExcluded = Boolean(show);
+  savePrefs({ emptyForShowExcluded: emptyForChartUi.showExcluded });
+  destroyEmptyForChart();
+  syncEmptyForChart();
+}
+
+function initEmptyForChartOptions() {
   emptyForChartEl.swapAxes?.addEventListener("click", () => {
     setEmptyForAxesSwapped(!emptyForChartUi.axesSwapped);
   });
+  emptyForChartEl.showExcluded?.addEventListener("change", () => {
+    setEmptyForShowExcluded(emptyForChartEl.showExcluded.checked);
+  });
+  if (emptyForChartEl.showExcluded) {
+    emptyForChartEl.showExcluded.checked = emptyForChartUi.showExcluded;
+  }
 }
 
-initEmptyForSwapAxesButton();
+initEmptyForChartOptions();

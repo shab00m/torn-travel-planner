@@ -28,7 +28,7 @@ function syncActiveItemChartView() {
   } else if (itemChartViewUi.type === "buy-price" && typeof syncBuyPriceChart === "function") {
     syncBuyPriceChart();
   }
-  if (typeof syncEmptyForSwapAxesButton === "function") syncEmptyForSwapAxesButton();
+  if (typeof syncEmptyForChartOptions === "function") syncEmptyForChartOptions();
 }
 
 function setItemChartType(type) {
@@ -45,7 +45,7 @@ function setItemChartType(type) {
   }
 
   if (type === "stock") {
-    if (typeof syncEmptyForSwapAxesButton === "function") syncEmptyForSwapAxesButton();
+    if (typeof syncEmptyForChartOptions === "function") syncEmptyForChartOptions();
     if (state.chart) state.chart.resize();
     return;
   }

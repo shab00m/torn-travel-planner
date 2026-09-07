@@ -1971,30 +1971,42 @@ body.page-item {
 	margin: 0;
 }
 
-.empty-for-swap-axes {
-	background: var(--surface-2);
-	border: 1px solid var(--border);
-	color: var(--text-dim);
-	border-radius: 6px;
-	padding: 5px 12px;
+.chart-options {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 14px;
+	margin: -2px 0 8px;
+	flex-shrink: 0;
+}
+
+.chart-options.hidden {
+	display: none;
+}
+
+.chart-option-btn {
+	background: transparent;
+	border: 1px solid #c48a5a;
+	color: #f0a36b;
+	border-radius: 999px;
+	padding: 3px 12px;
 	font: inherit;
-	font-size: 0.8rem;
+	font-size: 0.78rem;
 	cursor: pointer;
 }
 
-.empty-for-swap-axes:hover {
-	color: var(--text);
-	border-color: var(--accent);
+.chart-option-btn:hover {
+	background: rgba(240, 163, 107, 0.12);
 }
 
-.empty-for-swap-axes.active {
-	background: var(--accent);
-	border-color: var(--accent);
-	color: #fff;
+.chart-option-btn.active {
+	background: rgba(240, 163, 107, 0.22);
+	border-color: #f0a36b;
+	color: #f0a36b;
 }
 
-.empty-for-swap-axes.hidden {
-	display: none;
+.chart-option-toggle {
+	font-size: 0.82rem;
 }
 
 .chart-panels {
