@@ -40,24 +40,32 @@ export function normalizeEmptyForBounds({ minEmptyFor, maxEmptyFor } = {}) {
   return { minEmptyFor: min, maxEmptyFor: max };
 }
 
-export function emptyForSecToMinutes(sec) {
-  if (sec == null) return null;
-  return Math.round(sec / 60);
-}
-
-export function emptyForMinutesToSec(minutes) {
-  if (minutes == null) return null;
-  return minutes * 60;
-}
-
-/** Parse a minutes input field. Blank → null. Invalid → throws. */
-export function parseEmptyForMinutesInput(raw) {
-  if (raw == null || String(raw).trim() === "") return null;
-  const n = Number.parseInt(String(raw).trim(), 10);
-  if (!Number.isInteger(n) || n < 0) {
-    throw new Error("empty-for minutes must be a non-negative integer");
+/** Display seconds as `h:mm:ss` (hours unpadded; minutes and seconds always two digits). */
+export function formatEmptyForHms(sec) {
+  if (sec == null) return "";
+  if (!Number.isInteger(sec) || sec < 0) {
+    throw new Error("empty-for duration must be a non-negative integer (seconds)");
   }
-  return emptyForMinutesToSec(n);
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** Parse an `h:mm:ss` input. Blank → null. Invalid → throws. */
+export function parseEmptyForHmsInput(raw) {
+  if (raw == null || String(raw).trim() === "") return null;
+  const match = String(raw).trim().match(/^(\d+):([0-5]?\d):([0-5]?\d)$/);
+  if (!match) {
+    throw new Error("empty-for range must be h:mm:ss");
+  }
+  const h = Number.parseInt(match[1], 10);
+  const m = Number.parseInt(match[2], 10);
+  const s = Number.parseInt(match[3], 10);
+  if (m > 59 || s > 59) {
+    throw new Error("empty-for range must be h:mm:ss");
+  }
+  return h * 3600 + m * 60 + s;
 }
 
 /**

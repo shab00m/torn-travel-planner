@@ -198,6 +198,14 @@
 				</div>
 				<div class="chart-wrap chart-wrap-empty-for hidden" id="empty-for-chart-wrap">
 					<canvas id="empty-for-chart"></canvas>
+					<div class="empty-for-range-handle-wrap is-min hidden" id="empty-for-range-handle-min-wrap">
+						<button type="button" class="empty-for-range-handle" id="empty-for-range-handle-min" aria-label="Min empty for" title="Drag to set min empty for"></button>
+						<span class="empty-for-range-handle-value" id="empty-for-range-handle-min-value"></span>
+					</div>
+					<div class="empty-for-range-handle-wrap is-max hidden" id="empty-for-range-handle-max-wrap">
+						<button type="button" class="empty-for-range-handle" id="empty-for-range-handle-max" aria-label="Max empty for" title="Drag to set max empty for"></button>
+						<span class="empty-for-range-handle-value" id="empty-for-range-handle-max-value"></span>
+					</div>
 					<p id="empty-for-chart-empty" class="item-empty hidden">No completed empty-for cycles yet.</p>
 				</div>
 				<div class="chart-wrap chart-wrap-rate-tod hidden" id="rate-tod-chart-wrap">
@@ -258,25 +266,25 @@
 							<span>Min empty for</span>
 							<input
 								id="min-empty-for"
-								type="number"
-								min="0"
-								step="1"
-								placeholder="e.g. 50"
-								title="When set, the MIN button uses this duration. Cycles shorter than this are auto-excluded as outliers."
+								type="text"
+								inputmode="numeric"
+								autocomplete="off"
+								spellcheck="false"
+								placeholder="h:mm:ss"
+								title="When set, the MIN button uses this duration (h:mm:ss). New cycles shorter than this are auto-excluded; existing points are left as they are."
 							/>
-							<span>min</span>
 						</label>
 						<label class="restock-field" for="max-empty-for">
 							<span>Max empty for</span>
 							<input
 								id="max-empty-for"
-								type="number"
-								min="0"
-								step="1"
-								placeholder="e.g. 70"
-								title="When set, the MAX button uses this duration. Cycles longer than this are auto-excluded as outliers."
+								type="text"
+								inputmode="numeric"
+								autocomplete="off"
+								spellcheck="false"
+								placeholder="h:mm:ss"
+								title="When set, the MAX button uses this duration (h:mm:ss). New cycles longer than this are auto-excluded; existing points are left as they are."
 							/>
-							<span>min</span>
 						</label>
 						<span>Avg empty for</span>
 						<div class="avg-buttons" id="avg-buttons"></div>
@@ -377,6 +385,7 @@
 		<script src="/item-chart-gestures.js"></script>
 		<script src="/item-chart-views.js"></script>
 		<script src="/item-empty-for-chart.js"></script>
+		<script src="/item-empty-for-handles.js"></script>
 		<script src="/item-rate-tod-chart.js"></script>
 		<script src="/item-price-chart.js"></script>
 	</body>

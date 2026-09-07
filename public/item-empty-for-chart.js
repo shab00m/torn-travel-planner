@@ -300,6 +300,9 @@ function emptyForChartOptions(points, bounds) {
       x: swapped ? timeScale : durationScale,
       y: swapped ? durationScale : timeScale,
     },
+    onResize() {
+      if (typeof syncEmptyForRangeHandles === "function") syncEmptyForRangeHandles();
+    },
   };
 }
 
@@ -320,6 +323,7 @@ function emptyForChartDataset(points, { excluded = false } = {}) {
 
 function syncEmptyForChartOptions() {
   const onEmptyFor = typeof isItemChartView === "function" && isItemChartView("empty-for");
+  emptyForChartEl.wrap?.classList.toggle("axes-swapped", Boolean(emptyForChartUi.axesSwapped));
   if (!onEmptyFor) return;
   emptyForChartEl.swapAxes?.classList.toggle("active", emptyForChartUi.axesSwapped);
   emptyForChartEl.swapAxes?.setAttribute(
@@ -331,11 +335,21 @@ function syncEmptyForChartOptions() {
   }
 }
 
+function afterEmptyForChartSync() {
+  if (typeof syncEmptyForRangeHandles === "function") syncEmptyForRangeHandles();
+}
+
 /** Build or update the empty-for chart. No-op unless that view is active. */
 function syncEmptyForChart() {
   syncEmptyForChartOptions();
-  if (typeof isItemChartView === "function" && !isItemChartView("empty-for")) return;
-  if (!emptyForChartEl.canvas || !emptyForChartEl.wrap) return;
+  if (typeof isItemChartView === "function" && !isItemChartView("empty-for")) {
+    afterEmptyForChartSync();
+    return;
+  }
+  if (!emptyForChartEl.canvas || !emptyForChartEl.wrap) {
+    afterEmptyForChartSync();
+    return;
+  }
 
   const { included, excluded } = getEmptyForChartData();
   const visibleExcluded = emptyForChartUi.showExcluded ? excluded : [];
@@ -350,6 +364,7 @@ function syncEmptyForChart() {
     if (emptyForChartEl.offset) emptyForChartEl.offset.disabled = true;
     if (emptyForChartEl.scale) emptyForChartEl.scale.disabled = true;
     syncEmptyForChartInteraction(null);
+    afterEmptyForChartSync();
     return;
   }
 
@@ -363,6 +378,7 @@ function syncEmptyForChart() {
     emptyForChartUi.chart.options = options;
     emptyForChartUi.chart.update("none");
     emptyForChartUi.chart.resize();
+    afterEmptyForChartSync();
     return;
   }
 
@@ -372,6 +388,7 @@ function syncEmptyForChart() {
     data: { datasets },
     options,
   });
+  afterEmptyForChartSync();
 }
 
 function setEmptyForAxesSwapped(swapped) {

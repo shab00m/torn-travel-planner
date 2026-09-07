@@ -1079,7 +1079,8 @@ export async function getAllEmptyForBounds() {
 }
 
 /**
- * Set or clear per-item min/max empty-for. Out-of-range cycles are ignored.
+ * Set or clear per-item min/max empty-for. Existing cycles are left as-is;
+ * new restocks still use the range via maybeIgnoreCycle.
  * @returns {Promise<{ minEmptyFor: number|null, maxEmptyFor: number|null, flagged: number, depletedTs: number[] }>}
  */
 export async function setEmptyForBounds(country, itemId, rawBounds) {
@@ -1099,8 +1100,6 @@ export async function setEmptyForBounds(country, itemId, rawBounds) {
        SET min_empty_for = EXCLUDED.min_empty_for, max_empty_for = EXCLUDED.max_empty_for`,
       [country, itemId, bounds.minEmptyFor, bounds.maxEmptyFor]
     );
-    const cycles = await loadCompletedRestocks(client, country, itemId);
-    const depletedTs = await flagOutOfRangeCycles(client, country, itemId, cycles, bounds);
-    return { ...bounds, flagged: depletedTs.length, depletedTs };
+    return { ...bounds, flagged: 0, depletedTs: [] };
   });
 }

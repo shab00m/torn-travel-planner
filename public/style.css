@@ -2037,6 +2037,107 @@ body.page-item {
 	padding-top: 16px;
 }
 
+.page-item .chart-wrap-empty-for.axes-swapped {
+	padding-right: 28px;
+}
+
+.empty-for-range-handle-wrap {
+	position: absolute;
+	z-index: 5;
+	width: 0;
+	height: 0;
+	pointer-events: none;
+}
+
+.empty-for-range-handle-wrap.hidden {
+	display: none;
+}
+
+.empty-for-range-handle-value {
+	position: absolute;
+	font-size: 0.72rem;
+	font-variant-numeric: tabular-nums;
+	color: var(--accent);
+	white-space: nowrap;
+	pointer-events: none;
+	text-shadow: 0 0 4px var(--bg);
+	transform: translate(14px, calc(-100% - 4px));
+}
+
+.empty-for-range-handle-wrap.is-min .empty-for-range-handle-value {
+	transform: translate(calc(-100% - 14px), calc(-100% - 4px));
+}
+
+.chart-wrap-empty-for.axes-swapped .empty-for-range-handle-value,
+.chart-wrap-empty-for.axes-swapped .empty-for-range-handle-wrap.is-min .empty-for-range-handle-value {
+	transform: translate(calc(-100% - 4px), -50%);
+}
+
+.empty-for-range-handle {
+	position: absolute;
+	z-index: 5;
+	width: 22px;
+	height: 16px;
+	padding: 0;
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	background: var(--surface-2);
+	box-shadow: 0 0 0 1px rgba(15, 18, 24, 0.4);
+	cursor: ew-resize;
+	touch-action: none;
+	pointer-events: auto;
+	transform: translate(-50%, calc(-100% - 4px));
+}
+
+.empty-for-range-handle::before {
+	content: "";
+	display: block;
+	width: 10px;
+	height: 2px;
+	margin: 4px auto 0;
+	border-radius: 1px;
+	background: var(--accent);
+	box-shadow: 0 3px 0 var(--accent);
+}
+
+.empty-for-range-handle::after {
+	content: "";
+	position: absolute;
+	left: 50%;
+	top: 100%;
+	width: 1px;
+	height: 6px;
+	background: var(--accent);
+	transform: translateX(-50%);
+}
+
+.chart-wrap-empty-for.axes-swapped .empty-for-range-handle {
+	width: 16px;
+	height: 22px;
+	cursor: ns-resize;
+	transform: translate(6px, -50%);
+}
+
+.chart-wrap-empty-for.axes-swapped .empty-for-range-handle::before {
+	width: 2px;
+	height: 10px;
+	margin: 3px auto 0;
+	box-shadow: 3px 0 0 var(--accent);
+}
+
+.chart-wrap-empty-for.axes-swapped .empty-for-range-handle::after {
+	left: auto;
+	right: 100%;
+	top: 50%;
+	width: 6px;
+	height: 1px;
+	transform: translateY(-50%);
+}
+
+.empty-for-range-handle.is-dragging {
+	background: #24344c;
+}
+
 #empty-for-chart.hidden,
 #rate-tod-chart.hidden,
 #buy-price-chart.hidden {
@@ -2112,7 +2213,7 @@ body.page-item {
 
 .restock-field input,
 .restock-amount-wrap input {
-	width: 72px;
+	width: 96px;
 	background: var(--surface-2);
 	border: 1px solid var(--border);
 	border-radius: 6px;

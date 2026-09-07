@@ -626,15 +626,18 @@ function currentEmptyForBounds() {
   return getEmptyForBounds(item.country, item.itemId);
 }
 
-function fillEmptyForBoundInputs() {
-  const bounds = currentEmptyForBounds();
-  const toMinutes = emptyForBoundsApi().emptyForSecToMinutes;
+function setEmptyForBoundInputValues(bounds) {
+  const format = emptyForBoundsApi().formatEmptyForHms;
   if (el.minEmptyFor) {
-    el.minEmptyFor.value = bounds.minEmptyFor != null ? toMinutes(bounds.minEmptyFor) : "";
+    el.minEmptyFor.value = bounds.minEmptyFor != null ? format(bounds.minEmptyFor) : "";
   }
   if (el.maxEmptyFor) {
-    el.maxEmptyFor.value = bounds.maxEmptyFor != null ? toMinutes(bounds.maxEmptyFor) : "";
+    el.maxEmptyFor.value = bounds.maxEmptyFor != null ? format(bounds.maxEmptyFor) : "";
   }
+}
+
+function fillEmptyForBoundInputs() {
+  setEmptyForBoundInputValues(currentEmptyForBounds());
 }
 
 let lastZeroLookup = null;
@@ -2609,6 +2612,7 @@ function syncInspectAdminAccess() {
   el.inspectControls?.classList.toggle("hidden", !allowed);
   el.flagOutliersBtn?.classList.toggle("hidden", !allowed);
   el.backfillRestocksBtn?.classList.toggle("hidden", !allowed);
+  if (typeof syncEmptyForRangeHandles === "function") syncEmptyForRangeHandles();
   if (!allowed) {
     if (el.cycleHistoryActionStatus) el.cycleHistoryActionStatus.textContent = "";
     if (snapshotInspector.enabled) setInspectMode(false);
@@ -3122,6 +3126,20 @@ el.backfillRestocksBtn?.addEventListener("click", () => {
   backfillItemRestocks();
 });
 
+async function persistEmptyForBounds(bounds) {
+  const item = state.item;
+  if (!item) return;
+  try {
+    await setEmptyForBounds(item.country, item.itemId, bounds);
+    fillEmptyForBoundInputs();
+    refreshRestockViews();
+  } catch (err) {
+    fillEmptyForBoundInputs();
+    if (typeof syncEmptyForChart === "function") syncEmptyForChart();
+    alert(err.message || "Failed to save empty-for range");
+  }
+}
+
 async function saveEmptyForBoundField(field) {
   const item = state.item;
   if (!item) return;
@@ -3130,31 +3148,16 @@ async function saveEmptyForBoundField(field) {
   const input = field === "minEmptyFor" ? el.minEmptyFor : el.maxEmptyFor;
   let parsed;
   try {
-    parsed = api.parseEmptyForMinutesInput(input?.value);
+    parsed = api.parseEmptyForHmsInput(input?.value);
   } catch (err) {
     fillEmptyForBoundInputs();
     alert(err.message || "Invalid empty-for range");
     return;
   }
-  const bounds = {
+  await persistEmptyForBounds({
     minEmptyFor: field === "minEmptyFor" ? parsed : current.minEmptyFor,
     maxEmptyFor: field === "maxEmptyFor" ? parsed : current.maxEmptyFor,
-  };
-  try {
-    const data = await setEmptyForBounds(item.country, item.itemId, bounds);
-    fillEmptyForBoundInputs();
-    const restockData = await fetchJson(`/api/restocks/${item.country}/${item.itemId}`);
-    loadRestockData(restockData);
-    refreshRestockViews();
-    if (data.flagged) {
-      setCycleHistoryActionStatus(
-        `Excluded ${data.flagged} cycle${data.flagged === 1 ? "" : "s"} outside empty-for range`
-      );
-    }
-  } catch (err) {
-    fillEmptyForBoundInputs();
-    alert(err.message || "Failed to save empty-for range");
-  }
+  });
 }
 
 el.minEmptyFor?.addEventListener("change", () => {
