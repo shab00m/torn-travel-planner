@@ -568,11 +568,16 @@ function usableRestockDurations(restocks) {
     .map((r) => r.duration);
 }
 
-function selectedStockoutSec(restocks) {
+function selectedStockoutSec(restocks, country, itemId) {
   const prefs = typeof loadPrefs === "function" ? loadPrefs() : {};
+  const timing = ["avg", "min", "max"].includes(prefs.stockoutTiming) ? prefs.stockoutTiming : "avg";
+  if ((timing === "min" || timing === "max") && country != null) {
+    const bounds = getEmptyForBounds(country, itemId);
+    const configured = timing === "min" ? bounds.minEmptyFor : bounds.maxEmptyFor;
+    if (configured != null) return configured;
+  }
   const rows = (restocks || []).filter((r) => !r.ignored && r.duration != null && r.duration > 0);
   if (!rows.length) return null;
-  const timing = ["avg", "min", "max"].includes(prefs.stockoutTiming) ? prefs.stockoutTiming : "avg";
   const durations = rows.map((r) => r.duration);
   if (timing === "min") return Math.min(...durations);
   if (timing === "max") return Math.max(...durations);
@@ -595,8 +600,8 @@ function selectedDepletionRate(rates) {
 }
 
 /** Next predicted restock after now for alarm reschedule (open-cycle step or deplete+restock). */
-function computeNextRestockAlarmTarget({ restocks, rates, quantity, now }) {
-  const restockSec = selectedStockoutSec(restocks);
+function computeNextRestockAlarmTarget({ restocks, rates, quantity, now, country, itemId }) {
+  const restockSec = selectedStockoutSec(restocks, country, itemId);
   if (restockSec == null) return null;
   const open = (restocks || []).find((r) => r.restocked_ts == null);
 
@@ -659,7 +664,14 @@ async function resolveDueRestockAlarm(alarm) {
     // Before countdown: only fire on confirmed restock (early). Don't reschedule yet.
     if (!due) return;
 
-    const next = computeNextRestockAlarmTarget({ restocks, rates, quantity, now });
+    const next = computeNextRestockAlarmTarget({
+      restocks,
+      rates,
+      quantity,
+      now,
+      country: alarm.country,
+      itemId: alarm.itemId,
+    });
     if (next?.ts != null && next.ts - (alarm.offsetSec || 0) > now) {
       let changed = false;
       if (alarm.eventTs !== next.ts) {
@@ -770,19 +782,31 @@ function tryFireRestockAlarmOnStock(alarm, quantity, now = Math.floor(Date.now()
 }
 
 async function ensureRestockAmountsForArmedAlarms() {
-  if (typeof loadRestockAmountForItem !== "function") return;
   const armed = alarmState.alarms.filter(
     (a) => a.type === "restock" && !a.firedAt && !a.dismissedAt
   );
   await Promise.all(
     armed.map(async (a) => {
-      if (typeof getRestockAmount === "function" && getRestockAmount(a.country, a.itemId) != null) {
-        return;
+      if (typeof loadRestockAmountForItem === "function") {
+        const haveAmount =
+          typeof getRestockAmount === "function" && getRestockAmount(a.country, a.itemId) != null;
+        if (!haveAmount) {
+          try {
+            await loadRestockAmountForItem(a.country, a.itemId);
+          } catch {
+            /* amount stays unknown → negligible check is a no-op (same as server) */
+          }
+        }
       }
-      try {
-        await loadRestockAmountForItem(a.country, a.itemId);
-      } catch {
-        /* amount stays unknown → negligible check is a no-op (same as server) */
+      if (
+        typeof loadEmptyForBoundsForItem === "function" &&
+        !(restockAmountKey(a.country, a.itemId) in state.emptyForBounds)
+      ) {
+        try {
+          await loadEmptyForBoundsForItem(a.country, a.itemId);
+        } catch {
+          /* bounds stay unset → MIN/MAX use historical extents */
+        }
       }
     })
   );

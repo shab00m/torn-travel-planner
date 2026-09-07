@@ -20,6 +20,9 @@ import {
   getAllRestockAmounts,
   setRestockAmount,
   deleteRestockAmount,
+  getEmptyForBounds,
+  getAllEmptyForBounds,
+  setEmptyForBounds,
 } from "./src/db.js";
 import { startPolling, getLatest } from "./src/yata.js";
 import { getTravelStatus } from "./src/torn.js";
@@ -303,6 +306,41 @@ app.get("/api/restock-amounts/:country/:itemId", async (req, res) => {
     itemId: params.id,
     amount: await getRestockAmount(params.country, params.id),
   });
+});
+
+app.get("/api/empty-for-bounds", async (_req, res) => {
+  res.json({ bounds: await getAllEmptyForBounds() });
+});
+
+app.get("/api/empty-for-bounds/:country/:itemId", async (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  res.json({
+    country: params.country,
+    itemId: params.id,
+    ...(await getEmptyForBounds(params.country, params.id)),
+  });
+});
+
+app.put("/api/empty-for-bounds/:country/:itemId", async (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  try {
+    const result = await setEmptyForBounds(params.country, params.id, {
+      minEmptyFor: req.body?.minEmptyFor,
+      maxEmptyFor: req.body?.maxEmptyFor,
+    });
+    res.json({
+      country: params.country,
+      itemId: params.id,
+      minEmptyFor: result.minEmptyFor,
+      maxEmptyFor: result.maxEmptyFor,
+      flagged: result.flagged,
+      depletedTs: result.depletedTs,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.put("/api/restock-amounts/:country/:itemId", async (req, res) => {

@@ -52,7 +52,7 @@ Do not point the web service at `railway.cron.toml` or `railway.market-cron.toml
 
 ### Item page
 
-The item page loads history, restocks, depletion rates, market price, travel status, and safe windows from `/api/*`. Chart math and restock-time adjustment helpers in `public/` are imported by the server where the same formula must stay a single source of truth (`public/adjust-restock-time.js`).
+The item page loads history, restocks, depletion rates, market price, travel status, and safe windows from `/api/*`. Chart math and restock-time adjustment helpers in `public/` are imported by the server where the same formula must stay a single source of truth (`public/adjust-restock-time.js`, `public/empty-for-bounds.js`).
 
 ### Market prices
 
@@ -77,6 +77,7 @@ Timestamps are Unix seconds (`BIGINT`). `pg` parses `INT8` as JS numbers.
 | `restocks` | Depletion/refill cycles; PK `(country, item_id, depleted_ts)` |
 | `market_prices` | Cached Torn average item-market price |
 | `restock_amounts` | Admin-set typical restock quantity |
+| `empty_for_bounds` | Optional per-item min/max empty-for (seconds); drives stockout MIN/MAX and range outlier exclusion |
 | `users` | Allow-list / admin flags (no API keys) |
 | `page_views` | Page-load analytics |
 | `depletion_rate_tod` | Minute-weighted average rate by UTC hour-of-day |

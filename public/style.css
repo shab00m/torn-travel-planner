@@ -2087,6 +2087,7 @@ body.page-item {
 	flex-wrap: wrap;
 }
 
+.restock-field,
 .restock-amount-wrap {
 	display: flex;
 	align-items: center;
@@ -2096,8 +2097,9 @@ body.page-item {
 	border-right: 1px solid var(--border);
 }
 
+.restock-field input,
 .restock-amount-wrap input {
-	width: 88px;
+	width: 72px;
 	background: var(--surface-2);
 	border: 1px solid var(--border);
 	border-radius: 6px;
@@ -2107,6 +2109,11 @@ body.page-item {
 	font-size: 0.82rem;
 }
 
+.restock-amount-wrap input {
+	width: 88px;
+}
+
+.restock-field input:focus,
 .restock-amount-wrap input:focus {
 	outline: 1px solid var(--accent);
 }

@@ -11,29 +11,35 @@ const emptyForChartEl = {
   empty: document.getElementById("empty-for-chart-empty"),
 };
 
-function getEmptyForChartPoints() {
-  // History range is already applied in getCycleHistoryRows().
+const EMPTY_FOR_INCLUDED_COLOR = "#f0a36b";
+const EMPTY_FOR_EXCLUDED_FILL = "rgba(139, 150, 168, 0.28)";
+const EMPTY_FOR_EXCLUDED_BORDER = "rgba(139, 150, 168, 0.4)";
+const EMPTY_FOR_RANGE_FILL = "rgba(79, 156, 249, 0.10)";
+const EMPTY_FOR_RANGE_BORDER = "rgba(79, 156, 249, 0.45)";
+
+function emptyForChartRowToPoint(r, swapped) {
+  const timeMs = r.restocked_ts * 1000;
+  return {
+    x: swapped ? timeMs : r.emptyForSec,
+    y: swapped ? r.emptyForSec : timeMs,
+    depleted_ts: r.depleted_ts,
+    adjusted_depleted_ts: r.adjusted_depleted_ts ?? r.effective_depleted_ts ?? r.depleted_ts,
+    restocked_ts: r.restocked_ts,
+    emptyForSec: r.emptyForSec,
+    ignored: Boolean(r.ignored),
+  };
+}
+
+function getEmptyForChartData() {
   const swapped = emptyForChartUi.axesSwapped;
-  return getCycleHistoryRows()
-    .filter(
-      (r) =>
-        !r.ignored &&
-        r.emptyForSec != null &&
-        r.emptyForSec >= 0 &&
-        r.restocked_ts != null
-    )
-    .map((r) => {
-      const timeMs = r.restocked_ts * 1000;
-      return {
-        x: swapped ? timeMs : r.emptyForSec,
-        y: swapped ? r.emptyForSec : timeMs,
-        depleted_ts: r.depleted_ts,
-        adjusted_depleted_ts: r.adjusted_depleted_ts ?? r.effective_depleted_ts ?? r.depleted_ts,
-        restocked_ts: r.restocked_ts,
-        emptyForSec: r.emptyForSec,
-      };
-    })
-    .sort((a, b) => a.restocked_ts - b.restocked_ts);
+  const rows = getCycleHistoryRows({ includeIgnored: true }).filter(
+    (r) => r.emptyForSec != null && r.emptyForSec >= 0 && r.restocked_ts != null
+  );
+  const byTime = (a, b) => a.restocked_ts - b.restocked_ts;
+  return {
+    included: rows.filter((r) => !r.ignored).map((r) => emptyForChartRowToPoint(r, swapped)).sort(byTime),
+    excluded: rows.filter((r) => r.ignored).map((r) => emptyForChartRowToPoint(r, swapped)).sort(byTime),
+  };
 }
 
 function emptyForChartTimeUnit(spanMs) {
@@ -100,8 +106,40 @@ function emptyForTimeScale(valuesMs) {
   };
 }
 
-function emptyForChartOptions(points) {
+function currentEmptyForChartBounds() {
+  if (!state.item) return { minEmptyFor: null, maxEmptyFor: null };
+  return getEmptyForBounds(state.item.country, state.item.itemId);
+}
+
+function emptyForRangeAnnotations(swapped, minSec, maxSec) {
+  if (minSec == null && maxSec == null) return {};
+  const box = {
+    type: "box",
+    backgroundColor: EMPTY_FOR_RANGE_FILL,
+    borderColor: EMPTY_FOR_RANGE_BORDER,
+    borderWidth: 1,
+    label: {
+      display: true,
+      content: "Range",
+      color: "#8b96a8",
+      font: { size: 11, weight: "600" },
+      position: swapped ? { x: "start", y: "center" } : { x: "center", y: "start" },
+    },
+  };
+  if (swapped) {
+    if (minSec != null) box.yMin = minSec;
+    if (maxSec != null) box.yMax = maxSec;
+  } else {
+    if (minSec != null) box.xMin = minSec;
+    if (maxSec != null) box.xMax = maxSec;
+  }
+  return { emptyForRange: box };
+}
+
+function emptyForChartOptions(points, bounds) {
   const durationValues = points.map((p) => p.emptyForSec);
+  if (bounds.minEmptyFor != null) durationValues.push(bounds.minEmptyFor);
+  if (bounds.maxEmptyFor != null) durationValues.push(bounds.maxEmptyFor);
   const timeValues = points.map((p) => p.restocked_ts * 1000);
   const durationScale = emptyForDurationScale(durationValues);
   const timeScale = emptyForTimeScale(timeValues);
@@ -129,6 +167,9 @@ function emptyForChartOptions(points) {
         align: "start",
         labels: { color: "#8b96a8" },
       },
+      annotation: {
+        annotations: emptyForRangeAnnotations(swapped, bounds.minEmptyFor, bounds.maxEmptyFor),
+      },
       tooltip: {
         backgroundColor: "rgba(23, 28, 38, 0.95)",
         titleColor: "#e6ebf2",
@@ -141,7 +182,8 @@ function emptyForChartOptions(points) {
           label: (ctx) => {
             const raw = ctx.raw;
             if (!raw) return "";
-            return `Empty for: ${fmtDurationDetailed(raw.emptyForSec)}`;
+            const excluded = raw.ignored ? " (excluded)" : "";
+            return `Empty for: ${fmtDurationDetailed(raw.emptyForSec)}${excluded}`;
           },
           afterLabel: (ctx) => {
             const raw = ctx.raw;
@@ -165,13 +207,13 @@ function emptyForChartOptions(points) {
   };
 }
 
-function emptyForChartDataset(points) {
+function emptyForChartDataset(points, { excluded = false } = {}) {
   return {
-    label: "Empty for",
+    label: excluded ? "Excluded" : "Empty for",
     data: points,
     showLine: false,
-    borderColor: "#f0a36b",
-    backgroundColor: "rgba(240, 163, 107, 0.85)",
+    borderColor: excluded ? EMPTY_FOR_EXCLUDED_BORDER : EMPTY_FOR_INCLUDED_COLOR,
+    backgroundColor: excluded ? EMPTY_FOR_EXCLUDED_FILL : "rgba(240, 163, 107, 0.85)",
     pointRadius: points.length > 200 ? 2 : 4,
     pointHoverRadius: 6,
     pointHitRadius: 8,
@@ -197,7 +239,8 @@ function syncEmptyForChart() {
   if (typeof isItemChartView === "function" && !isItemChartView("empty-for")) return;
   if (!emptyForChartEl.canvas || !emptyForChartEl.wrap) return;
 
-  const points = getEmptyForChartPoints();
+  const { included, excluded } = getEmptyForChartData();
+  const points = included.concat(excluded);
   const hasPoints = points.length > 0;
   emptyForChartEl.empty?.classList.toggle("hidden", hasPoints);
   emptyForChartEl.canvas.classList.toggle("hidden", !hasPoints);
@@ -207,11 +250,13 @@ function syncEmptyForChart() {
     return;
   }
 
-  const options = emptyForChartOptions(points);
-  const dataset = emptyForChartDataset(points);
+  const bounds = currentEmptyForChartBounds();
+  const options = emptyForChartOptions(points, bounds);
+  const datasets = [emptyForChartDataset(included)];
+  if (excluded.length) datasets.push(emptyForChartDataset(excluded, { excluded: true }));
 
   if (emptyForChartUi.chart) {
-    emptyForChartUi.chart.data.datasets = [dataset];
+    emptyForChartUi.chart.data.datasets = datasets;
     emptyForChartUi.chart.options = options;
     emptyForChartUi.chart.update("none");
     emptyForChartUi.chart.resize();
@@ -221,7 +266,7 @@ function syncEmptyForChart() {
   destroyEmptyForChart();
   emptyForChartUi.chart = new Chart(emptyForChartEl.canvas, {
     type: "scatter",
-    data: { datasets: [dataset] },
+    data: { datasets },
     options,
   });
 }

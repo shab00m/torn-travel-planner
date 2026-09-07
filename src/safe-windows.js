@@ -1,4 +1,11 @@
-import { getRestocks, getDepletionRates, getHistory, getRestockAmount as getStoredRestockAmount } from "./db.js";
+import {
+  getRestocks,
+  getDepletionRates,
+  getHistory,
+  getRestockAmount as getStoredRestockAmount,
+  getEmptyForBounds as getStoredEmptyForBounds,
+} from "./db.js";
+import { applyConfiguredEmptyForExtents } from "../public/empty-for-bounds.js";
 import { getFlightSeconds } from "./flight-times.js";
 import { getDepletionRateTod, rateFromTodHours, hoursFromRateWindows } from "./depletion-rate-tod.js";
 import {
@@ -70,6 +77,7 @@ function createContext({
   currentQty,
   currentPollTs,
   wallTs,
+  emptyForBounds = { minEmptyFor: null, maxEmptyFor: null },
 }) {
   const lastZeroLookup = buildLastZeroLookup(chartPoints);
 
@@ -174,12 +182,15 @@ function createContext({
     const usableRates = getUsableRates()
       .map((w) => w.rate)
       .filter((r) => r != null && r > 0);
-    return {
-      minEmptyFor: durations.length ? Math.min(...durations) : null,
-      maxEmptyFor: durations.length ? Math.max(...durations) : null,
-      minRate: usableRates.length ? Math.min(...usableRates) : null,
-      maxRate: usableRates.length ? Math.max(...usableRates) : null,
-    };
+    return applyConfiguredEmptyForExtents(
+      {
+        minEmptyFor: durations.length ? Math.min(...durations) : null,
+        maxEmptyFor: durations.length ? Math.max(...durations) : null,
+        minRate: usableRates.length ? Math.min(...usableRates) : null,
+        maxRate: usableRates.length ? Math.max(...usableRates) : null,
+      },
+      emptyForBounds
+    );
   }
 
   function rateFromHistory() {
@@ -231,16 +242,11 @@ function createContext({
   }
 
   function stockoutSecFromHistory() {
+    if (stockoutTiming === "min" || stockoutTiming === "max") {
+      const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
+      return stockoutTiming === "min" ? minEmptyFor : maxEmptyFor;
+    }
     const completed = getUsableCompletedRestocks();
-    if (!completed.length) return null;
-    if (stockoutTiming === "min") {
-      const durations = completed.map((r) => r.adjusted_duration).filter((d) => d != null && d > 0);
-      return durations.length ? Math.min(...durations) : null;
-    }
-    if (stockoutTiming === "max") {
-      const durations = completed.map((r) => r.adjusted_duration).filter((d) => d != null && d > 0);
-      return durations.length ? Math.max(...durations) : null;
-    }
     const sample = completed.slice(0, avgSamples);
     if (!sample.length) return null;
     return sample.reduce((sum, r) => sum + r.adjusted_duration, 0) / sample.length;
@@ -489,6 +495,7 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
   };
   const restockAmount =
     opts.restockAmount ?? (await getStoredRestockAmount(country, itemId));
+  const emptyForBounds = await getStoredEmptyForBounds(country, itemId);
 
   const historicalRatePrediction = opts.historicalRatePrediction === true;
   const maxAgeDays =
@@ -549,6 +556,7 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
     currentQty: startQty,
     currentPollTs: dataTs,
     wallTs: opts.wallTs,
+    emptyForBounds,
   });
 
   const { minEmptyFor, maxEmptyFor } = ctx.getHistoricalExtents();

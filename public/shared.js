@@ -48,6 +48,7 @@ const state = {
   favoritesSort: { column: "item", dir: "asc" },
   stocksSort: { column: "item", dir: "asc" },
   restockAmounts: {}, // { "uni:206": 5000 } from /api/restock-amounts
+  emptyForBounds: {}, // { "uni:206": { minEmptyFor, maxEmptyFor } } seconds
 };
 
 const SORT_COLUMNS = ["item", "stock", "cost", "items", "totalCost", "profit", "safeWindow", "leaveBy"];
@@ -710,6 +711,49 @@ async function setRestockAmount(country, itemId, amount) {
   }
   clearSafeWindowsCache();
   window.dispatchEvent(new CustomEvent("restockamountchange"));
+}
+
+function getEmptyForBounds(country, itemId) {
+  const v = state.emptyForBounds[restockAmountKey(country, itemId)];
+  if (!v) return { minEmptyFor: null, maxEmptyFor: null };
+  return {
+    minEmptyFor: typeof v.minEmptyFor === "number" ? v.minEmptyFor : null,
+    maxEmptyFor: typeof v.maxEmptyFor === "number" ? v.maxEmptyFor : null,
+  };
+}
+
+function storeEmptyForBounds(country, itemId, bounds) {
+  const key = restockAmountKey(country, itemId);
+  const next = {
+    minEmptyFor: typeof bounds?.minEmptyFor === "number" ? bounds.minEmptyFor : null,
+    maxEmptyFor: typeof bounds?.maxEmptyFor === "number" ? bounds.maxEmptyFor : null,
+  };
+  state.emptyForBounds[key] = next;
+  return next;
+}
+
+async function loadEmptyForBounds() {
+  const data = await fetchJson("/api/empty-for-bounds");
+  state.emptyForBounds = data.bounds ?? {};
+}
+
+async function loadEmptyForBoundsForItem(country, itemId) {
+  const data = await fetchJson(`/api/empty-for-bounds/${country}/${itemId}`);
+  storeEmptyForBounds(country, itemId, data);
+}
+
+async function setEmptyForBounds(country, itemId, bounds) {
+  const data = await fetchJsonWithBody(`/api/empty-for-bounds/${country}/${itemId}`, {
+    method: "PUT",
+    body: {
+      minEmptyFor: bounds?.minEmptyFor ?? null,
+      maxEmptyFor: bounds?.maxEmptyFor ?? null,
+    },
+  });
+  storeEmptyForBounds(country, itemId, data);
+  clearSafeWindowsCache();
+  window.dispatchEvent(new CustomEvent("emptyforboundschange"));
+  return data;
 }
 
 const SELL_PRICES_KEY = "sellPrices";

@@ -1132,6 +1132,11 @@ window.addEventListener("restockamountchange", () => {
 	loadSafeWindows();
 });
 
+window.addEventListener("emptyforboundschange", () => {
+	render();
+	loadSafeWindows();
+});
+
 window.addEventListener("alarmschange", () => {
 	if (el.favorites?.querySelector(".favorites-card")) renderFavoritesOnly();
 });
@@ -1140,6 +1145,7 @@ window.addEventListener("alarmschange", () => {
 	await window.authReady;
 	await loadCountries();
 	await loadRestockAmounts();
+	await loadEmptyForBounds();
 	hydrateSafeWindowsFromCache();
 	initFilterMenus();
 	populateCountryFilter();

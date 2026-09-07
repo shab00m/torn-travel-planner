@@ -109,7 +109,9 @@ Mark a restock cycle as ignored (excluded from averages).
 
 Scan completed cycles for this item and set `ignored` on empty-for outliers (typically from snapshot gaps). Uses an iterative robust modified Z-score (median/MAD, threshold 2.5) so each item’s own cluster defines the band — extreme gaps are removed first, then clearer misses (e.g. ~44m next to a 55–65m group), without dropping near-cluster values. The normal-range baseline uses only cycles that still have Count checked; already-unchecked rows are never included. Rate averages follow automatically because ignored cycles are excluded from rate windows too. Does not re-include cycles that were already ignored.
 
-New cycles are also checked automatically when YATA polling closes an empty period.
+If the item has min/max empty-for bounds, cycles whose effective empty-for (`adjusted_duration` if set, otherwise `duration`) falls outside that range are ignored first. Then the median/MAD pass runs on the remaining Count-checked cycles.
+
+New cycles are also checked automatically when YATA polling closes an empty period (range bounds first, then median/MAD).
 
 **Response:** `{ ok, flagged, depletedTs, restocks, rates }`
 
@@ -144,6 +146,37 @@ Keys are `"country:itemId"`.
 ### `GET /api/restock-amounts/:country/:itemId`
 
 **Response:** `{ country, itemId, amount }` — `amount` is `null` if not configured.
+
+---
+
+## Empty-for bounds (database)
+
+Optional per-item min/max empty-for duration (seconds). When set, stockout MIN/MAX use these values instead of the shortest/longest historical cycle. Saving bounds ignores completed cycles whose effective empty-for sits outside the range.
+
+### `GET /api/empty-for-bounds`
+
+**Response:** `{ "bounds": { "uni:206": { "minEmptyFor": 3000, "maxEmptyFor": 4200 } } }`
+
+Keys are `"country:itemId"`. Missing min or max is `null`.
+
+---
+
+### `GET /api/empty-for-bounds/:country/:itemId`
+
+**Response:** `{ country, itemId, minEmptyFor, maxEmptyFor }` — either bound is `null` if not configured.
+
+---
+
+### `PUT /api/empty-for-bounds/:country/:itemId`
+
+Set or clear the range. Both null deletes the row.
+
+**Body:** `{ "minEmptyFor": 3000, "maxEmptyFor": 4200 }` — seconds; either field may be `null`.
+
+**Response:** `{ country, itemId, minEmptyFor, maxEmptyFor, flagged, depletedTs }`
+
+- `flagged` — number of cycles newly ignored for sitting outside the range
+- `depletedTs` — `depleted_ts` values that were flagged
 
 ---
 
@@ -266,7 +299,7 @@ Used as query params on `GET /api/safe-window/...` or as JSON body fields on `PO
 | `safeWindowUseRateSelection` | boolean | `true` | If `true`, use the selected historical depletion rate for safe-window bounds. If `false`, use the fastest (`max`) historical rate (shorter, pessimistic window). Matches the item page checkbox **“Use for safe window”**. |
 | `historicalRatePrediction` | boolean | `false` | If `true`, use Torn City Time hour-of-day average depletion rates instead of `rateTiming` avg/min/max. Matches **“Historical depletion rate prediction”**. |
 | `historicalRateMaxAgeDays` | integer | _(none)_ | When historical rate prediction is on, only use rate-window history newer than this many days. Omit for all history. Matches **“Max age”**. |
-| `stockoutTiming` | string | `"avg"` | How to pick empty-for duration from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the most recent `avgSamples` restock cycles. Matches **“Avg empty for”** on the item page. |
+| `stockoutTiming` | string | `"avg"` | How to pick empty-for duration from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the most recent `avgSamples` restock cycles. When `"min"` or `"max"`, uses the item’s configured min/max empty-for if set, otherwise the shortest/longest historical cycle. Matches **“Avg empty for”** on the item page. |
 | `rateTiming` | string | `"avg"` | How to pick depletion rate from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the most recent `avgRateSamples` in-stock windows. Matches **“Rate avg”** on the item page. |
 | `avgSamples` | integer | `5` | Number of recent out-of-stock periods to average when `stockoutTiming` is `"avg"`. |
 | `avgRateSamples` | integer | `3` | Number of recent in-stock windows to average when `rateTiming` is `"avg"`. |

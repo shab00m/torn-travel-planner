@@ -34,6 +34,8 @@ const el = {
   predictionList: document.getElementById("prediction-list"),
   predictionTravelNote: document.getElementById("prediction-travel-note"),
   restockAmount: document.getElementById("restock-amount"),
+  minEmptyFor: document.getElementById("min-empty-for"),
+  maxEmptyFor: document.getElementById("max-empty-for"),
   currentStock: document.getElementById("current-stock"),
   currentQty: document.getElementById("current-qty"),
   currentMeta: document.getElementById("current-meta"),
@@ -602,6 +604,29 @@ function currentRestockAmount() {
   return getRestockAmount(item.country, item.itemId);
 }
 
+function emptyForBoundsApi() {
+  const api = window.EmptyForBounds;
+  if (!api) throw new Error("EmptyForBounds module not loaded");
+  return api;
+}
+
+function currentEmptyForBounds() {
+  const item = state.item;
+  if (!item) return { minEmptyFor: null, maxEmptyFor: null };
+  return getEmptyForBounds(item.country, item.itemId);
+}
+
+function fillEmptyForBoundInputs() {
+  const bounds = currentEmptyForBounds();
+  const toMinutes = emptyForBoundsApi().emptyForSecToMinutes;
+  if (el.minEmptyFor) {
+    el.minEmptyFor.value = bounds.minEmptyFor != null ? toMinutes(bounds.minEmptyFor) : "";
+  }
+  if (el.maxEmptyFor) {
+    el.maxEmptyFor.value = bounds.maxEmptyFor != null ? toMinutes(bounds.maxEmptyFor) : "";
+  }
+}
+
 let lastZeroLookup = null;
 
 function rebuildLastZeroLookup() {
@@ -774,25 +799,23 @@ function getHistoricalExtents() {
   const rates = getUsableRates()
     .map((w) => w.rate)
     .filter((r) => r != null && r > 0);
-  return {
-    minEmptyFor: durations.length ? Math.min(...durations) : null,
-    maxEmptyFor: durations.length ? Math.max(...durations) : null,
-    minRate: rates.length ? Math.min(...rates) : null,
-    maxRate: rates.length ? Math.max(...rates) : null,
-  };
+  return emptyForBoundsApi().applyConfiguredEmptyForExtents(
+    {
+      minEmptyFor: durations.length ? Math.min(...durations) : null,
+      maxEmptyFor: durations.length ? Math.max(...durations) : null,
+      minRate: rates.length ? Math.min(...rates) : null,
+      maxRate: rates.length ? Math.max(...rates) : null,
+    },
+    currentEmptyForBounds()
+  );
 }
 
 function stockoutSecFromHistory() {
+  if (state.stockoutTiming === "min" || state.stockoutTiming === "max") {
+    const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
+    return state.stockoutTiming === "min" ? minEmptyFor : maxEmptyFor;
+  }
   const restocks = getUsableCompletedRestocks();
-  if (!restocks.length) return null;
-  if (state.stockoutTiming === "min") {
-    const durations = restocks.map((r) => r.adjusted_duration).filter((d) => d != null && d > 0);
-    return durations.length ? Math.min(...durations) : null;
-  }
-  if (state.stockoutTiming === "max") {
-    const durations = restocks.map((r) => r.adjusted_duration).filter((d) => d != null && d > 0);
-    return durations.length ? Math.max(...durations) : null;
-  }
   const sample = restocks.slice(0, state.avgSamples);
   if (!sample.length) return null;
   return sample.reduce((sum, r) => sum + r.adjusted_duration, 0) / sample.length;
@@ -1179,10 +1202,9 @@ function buildAnnotations(restocks, rates, timeline) {
   return annotations;
 }
 
-function getCycleHistoryRows() {
+function getCycleHistoryRows({ includeIgnored = isAdminUser() } = {}) {
   const completed = getAdjustedCompletedRestocks();
   const adjustedRates = getAdjustedRates();
-  const includeIgnored = isAdminUser();
   return completed
     .filter((r) => includeIgnored || !r.ignored)
     .map((r) => {
@@ -1259,8 +1281,16 @@ function renderCycleHistory() {
   if (state.stockoutTiming === "min" || state.stockoutTiming === "max") {
     const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
     const value = state.stockoutTiming === "min" ? minEmptyFor : maxEmptyFor;
-    if (value != null && usableRestocks.length) {
-      el.restockAvg.textContent = `${fmtDuration(value)} (${state.stockoutTiming.toUpperCase()} of ${usableRestocks.length})`;
+    const configured =
+      state.stockoutTiming === "min"
+        ? currentEmptyForBounds().minEmptyFor
+        : currentEmptyForBounds().maxEmptyFor;
+    if (value != null && (configured != null || usableRestocks.length)) {
+      const suffix =
+        configured != null
+          ? state.stockoutTiming.toUpperCase()
+          : `${state.stockoutTiming.toUpperCase()} of ${usableRestocks.length}`;
+      el.restockAvg.textContent = `${fmtDuration(value)} (${suffix})`;
     } else {
       el.restockAvg.textContent = "no samples yet";
     }
@@ -2972,6 +3002,7 @@ function setupItemPage(item) {
   setupItemHeader(item, "stock");
   const savedAmount = getRestockAmount(item.country, item.itemId);
   el.restockAmount.value = savedAmount ?? "";
+  fillEmptyForBoundInputs();
   const autoSafe = document.getElementById("auto-safe-alarms-toggle");
   if (autoSafe && typeof isAutoSafeAlarmsEnabled === "function") {
     autoSafe.checked = isAutoSafeAlarmsEnabled(item.country, item.itemId);
@@ -3138,6 +3169,48 @@ el.flagOutliersBtn?.addEventListener("click", () => {
 
 el.backfillRestocksBtn?.addEventListener("click", () => {
   backfillItemRestocks();
+});
+
+async function saveEmptyForBoundField(field) {
+  const item = state.item;
+  if (!item) return;
+  const api = emptyForBoundsApi();
+  const current = currentEmptyForBounds();
+  const input = field === "minEmptyFor" ? el.minEmptyFor : el.maxEmptyFor;
+  let parsed;
+  try {
+    parsed = api.parseEmptyForMinutesInput(input?.value);
+  } catch (err) {
+    fillEmptyForBoundInputs();
+    alert(err.message || "Invalid empty-for range");
+    return;
+  }
+  const bounds = {
+    minEmptyFor: field === "minEmptyFor" ? parsed : current.minEmptyFor,
+    maxEmptyFor: field === "maxEmptyFor" ? parsed : current.maxEmptyFor,
+  };
+  try {
+    const data = await setEmptyForBounds(item.country, item.itemId, bounds);
+    fillEmptyForBoundInputs();
+    const restockData = await fetchJson(`/api/restocks/${item.country}/${item.itemId}`);
+    loadRestockData(restockData);
+    refreshRestockViews();
+    if (data.flagged) {
+      setCycleHistoryActionStatus(
+        `Excluded ${data.flagged} cycle${data.flagged === 1 ? "" : "s"} outside empty-for range`
+      );
+    }
+  } catch (err) {
+    fillEmptyForBoundInputs();
+    alert(err.message || "Failed to save empty-for range");
+  }
+}
+
+el.minEmptyFor?.addEventListener("change", () => {
+  saveEmptyForBoundField("minEmptyFor");
+});
+el.maxEmptyFor?.addEventListener("change", () => {
+  saveEmptyForBoundField("maxEmptyFor");
 });
 
 el.restockAmount.addEventListener("change", async () => {
@@ -3386,12 +3459,16 @@ window.addEventListener("restockamountchange", () => {
 });
 
 (async () => {
-  const mod = await import("/adjust-restock-time.js");
+  const [adjustMod, boundsMod] = await Promise.all([
+    import("/adjust-restock-time.js"),
+    import("/empty-for-bounds.js"),
+  ]);
   window.AdjustRestockTime = {
-    adjustRestockTime: mod.adjustRestockTime,
-    earlyDepletionRate: mod.earlyDepletionRate,
-    rateFromEndpoints: mod.rateFromEndpoints,
+    adjustRestockTime: adjustMod.adjustRestockTime,
+    earlyDepletionRate: adjustMod.earlyDepletionRate,
+    rateFromEndpoints: adjustMod.rateFromEndpoints,
   };
+  window.EmptyForBounds = boundsMod;
   await window.authReady;
   syncInspectAdminAccess();
   await loadCountries();
@@ -3405,6 +3482,10 @@ window.addEventListener("restockamountchange", () => {
   await Promise.all([
     loadRestockAmountForItem(item.country, item.itemId).then(() => {
       el.restockAmount.value = getRestockAmount(item.country, item.itemId) ?? "";
+      refreshRestockAdjustments();
+    }),
+    loadEmptyForBoundsForItem(item.country, item.itemId).then(() => {
+      fillEmptyForBoundInputs();
       refreshRestockAdjustments();
     }),
     drawChart(),

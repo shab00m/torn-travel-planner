@@ -12,6 +12,11 @@ import {
 } from "./depletion-rates.js";
 import { isNegligibleRestockQty } from "../public/restock-qty.js";
 import {
+  emptyForDurationSec,
+  isOutsideEmptyForRange,
+  normalizeEmptyForBounds,
+} from "../public/empty-for-bounds.js";
+import {
   ensureAdjustedRestocks,
   recomputeAdjustedRestockCycle,
   recomputeAdjustedRestocksForItem,
@@ -714,7 +719,7 @@ export async function setRestockIgnored(country, itemId, depletedTs, ignored) {
 async function loadCompletedRestocks(db, country, itemId) {
   const rows = await many(
     db,
-    `SELECT depleted_ts, restocked_ts, duration, ignored
+    `SELECT depleted_ts, restocked_ts, duration, adjusted_duration, ignored
      FROM restocks
      WHERE country = $1 AND item_id = $2 AND duration IS NOT NULL
      ORDER BY depleted_ts ASC`,
@@ -724,8 +729,61 @@ async function loadCompletedRestocks(db, country, itemId) {
     depleted_ts: row.depleted_ts,
     restocked_ts: row.restocked_ts,
     duration: row.duration,
+    adjusted_duration: row.adjusted_duration,
     ignored: Boolean(row.ignored),
   }));
+}
+
+function boundsFromRow(row) {
+  if (!row) return { minEmptyFor: null, maxEmptyFor: null };
+  return {
+    minEmptyFor: row.min_empty_for ?? null,
+    maxEmptyFor: row.max_empty_for ?? null,
+  };
+}
+
+/**
+ * @param {import("pg").PoolClient | import("pg").Pool} db
+ */
+async function fetchEmptyForBounds(db, country, itemId) {
+  const row = await one(
+    db,
+    `SELECT min_empty_for, max_empty_for FROM empty_for_bounds
+     WHERE country = $1 AND item_id = $2`,
+    [country, itemId]
+  );
+  return boundsFromRow(row);
+}
+
+function cycleOutsideEmptyForRange(cycle, bounds) {
+  return isOutsideEmptyForRange(
+    emptyForDurationSec(cycle),
+    bounds?.minEmptyFor,
+    bounds?.maxEmptyFor
+  );
+}
+
+/**
+ * @param {import("pg").PoolClient | import("pg").Pool} db
+ * @returns {Promise<number[]>} depleted_ts values newly ignored
+ */
+async function flagOutOfRangeCycles(db, country, itemId, cycles, bounds) {
+  const depletedTs = [];
+  if (!bounds || (bounds.minEmptyFor == null && bounds.maxEmptyFor == null)) {
+    return depletedTs;
+  }
+  for (const cycle of cycles) {
+    if (cycle.ignored || cycle.duration == null) continue;
+    if (!cycleOutsideEmptyForRange(cycle, bounds)) continue;
+    await db.query(
+      `UPDATE restocks SET ignored = 1
+       WHERE country = $1 AND item_id = $2 AND depleted_ts = $3`,
+      [country, itemId, cycle.depleted_ts]
+    );
+    cycle.ignored = true;
+    depletedTs.push(cycle.depleted_ts);
+  }
+  return depletedTs;
 }
 
 function durationOutlierBaseline(cycles, excludeDepletedTs) {
@@ -741,10 +799,11 @@ function durationOutlierBaseline(cycles, excludeDepletedTs) {
 /**
  * @param {import("pg").PoolClient | import("pg").Pool} db
  */
-async function maybeIgnoreCycle(db, country, itemId, cycle, cycles) {
+async function maybeIgnoreCycle(db, country, itemId, cycle, cycles, bounds) {
   if (!cycle || cycle.ignored || cycle.duration == null) return false;
+  const outOfRange = cycleOutsideEmptyForRange(cycle, bounds);
   const baseline = durationOutlierBaseline(cycles, cycle.depleted_ts);
-  if (!isCycleOutlier({ duration: cycle.duration }, baseline)) return false;
+  if (!outOfRange && !isCycleOutlier({ duration: cycle.duration }, baseline)) return false;
   await db.query(
     `UPDATE restocks SET ignored = 1
      WHERE country = $1 AND item_id = $2 AND depleted_ts = $3`,
@@ -759,8 +818,9 @@ async function maybeIgnoreCycle(db, country, itemId, cycle, cycles) {
  */
 async function autoIgnoreOutlierAfterRestock(db, country, itemId, restockedTs) {
   const cycles = await loadCompletedRestocks(db, country, itemId);
+  const bounds = await fetchEmptyForBounds(db, country, itemId);
   const cycle = cycles.find((r) => r.restocked_ts === restockedTs);
-  await maybeIgnoreCycle(db, country, itemId, cycle, cycles);
+  await maybeIgnoreCycle(db, country, itemId, cycle, cycles, bounds);
 }
 
 const MAX_OUTLIER_PASSES = 20;
@@ -772,7 +832,8 @@ const MAX_OUTLIER_PASSES = 20;
 export async function flagOutlierRestocks(country, itemId) {
   return withTransaction(async (client) => {
     const cycles = await loadCompletedRestocks(client, country, itemId);
-    const depletedTs = [];
+    const bounds = await fetchEmptyForBounds(client, country, itemId);
+    const depletedTs = await flagOutOfRangeCycles(client, country, itemId, cycles, bounds);
 
     for (let pass = 0; pass < MAX_OUTLIER_PASSES; pass++) {
       const batch = [];
@@ -997,5 +1058,49 @@ export async function deleteRestockAmount(country, itemId) {
       itemId,
     ]);
     await recomputeAdjustedRestocksForItem(country, itemId, client);
+  });
+}
+
+export async function getEmptyForBounds(country, itemId) {
+  return fetchEmptyForBounds(getPool(), country, itemId);
+}
+
+/** All stored empty-for bounds keyed as "country:itemId". */
+export async function getAllEmptyForBounds() {
+  const rows = await many(
+    getPool(),
+    `SELECT country, item_id, min_empty_for, max_empty_for FROM empty_for_bounds`
+  );
+  const bounds = {};
+  for (const row of rows) {
+    bounds[`${row.country}:${row.item_id}`] = boundsFromRow(row);
+  }
+  return bounds;
+}
+
+/**
+ * Set or clear per-item min/max empty-for. Out-of-range cycles are ignored.
+ * @returns {Promise<{ minEmptyFor: number|null, maxEmptyFor: number|null, flagged: number, depletedTs: number[] }>}
+ */
+export async function setEmptyForBounds(country, itemId, rawBounds) {
+  const bounds = normalizeEmptyForBounds(rawBounds);
+  return withTransaction(async (client) => {
+    if (bounds.minEmptyFor == null && bounds.maxEmptyFor == null) {
+      await client.query(`DELETE FROM empty_for_bounds WHERE country = $1 AND item_id = $2`, [
+        country,
+        itemId,
+      ]);
+      return { ...bounds, flagged: 0, depletedTs: [] };
+    }
+    await client.query(
+      `INSERT INTO empty_for_bounds (country, item_id, min_empty_for, max_empty_for)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (country, item_id) DO UPDATE
+       SET min_empty_for = EXCLUDED.min_empty_for, max_empty_for = EXCLUDED.max_empty_for`,
+      [country, itemId, bounds.minEmptyFor, bounds.maxEmptyFor]
+    );
+    const cycles = await loadCompletedRestocks(client, country, itemId);
+    const depletedTs = await flagOutOfRangeCycles(client, country, itemId, cycles, bounds);
+    return { ...bounds, flagged: depletedTs.length, depletedTs };
   });
 }

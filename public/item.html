@@ -230,7 +230,7 @@
 				<div class="restock-controls">
 					<h3>Stockout timing</h3>
 					<div class="avg-wrap">
-						<label class="restock-amount-wrap" for="restock-amount">
+						<label class="restock-field restock-amount-wrap" for="restock-amount">
 							<span>Restock amount</span>
 							<input
 								id="restock-amount"
@@ -240,6 +240,30 @@
 								placeholder="e.g. 2500"
 								title="Full quantity when an item restocks. Used to estimate the actual restock time before our first snapshot."
 							/>
+						</label>
+						<label class="restock-field" for="min-empty-for">
+							<span>Min empty for</span>
+							<input
+								id="min-empty-for"
+								type="number"
+								min="0"
+								step="1"
+								placeholder="e.g. 50"
+								title="When set, the MIN button uses this duration. Cycles shorter than this are auto-excluded as outliers."
+							/>
+							<span>min</span>
+						</label>
+						<label class="restock-field" for="max-empty-for">
+							<span>Max empty for</span>
+							<input
+								id="max-empty-for"
+								type="number"
+								min="0"
+								step="1"
+								placeholder="e.g. 70"
+								title="When set, the MAX button uses this duration. Cycles longer than this are auto-excluded as outliers."
+							/>
+							<span>min</span>
 						</label>
 						<span>Avg empty for</span>
 						<div class="avg-buttons" id="avg-buttons"></div>
@@ -283,7 +307,7 @@
 						type="button"
 						id="flag-outliers-btn"
 						class="cycle-history-action hidden"
-						title="Uncheck Count on cycles whose empty-for sits outside this item’s usual cluster (iterative median/MAD check)"
+						title="Uncheck Count on cycles whose empty-for sits outside the configured min/max range, or outside this item’s usual cluster (iterative median/MAD check)"
 					>
 						Exclude outliers
 					</button>

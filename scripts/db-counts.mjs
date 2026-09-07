@@ -7,6 +7,7 @@ const tables = [
   "restocks",
   "market_prices",
   "restock_amounts",
+  "empty_for_bounds",
   "users",
 ];
 
