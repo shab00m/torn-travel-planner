@@ -2232,6 +2232,15 @@ body.page-item {
 	outline: 1px solid var(--accent);
 }
 
+.restock-field input[readonly] {
+	color: var(--text-dim);
+	cursor: default;
+}
+
+.restock-field input[readonly]:focus {
+	outline: none;
+}
+
 .avg-buttons {
 	display: flex;
 	gap: 4px;

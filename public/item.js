@@ -36,6 +36,7 @@ const el = {
   restockAmount: document.getElementById("restock-amount"),
   minEmptyFor: document.getElementById("min-empty-for"),
   maxEmptyFor: document.getElementById("max-empty-for"),
+  avgEmptyFor: document.getElementById("avg-empty-for"),
   currentStock: document.getElementById("current-stock"),
   currentQty: document.getElementById("current-qty"),
   currentMeta: document.getElementById("current-meta"),
@@ -608,14 +609,16 @@ function syncItemPageSettingsControls() {
   syncSampleExtremaButtons(el.rateAvgButtons, state.avgRateSamples, state.rateTiming);
 }
 
-function initSampleExtremaButtons(container, defaultN, timingKey, onSelect) {
+function initSampleExtremaButtons(container, defaultN, timingKey, onSelect, { includeSamples = true } = {}) {
   const timing = state[timingKey];
+  const minBtn = `<button data-mode="min" class="${timing === "min" ? "active" : ""}">MIN</button>`;
+  const maxBtn = `<button data-mode="max" class="${timing === "max" ? "active" : ""}">MAX</button>`;
+  const avgBtn = `<button data-mode="avg" class="${timing === "avg" ? "active" : ""}">AVG</button>`;
   const sampleHtml = SAMPLE_OPTIONS.map(
     (n) =>
       `<button data-n="${n}" class="${timing === "avg" && n === defaultN ? "active" : ""}">${n}</button>`
   ).join("");
-  const extremaHtml = `<button data-mode="min" class="${timing === "min" ? "active" : ""}">MIN</button><button data-mode="max" class="${timing === "max" ? "active" : ""}">MAX</button>`;
-  container.innerHTML = sampleHtml + extremaHtml;
+  container.innerHTML = includeSamples ? sampleHtml + minBtn + maxBtn : minBtn + avgBtn + maxBtn;
   container.addEventListener("click", (e) => {
     const sampleBtn = e.target.closest("button[data-n]");
     if (sampleBtn) {
@@ -644,7 +647,7 @@ function emptyForBoundsApi() {
 
 function currentEmptyForBounds() {
   const item = state.item;
-  if (!item) return { minEmptyFor: null, maxEmptyFor: null };
+  if (!item) return { minEmptyFor: null, maxEmptyFor: null, avgEmptyFor: null };
   return getEmptyForBounds(item.country, item.itemId);
 }
 
@@ -656,6 +659,16 @@ function setEmptyForBoundInputValues(bounds) {
   if (el.maxEmptyFor) {
     el.maxEmptyFor.value = bounds.maxEmptyFor != null ? format(bounds.maxEmptyFor) : "";
   }
+  if (el.avgEmptyFor) {
+    el.avgEmptyFor.value = bounds.avgEmptyFor != null ? format(bounds.avgEmptyFor) : "";
+  }
+}
+
+async function reloadEmptyForBoundsUi() {
+  const item = state.item;
+  if (!item) return;
+  await loadEmptyForBoundsForItem(item.country, item.itemId);
+  fillEmptyForBoundInputs();
 }
 
 function fillEmptyForBoundInputs() {
@@ -850,10 +863,7 @@ function stockoutSecFromHistory() {
     const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
     return state.stockoutTiming === "min" ? minEmptyFor : maxEmptyFor;
   }
-  const restocks = getUsableCompletedRestocks();
-  const sample = restocks.slice(0, state.avgSamples);
-  if (!sample.length) return null;
-  return sample.reduce((sum, r) => sum + r.adjusted_duration, 0) / sample.length;
+  return currentEmptyForBounds().avgEmptyFor;
 }
 
 /** When the selected empty-for already elapsed, step up to the next historical duration after now. */
@@ -1312,7 +1322,6 @@ function renderCycleHistory() {
   const usableRestocks = getUsableCompletedRestocks();
   const usableRates = getUsableRates();
 
-  const stockoutSample = usableRestocks.slice(0, state.avgSamples);
   if (state.stockoutTiming === "min" || state.stockoutTiming === "max") {
     const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
     const value = state.stockoutTiming === "min" ? minEmptyFor : maxEmptyFor;
@@ -1329,12 +1338,9 @@ function renderCycleHistory() {
     } else {
       el.restockAvg.textContent = "no samples yet";
     }
-  } else if (stockoutSample.length) {
-    const avg =
-      stockoutSample.reduce((sum, r) => sum + r.adjusted_duration, 0) / stockoutSample.length;
-    el.restockAvg.textContent = `${fmtDuration(avg)} (${stockoutSample.length} sample${stockoutSample.length === 1 ? "" : "s"})`;
   } else {
-    el.restockAvg.textContent = "no samples yet";
+    const avg = currentEmptyForBounds().avgEmptyFor;
+    el.restockAvg.textContent = avg != null ? `${fmtDuration(avg)} (AVG)` : "no samples yet";
   }
 
   if (state.historicalRatePrediction) {
@@ -2844,7 +2850,9 @@ async function drawChart() {
   const [history, restockData] = await Promise.all([
     fetchJson(`/api/history/${country}/${itemId}?hours=${state.rangeHours}`),
     fetchJson(`/api/restocks/${country}/${itemId}`),
+    loadEmptyForBoundsForItem(country, itemId).catch(() => {}),
   ]);
+  if (window.EmptyForBounds) fillEmptyForBoundInputs();
   state.chartPoints = history.points;
   rebuildLastZeroLookup();
   loadRestockData(restockData);
@@ -3038,6 +3046,7 @@ async function setCycleIgnored(depletedTs, ignored) {
       { method: "PATCH", body: { ignored }, headers: adminApiHeaders() }
     );
     loadRestockData(data);
+    await reloadEmptyForBoundsUi();
     refreshRestockViews();
   } catch (err) {
     row.ignored = prevIgnored;
@@ -3104,6 +3113,7 @@ async function flagOutlierCycles() {
       { method: "POST", body: {}, headers: adminApiHeaders() }
     );
     loadRestockData(data);
+    await reloadEmptyForBoundsUi();
     refreshRestockViews();
     const n = data.flagged ?? 0;
     setCycleHistoryActionStatus(
@@ -3139,6 +3149,7 @@ async function backfillItemRestocks() {
       { method: "POST", body: {}, headers: adminApiHeaders() }
     );
     loadRestockData(data);
+    await reloadEmptyForBoundsUi();
     refreshRestockViews();
     setCycleHistoryActionStatus(
       `Rebuilt: ${data.opened ?? 0} depleted, ${data.closed ?? 0} restocked`
@@ -3220,6 +3231,7 @@ el.restockAmount.addEventListener("change", async () => {
     // Reload so list/charts use freshly persisted adjusted_* columns.
     const data = await fetchJson(`/api/restocks/${item.country}/${item.itemId}`);
     loadRestockData(data);
+    await reloadEmptyForBoundsUi();
     refreshRestockViews();
   } catch {
     el.restockAmount.value = prev ?? "";
@@ -3398,18 +3410,18 @@ if (el.historicalRateMaxAge) {
   el.historicalRateMaxAge.addEventListener("change", commitMaxAge);
 }
 
-initSampleExtremaButtons(el.avgButtons, state.avgSamples, "stockoutTiming", ({ mode, n }) => {
-  if (mode === "avg") {
-    state.stockoutTiming = "avg";
-    state.avgSamples = n;
-    saveCurrentItemSettings({ stockoutTiming: "avg", avgSamples: n });
-  } else {
+initSampleExtremaButtons(
+  el.avgButtons,
+  state.avgSamples,
+  "stockoutTiming",
+  ({ mode }) => {
     state.stockoutTiming = mode;
     saveCurrentItemSettings({ stockoutTiming: mode });
-  }
-  renderCycleHistory();
-  redrawPrediction();
-});
+    renderCycleHistory();
+    redrawPrediction();
+  },
+  { includeSamples: false }
+);
 initSampleExtremaButtons(el.rateAvgButtons, state.avgRateSamples, "rateTiming", ({ mode, n }) => {
   if (mode === "avg") {
     state.rateTiming = "avg";

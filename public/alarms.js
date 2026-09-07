@@ -574,19 +574,18 @@ function selectedStockoutSec(restocks, country, itemId) {
   const timing = ["avg", "min", "max"].includes(settings.stockoutTiming)
     ? settings.stockoutTiming
     : "avg";
-  if ((timing === "min" || timing === "max") && country != null) {
+  if (country != null) {
     const bounds = getEmptyForBounds(country, itemId);
-    const configured = timing === "min" ? bounds.minEmptyFor : bounds.maxEmptyFor;
-    if (configured != null) return configured;
+    if (timing === "avg") return bounds.avgEmptyFor;
+    if (timing === "min" && bounds.minEmptyFor != null) return bounds.minEmptyFor;
+    if (timing === "max" && bounds.maxEmptyFor != null) return bounds.maxEmptyFor;
   }
   const rows = (restocks || []).filter((r) => !r.ignored && r.duration != null && r.duration > 0);
   if (!rows.length) return null;
   const durations = rows.map((r) => r.duration);
   if (timing === "min") return Math.min(...durations);
   if (timing === "max") return Math.max(...durations);
-  const n = Number(settings.avgSamples);
-  const sample = rows.slice(0, Number.isFinite(n) && n > 0 ? n : 5);
-  return sample.reduce((sum, r) => sum + r.duration, 0) / sample.length;
+  return null;
 }
 
 function selectedDepletionRate(rates, country, itemId) {

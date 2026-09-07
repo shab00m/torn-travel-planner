@@ -16,6 +16,7 @@ import {
   isOutsideEmptyForRange,
   normalizeEmptyForBounds,
 } from "../public/empty-for-bounds.js";
+import { persistEmptyForBoundsWithAvg, refreshAvgEmptyFor } from "./avg-empty-for.js";
 import {
   ensureAdjustedRestocks,
   recomputeAdjustedRestockCycle,
@@ -319,6 +320,7 @@ async function trackRestock(client, country, itemId, ts, quantity, prevHint) {
   );
   if (result === "restocked") {
     await autoIgnoreOutlierAfterRestock(client, country, itemId, ts);
+    await refreshAvgEmptyFor(client, country, itemId);
   }
   return result;
 }
@@ -429,6 +431,7 @@ async function replayRestocks(client, scope = {}) {
     await recomputeAdjustedRestocksForItem(scope.country, scope.itemId, client, {
       sinceDepletedTs: minTs,
     });
+    await refreshAvgEmptyFor(client, scope.country, scope.itemId);
 
     return { opened, closed };
   }
@@ -549,6 +552,7 @@ async function replayRestocks(client, scope = {}) {
         sinceDepletedTs: minTsByItem.get(itemKey),
       });
     }
+    await refreshAvgEmptyFor(client, country, itemId);
   }
 
   return { opened, closed };
@@ -705,12 +709,15 @@ export async function getRestocks(country, itemId, limit) {
 
 /** Mark a completed restock cycle as ignored (excluded from averages). */
 export async function setRestockIgnored(country, itemId, depletedTs, ignored) {
-  const res = await query(
-    `UPDATE restocks SET ignored = $1
-     WHERE country = $2 AND item_id = $3 AND depleted_ts = $4`,
-    [ignored ? 1 : 0, country, itemId, depletedTs]
-  );
-  if (res.rowCount === 0) throw new Error("Restock cycle not found");
+  await withTransaction(async (client) => {
+    const res = await client.query(
+      `UPDATE restocks SET ignored = $1
+       WHERE country = $2 AND item_id = $3 AND depleted_ts = $4`,
+      [ignored ? 1 : 0, country, itemId, depletedTs]
+    );
+    if (res.rowCount === 0) throw new Error("Restock cycle not found");
+    await refreshAvgEmptyFor(client, country, itemId);
+  });
 }
 
 /**
@@ -735,10 +742,11 @@ async function loadCompletedRestocks(db, country, itemId) {
 }
 
 function boundsFromRow(row) {
-  if (!row) return { minEmptyFor: null, maxEmptyFor: null };
+  if (!row) return { minEmptyFor: null, maxEmptyFor: null, avgEmptyFor: null };
   return {
     minEmptyFor: row.min_empty_for ?? null,
     maxEmptyFor: row.max_empty_for ?? null,
+    avgEmptyFor: row.avg_empty_for ?? null,
   };
 }
 
@@ -748,7 +756,7 @@ function boundsFromRow(row) {
 async function fetchEmptyForBounds(db, country, itemId) {
   const row = await one(
     db,
-    `SELECT min_empty_for, max_empty_for FROM empty_for_bounds
+    `SELECT min_empty_for, max_empty_for, avg_empty_for FROM empty_for_bounds
      WHERE country = $1 AND item_id = $2`,
     [country, itemId]
   );
@@ -856,6 +864,7 @@ export async function flagOutlierRestocks(country, itemId) {
       }
     }
 
+    await refreshAvgEmptyFor(client, country, itemId);
     return { flagged: depletedTs.length, depletedTs };
   });
 }
@@ -1048,6 +1057,7 @@ export async function setRestockAmount(country, itemId, amount) {
       [country, itemId, amount]
     );
     await recomputeAdjustedRestocksForItem(country, itemId, client);
+    await refreshAvgEmptyFor(client, country, itemId);
   });
 }
 
@@ -1058,6 +1068,7 @@ export async function deleteRestockAmount(country, itemId) {
       itemId,
     ]);
     await recomputeAdjustedRestocksForItem(country, itemId, client);
+    await refreshAvgEmptyFor(client, country, itemId);
   });
 }
 
@@ -1069,7 +1080,7 @@ export async function getEmptyForBounds(country, itemId) {
 export async function getAllEmptyForBounds() {
   const rows = await many(
     getPool(),
-    `SELECT country, item_id, min_empty_for, max_empty_for FROM empty_for_bounds`
+    `SELECT country, item_id, min_empty_for, max_empty_for, avg_empty_for FROM empty_for_bounds`
   );
   const bounds = {};
   for (const row of rows) {
@@ -1079,27 +1090,14 @@ export async function getAllEmptyForBounds() {
 }
 
 /**
- * Set or clear per-item min/max empty-for. Existing cycles are left as-is;
- * new restocks still use the range via maybeIgnoreCycle.
- * @returns {Promise<{ minEmptyFor: number|null, maxEmptyFor: number|null, flagged: number, depletedTs: number[] }>}
+ * Set or clear per-item min/max empty-for and recompute the stored average.
+ * Existing cycles are left as-is; new restocks still use the range via maybeIgnoreCycle.
+ * @returns {Promise<{ minEmptyFor: number|null, maxEmptyFor: number|null, avgEmptyFor: number|null, flagged: number, depletedTs: number[] }>}
  */
 export async function setEmptyForBounds(country, itemId, rawBounds) {
   const bounds = normalizeEmptyForBounds(rawBounds);
   return withTransaction(async (client) => {
-    if (bounds.minEmptyFor == null && bounds.maxEmptyFor == null) {
-      await client.query(`DELETE FROM empty_for_bounds WHERE country = $1 AND item_id = $2`, [
-        country,
-        itemId,
-      ]);
-      return { ...bounds, flagged: 0, depletedTs: [] };
-    }
-    await client.query(
-      `INSERT INTO empty_for_bounds (country, item_id, min_empty_for, max_empty_for)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (country, item_id) DO UPDATE
-       SET min_empty_for = EXCLUDED.min_empty_for, max_empty_for = EXCLUDED.max_empty_for`,
-      [country, itemId, bounds.minEmptyFor, bounds.maxEmptyFor]
-    );
-    return { ...bounds, flagged: 0, depletedTs: [] };
+    const saved = await persistEmptyForBoundsWithAvg(client, country, itemId, bounds);
+    return { ...saved, flagged: 0, depletedTs: [] };
   });
 }

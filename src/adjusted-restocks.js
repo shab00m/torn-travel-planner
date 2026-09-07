@@ -1,4 +1,5 @@
 import { getPool } from "./pg.js";
+import { refreshAvgEmptyFor } from "./avg-empty-for.js";
 import { adjustRestockTime, rateFromEndpoints } from "../public/adjust-restock-time.js";
 
 /**
@@ -309,6 +310,7 @@ export async function ensureAdjustedRestocks() {
     if (result.updated > 0) {
       itemsUpdated += 1;
       cyclesUpdated += result.updated;
+      await refreshAvgEmptyFor(pool, row.country, row.item_id);
     }
   }
   return { itemsUpdated, cyclesUpdated };

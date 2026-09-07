@@ -48,7 +48,7 @@ const state = {
   favoritesSort: { column: "item", dir: "asc" },
   stocksSort: { column: "item", dir: "asc" },
   restockAmounts: {}, // { "uni:206": 5000 } from /api/restock-amounts
-  emptyForBounds: {}, // { "uni:206": { minEmptyFor, maxEmptyFor } } seconds
+  emptyForBounds: {}, // { "uni:206": { minEmptyFor, maxEmptyFor, avgEmptyFor } } seconds
 };
 
 const SORT_COLUMNS = ["item", "stock", "cost", "items", "totalCost", "profit", "safeWindow", "leaveBy"];
@@ -713,20 +713,26 @@ async function setRestockAmount(country, itemId, amount) {
   window.dispatchEvent(new CustomEvent("restockamountchange"));
 }
 
+function emptyForBoundSec(value) {
+  return typeof value === "number" ? value : null;
+}
+
 function getEmptyForBounds(country, itemId) {
   const v = state.emptyForBounds[restockAmountKey(country, itemId)];
-  if (!v) return { minEmptyFor: null, maxEmptyFor: null };
+  if (!v) return { minEmptyFor: null, maxEmptyFor: null, avgEmptyFor: null };
   return {
-    minEmptyFor: typeof v.minEmptyFor === "number" ? v.minEmptyFor : null,
-    maxEmptyFor: typeof v.maxEmptyFor === "number" ? v.maxEmptyFor : null,
+    minEmptyFor: emptyForBoundSec(v.minEmptyFor),
+    maxEmptyFor: emptyForBoundSec(v.maxEmptyFor),
+    avgEmptyFor: emptyForBoundSec(v.avgEmptyFor),
   };
 }
 
 function storeEmptyForBounds(country, itemId, bounds) {
   const key = restockAmountKey(country, itemId);
   const next = {
-    minEmptyFor: typeof bounds?.minEmptyFor === "number" ? bounds.minEmptyFor : null,
-    maxEmptyFor: typeof bounds?.maxEmptyFor === "number" ? bounds.maxEmptyFor : null,
+    minEmptyFor: emptyForBoundSec(bounds?.minEmptyFor),
+    maxEmptyFor: emptyForBoundSec(bounds?.maxEmptyFor),
+    avgEmptyFor: emptyForBoundSec(bounds?.avgEmptyFor),
   };
   state.emptyForBounds[key] = next;
   return next;

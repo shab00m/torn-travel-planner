@@ -286,7 +286,17 @@
 								title="When set, the MAX button uses this duration (h:mm:ss). New cycles longer than this are auto-excluded; existing points are left as they are."
 							/>
 						</label>
-						<span>Avg empty for</span>
+						<label class="restock-field" for="avg-empty-for">
+							<span>Avg empty for</span>
+							<input
+								id="avg-empty-for"
+								type="text"
+								readonly
+								tabindex="-1"
+								placeholder="h:mm:ss"
+								title="Calculated automatically: midpoint of min and max when both are set, otherwise the last 100 counted cycles. Not editable."
+							/>
+						</label>
 						<div class="avg-buttons" id="avg-buttons"></div>
 						<span id="restock-avg" class="restock-avg"></span>
 					</div>

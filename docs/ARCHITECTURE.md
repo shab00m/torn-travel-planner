@@ -77,7 +77,7 @@ Timestamps are Unix seconds (`BIGINT`). `pg` parses `INT8` as JS numbers.
 | `restocks` | Depletion/refill cycles; PK `(country, item_id, depleted_ts)` |
 | `market_prices` | Cached Torn average item-market price |
 | `restock_amounts` | Admin-set typical restock quantity |
-| `empty_for_bounds` | Optional per-item min/max empty-for (seconds); drives stockout MIN/MAX and range outlier exclusion |
+| `empty_for_bounds` | Optional per-item min/max empty-for (seconds) plus stored `avg_empty_for`; drives stockout AVG/MIN/MAX and range outlier exclusion |
 | `users` | Allow-list / admin flags (no API keys) |
 | `page_views` | Page-load analytics |
 | `depletion_rate_tod` | Minute-weighted average rate by UTC hour-of-day |

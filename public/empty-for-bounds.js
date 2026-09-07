@@ -1,7 +1,10 @@
 /**
- * Per-item min/max empty-for bounds (seconds).
- * Used by the item page, outlier flagging, and safe-window stockout MIN/MAX.
+ * Per-item min/max empty-for bounds and stored average (seconds).
+ * Used by the item page, outlier flagging, and safe-window stockout MIN/MAX/AVG.
  */
+
+/** Non-excluded cycles used when min and max are not both set. */
+export const AVG_EMPTY_FOR_SAMPLE_LIMIT = 100;
 
 /** Effective empty-for for range checks and MIN/MAX (adjusted, else observed). */
 export function emptyForDurationSec(cycle) {
@@ -38,6 +41,19 @@ export function normalizeEmptyForBounds({ minEmptyFor, maxEmptyFor } = {}) {
     throw new Error("minEmptyFor must be <= maxEmptyFor");
   }
   return { minEmptyFor: min, maxEmptyFor: max };
+}
+
+/**
+ * Stored average empty-for (seconds, rounded).
+ * Both min and max → midpoint. Otherwise mean of recentDurations (already filtered).
+ */
+export function computeAvgEmptyForSec(minEmptyFor, maxEmptyFor, recentDurations = []) {
+  if (minEmptyFor != null && maxEmptyFor != null) {
+    return Math.round((minEmptyFor + maxEmptyFor) / 2);
+  }
+  if (!recentDurations.length) return null;
+  const sum = recentDurations.reduce((acc, duration) => acc + duration, 0);
+  return Math.round(sum / recentDurations.length);
 }
 
 /** Display seconds as `h:mm:ss` (hours unpadded; minutes and seconds always two digits). */

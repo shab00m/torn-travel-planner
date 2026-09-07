@@ -151,29 +151,29 @@ Keys are `"country:itemId"`.
 
 ## Empty-for bounds (database)
 
-Optional per-item min/max empty-for duration (seconds). When set, stockout MIN/MAX use these values instead of the shortest/longest historical cycle. Saving bounds ignores completed cycles whose effective empty-for sits outside the range.
+Optional per-item min/max empty-for duration (seconds) plus a stored average. When min/max are set, stockout MIN/MAX use these values instead of the shortest/longest historical cycle. `avgEmptyFor` is calculated on the server: midpoint of min and max when both are set, otherwise the mean of the last 100 non-excluded cycles. It is not client-writable.
 
 ### `GET /api/empty-for-bounds`
 
-**Response:** `{ "bounds": { "uni:206": { "minEmptyFor": 3000, "maxEmptyFor": 4200 } } }`
+**Response:** `{ "bounds": { "uni:206": { "minEmptyFor": 3000, "maxEmptyFor": 4200, "avgEmptyFor": 3600 } } }`
 
-Keys are `"country:itemId"`. Missing min or max is `null`.
+Keys are `"country:itemId"`. Missing fields are `null`.
 
 ---
 
 ### `GET /api/empty-for-bounds/:country/:itemId`
 
-**Response:** `{ country, itemId, minEmptyFor, maxEmptyFor }` — either bound is `null` if not configured.
+**Response:** `{ country, itemId, minEmptyFor, maxEmptyFor, avgEmptyFor }` — unset fields are `null`.
 
 ---
 
 ### `PUT /api/empty-for-bounds/:country/:itemId`
 
-Set or clear the range. Both null deletes the row.
+Set or clear the range. The server recomputes `avgEmptyFor`. The row is deleted only when min, max, and avg are all unset.
 
-**Body:** `{ "minEmptyFor": 3000, "maxEmptyFor": 4200 }` — seconds; either field may be `null`.
+**Body:** `{ "minEmptyFor": 3000, "maxEmptyFor": 4200 }` — seconds; either field may be `null`. `avgEmptyFor` in the body is ignored.
 
-**Response:** `{ country, itemId, minEmptyFor, maxEmptyFor, flagged, depletedTs }`
+**Response:** `{ country, itemId, minEmptyFor, maxEmptyFor, avgEmptyFor, flagged, depletedTs }`
 
 - `flagged` — number of cycles newly ignored for sitting outside the range
 - `depletedTs` — `depleted_ts` values that were flagged
@@ -299,9 +299,9 @@ Used as query params on `GET /api/safe-window/...` or as JSON body fields on `PO
 | `safeWindowUseRateSelection` | boolean | `true` | If `true`, use the selected historical depletion rate for safe-window bounds. If `false`, use the fastest (`max`) historical rate (shorter, pessimistic window). Matches the item page checkbox **“Use for safe window”**. |
 | `historicalRatePrediction` | boolean | `false` | If `true`, use Torn City Time hour-of-day average depletion rates instead of `rateTiming` avg/min/max. Matches **“Historical depletion rate prediction”**. |
 | `historicalRateMaxAgeDays` | integer | _(none)_ | When historical rate prediction is on, only use rate-window history newer than this many days. Omit for all history. Matches **“Max age”**. |
-| `stockoutTiming` | string | `"avg"` | How to pick empty-for duration from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the most recent `avgSamples` restock cycles. When `"min"` or `"max"`, uses the item’s configured min/max empty-for if set, otherwise the shortest/longest historical cycle. Matches **“Avg empty for”** on the item page. |
+| `stockoutTiming` | string | `"avg"` | How to pick empty-for duration from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the stored `avgEmptyFor`. When `"min"` or `"max"`, uses the item’s configured min/max empty-for if set, otherwise the shortest/longest historical cycle. Matches the stockout timing buttons on the item page. |
 | `rateTiming` | string | `"avg"` | How to pick depletion rate from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the most recent `avgRateSamples` in-stock windows. Matches **“Rate avg”** on the item page. |
-| `avgSamples` | integer | `5` | Number of recent out-of-stock periods to average when `stockoutTiming` is `"avg"`. |
+| `avgSamples` | integer | `5` | Unused for stockout timing (kept for older clients). Stored `avgEmptyFor` is used instead. |
 | `avgRateSamples` | integer | `3` | Number of recent in-stock windows to average when `rateTiming` is `"avg"`. |
 
 **Matching the web UI**

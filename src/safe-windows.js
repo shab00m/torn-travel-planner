@@ -67,7 +67,6 @@ function createContext({
   rates,
   chartPoints,
   restockAmount,
-  avgSamples,
   avgRateSamples,
   stockoutTiming,
   rateTiming,
@@ -77,7 +76,7 @@ function createContext({
   currentQty,
   currentPollTs,
   wallTs,
-  emptyForBounds = { minEmptyFor: null, maxEmptyFor: null },
+  emptyForBounds = { minEmptyFor: null, maxEmptyFor: null, avgEmptyFor: null },
 }) {
   const lastZeroLookup = buildLastZeroLookup(chartPoints);
 
@@ -246,10 +245,7 @@ function createContext({
       const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
       return stockoutTiming === "min" ? minEmptyFor : maxEmptyFor;
     }
-    const completed = getUsableCompletedRestocks();
-    const sample = completed.slice(0, avgSamples);
-    if (!sample.length) return null;
-    return sample.reduce((sum, r) => sum + r.adjusted_duration, 0) / sample.length;
+    return emptyForBounds.avgEmptyFor ?? null;
   }
 
   /** When the selected empty-for already elapsed, step up to the next historical duration after now. */

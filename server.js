@@ -335,6 +335,7 @@ app.put("/api/empty-for-bounds/:country/:itemId", async (req, res) => {
       itemId: params.id,
       minEmptyFor: result.minEmptyFor,
       maxEmptyFor: result.maxEmptyFor,
+      avgEmptyFor: result.avgEmptyFor,
       flagged: result.flagged,
       depletedTs: result.depletedTs,
     });
