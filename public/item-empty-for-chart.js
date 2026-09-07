@@ -42,15 +42,21 @@ function emptyForChartRowToPoint(r, swapped) {
   };
 }
 
+function sortEmptyForChartPoints(a, b) {
+  // parsing:false makes Chart.js update only an X-sorted slice. Sort by the
+  // index-axis value (x), not restock time — leftover from when X was dates.
+  const byIndex = a.x - b.x;
+  return byIndex || a.restocked_ts - b.restocked_ts;
+}
+
 function getEmptyForChartData() {
   const swapped = emptyForChartUi.axesSwapped;
   const rows = getCycleHistoryRows({ includeIgnored: true }).filter(
     (r) => r.emptyForSec != null && r.emptyForSec >= 0 && r.restocked_ts != null
   );
-  const byTime = (a, b) => a.restocked_ts - b.restocked_ts;
   return {
-    included: rows.filter((r) => !r.ignored).map((r) => emptyForChartRowToPoint(r, swapped)).sort(byTime),
-    excluded: rows.filter((r) => r.ignored).map((r) => emptyForChartRowToPoint(r, swapped)).sort(byTime),
+    included: rows.filter((r) => !r.ignored).map((r) => emptyForChartRowToPoint(r, swapped)).sort(sortEmptyForChartPoints),
+    excluded: rows.filter((r) => r.ignored).map((r) => emptyForChartRowToPoint(r, swapped)).sort(sortEmptyForChartPoints),
   };
 }
 
