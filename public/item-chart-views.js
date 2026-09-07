@@ -13,7 +13,17 @@ const itemChartViewEl = {
     "rate-tod": document.getElementById("rate-tod-chart-wrap"),
     "buy-price": document.getElementById("buy-price-chart-wrap"),
   },
+  options: {
+    stock: document.getElementById("stock-chart-options"),
+    "empty-for": document.getElementById("empty-for-chart-options"),
+  },
 };
+
+function syncChartOptionsVisibility() {
+  for (const [key, row] of Object.entries(itemChartViewEl.options)) {
+    row?.classList.toggle("hidden", key !== itemChartViewUi.type);
+  }
+}
 
 function isItemChartView(type) {
   return itemChartViewUi.type === type;
@@ -28,6 +38,7 @@ function syncActiveItemChartView() {
   } else if (itemChartViewUi.type === "buy-price" && typeof syncBuyPriceChart === "function") {
     syncBuyPriceChart();
   }
+  syncChartOptionsVisibility();
   if (typeof syncEmptyForChartOptions === "function") syncEmptyForChartOptions();
 }
 
@@ -44,8 +55,8 @@ function setItemChartType(type) {
     wrap?.classList.toggle("hidden", key !== type);
   }
 
+  syncChartOptionsVisibility();
   if (type === "stock") {
-    if (typeof syncEmptyForChartOptions === "function") syncEmptyForChartOptions();
     if (state.chart) state.chart.resize();
     return;
   }

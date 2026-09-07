@@ -433,38 +433,31 @@ function getVisibleChartRange(
   return { visMin, visMax, offsetSec: clamped, scale: clampedScale };
 }
 
-function canAdjustChartView(timeline) {
+function canAdjustChartView(timeline, scale = state.chartScale) {
   if (!timeline?.xMax) return false;
-  const canPan = getMaxChartOffsetSec(timeline) > 0;
+  const canPan = getMaxChartOffsetSec(timeline, scale) > 0;
   const canScale = getMaxChartScale(timeline) > getMinChartScale(timeline) * 1.001;
   return canPan || canScale;
 }
 
-function pixelDeltaToOffsetSec(deltaPx, spanSec, chart) {
-  if (!chart?.chartArea) return 0;
-  const { left, right } = chart.chartArea;
-  const width = right - left;
-  if (!width || !spanSec) return 0;
-  return -(deltaPx / width) * spanSec;
+function pixelDeltaToOffsetSec(deltaPx, spanSec, axisLength) {
+  if (!axisLength || !spanSec) return 0;
+  return -(deltaPx / axisLength) * spanSec;
 }
 
-function scaleFromVerticalDrag(startScale, deltaPy, timeline, chart) {
+function scaleFromPixelDrag(startScale, deltaPx, timeline, axisLength) {
   const startSpan = getChartViewportSpanSec(timeline, startScale);
   const full = getTimelineSpanSec(timeline);
-  const { top, bottom } = chart.chartArea;
-  const height = bottom - top;
-  if (!height) return startScale;
-  const deltaSpan = (deltaPy / height) * startSpan;
+  if (!axisLength) return startScale;
+  const deltaSpan = (deltaPx / axisLength) * startSpan;
   const newSpan = Math.max(CHART_MIN_VIEWPORT_SEC, Math.min(full, startSpan + deltaSpan));
   const base = getBaseChartViewportSpanSec(timeline);
   return clampChartScale(base / newSpan, timeline);
 }
 
-function chartAreaFraction(pixel, chart) {
-  const { left, right } = chart.chartArea;
-  const width = right - left;
-  if (!width) return 0.5;
-  return (pixel - left) / width;
+function chartAxisFraction(pixel, start, length) {
+  if (!length) return 0.5;
+  return (pixel - start) / length;
 }
 
 function offsetSecForZoomPivot(timeline, scale, anchorTimeMs, anchorFraction) {
@@ -479,18 +472,35 @@ function offsetSecForScaleAtViewCenter(timeline, scale) {
   return offsetSecForZoomPivot(timeline, scale, anchorTimeMs, 0.5);
 }
 
-function dragChartView(timeline, pan, deltaX, deltaY, currentX, chart) {
+function dragChartViewAlongAxes(timeline, pan, {
+  panDeltaPx,
+  zoomDeltaPx,
+  cursorPx,
+  panAxisStart,
+  panAxisLength,
+  zoomAxisLength,
+}) {
   const startSpanSec = getChartViewportSpanSec(timeline, pan.startScale);
-  const nextScale = scaleFromVerticalDrag(pan.startScale, deltaY, timeline, chart);
-
-  const pannedOffset = pan.startOffsetSec + pixelDeltaToOffsetSec(deltaX, startSpanSec, chart);
-  const cursorFraction = chartAreaFraction(currentX, chart);
+  const nextScale = scaleFromPixelDrag(pan.startScale, zoomDeltaPx, timeline, zoomAxisLength);
+  const pannedOffset = pan.startOffsetSec + pixelDeltaToOffsetSec(panDeltaPx, startSpanSec, panAxisLength);
+  const cursorFraction = chartAxisFraction(cursorPx, panAxisStart, panAxisLength);
   const pannedVisMin =
     timeline.xMin + clampChartOffsetSec(pannedOffset, timeline, pan.startScale) * 1000;
   const cursorTimeMs = pannedVisMin + cursorFraction * startSpanSec * 1000;
-
   const nextOffset = offsetSecForZoomPivot(timeline, nextScale, cursorTimeMs, cursorFraction);
   return { offsetSec: nextOffset, scale: nextScale };
+}
+
+function dragChartView(timeline, pan, deltaX, deltaY, currentX, chart) {
+  const { left, right, top, bottom } = chart.chartArea;
+  return dragChartViewAlongAxes(timeline, pan, {
+    panDeltaPx: deltaX,
+    zoomDeltaPx: deltaY,
+    cursorPx: currentX,
+    panAxisStart: left,
+    panAxisLength: right - left,
+    zoomAxisLength: bottom - top,
+  });
 }
 
 function chartTimeUnitForSpan(spanMs) {
@@ -2444,18 +2454,18 @@ async function loadCurrentStock() {
   }
 }
 
-function chartEventX(e) {
-  const chart = state.chart;
-  if (!chart) return null;
+function chartCanvasEventXY(e, chart) {
+  if (!chart?.canvas) return null;
   const rect = chart.canvas.getBoundingClientRect();
-  return e.clientX - rect.left;
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function chartEventX(e) {
+  return chartCanvasEventXY(e, state.chart)?.x ?? null;
 }
 
 function chartEventY(e) {
-  const chart = state.chart;
-  if (!chart) return null;
-  const rect = chart.canvas.getBoundingClientRect();
-  return e.clientY - rect.top;
+  return chartCanvasEventXY(e, state.chart)?.y ?? null;
 }
 
 function refreshSnapshotHighlight() {

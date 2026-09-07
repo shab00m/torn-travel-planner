@@ -1651,7 +1651,12 @@ body.page-item {
 	height: 340px;
 	overflow: hidden;
 }
-.chart-wrap.is-panning {
+.chart-wrap.can-pan,
+.chart-wrap.can-pan canvas {
+	cursor: grab;
+}
+.chart-wrap.is-panning,
+.chart-wrap.is-panning canvas {
 	cursor: grabbing;
 }
 
@@ -1744,11 +1749,6 @@ body.page-item {
 	margin-bottom: 4px;
 }
 
-.chart-view-fields {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 10px 14px;
-}
 .chart-view-field {
 	display: inline-flex;
 	align-items: center;
