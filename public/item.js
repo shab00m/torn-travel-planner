@@ -564,6 +564,11 @@ function applyChartView(
   );
   state.chartOffsetSec = clampedOffset;
   state.chartScale = clampedScale;
+  saveCurrentItemSettings({
+    chartOffsetSec: clampedOffset,
+    chartScale: clampedScale,
+    chartFollowLive: isStockChartFollowingLive(),
+  });
   syncOffsetInput(timeline);
   syncScaleInput(timeline);
   syncChartViewInteraction(timeline);
@@ -584,6 +589,27 @@ function applyChartView(
   state.chart.update("none");
   updateChartMarkers(state.chart);
   return { visMin, visMax };
+}
+
+function syncSampleExtremaButtons(container, n, timing) {
+  if (!container) return;
+  container.querySelectorAll("button").forEach((btn) => {
+    if (btn.dataset.n != null) {
+      btn.classList.toggle("active", timing === "avg" && Number(btn.dataset.n) === n);
+    } else if (btn.dataset.mode) {
+      btn.classList.toggle("active", timing === btn.dataset.mode);
+    }
+  });
+}
+
+function syncItemPageSettingsControls() {
+  syncHourButtons(el.rangeButtons, state.rangeHours);
+  syncHourButtons(el.predictionButtons, state.predictionHours);
+  if (el.flightVarianceToggle) el.flightVarianceToggle.checked = state.flightTimeVariance;
+  if (el.safeWindowUseRate) el.safeWindowUseRate.checked = state.safeWindowUseRateSelection;
+  syncHistoricalRatePredictionUi();
+  syncSampleExtremaButtons(el.avgButtons, state.avgSamples, state.stockoutTiming);
+  syncSampleExtremaButtons(el.rateAvgButtons, state.avgRateSamples, state.rateTiming);
 }
 
 function initSampleExtremaButtons(container, defaultN, timingKey, onSelect) {
@@ -2834,9 +2860,15 @@ async function drawChart() {
     state.chartScale = 1;
     state.chartOffsetSec = getMaxChartOffsetSec(timeline, 1);
     resetChartView = false;
+    itemViewportRestore.followLive = false;
   } else {
     state.chartScale = clampChartScale(state.chartScale, timeline);
-    state.chartOffsetSec = clampChartOffsetSec(state.chartOffsetSec, timeline);
+    if (itemViewportRestore.followLive) {
+      state.chartOffsetSec = getMaxChartOffsetSec(timeline, state.chartScale);
+      itemViewportRestore.followLive = false;
+    } else {
+      state.chartOffsetSec = clampChartOffsetSec(state.chartOffsetSec, timeline);
+    }
   }
   refreshChart(timeline);
   if (typeof syncActiveItemChartView === "function") syncActiveItemChartView();
@@ -2955,6 +2987,9 @@ function parseItemFromUrl() {
 function setupItemPage(item) {
   cycleHistoryPage = 0;
   setupItemHeader(item, "stock");
+  applyItemPageSettings(item.country, item.itemId);
+  resetChartView = !itemViewportRestore.useSaved;
+  syncItemPageSettingsControls();
   const savedAmount = getRestockAmount(item.country, item.itemId);
   el.restockAmount.value = savedAmount ?? "";
   fillEmptyForBoundInputs();
@@ -3193,22 +3228,22 @@ el.restockAmount.addEventListener("change", async () => {
   }
 });
 
-el.rangeButtons.addEventListener("click", (e) => {
+el.rangeButtons.addEventListener("click", async (e) => {
   const btn = e.target.closest("button[data-hours]");
   if (!btn || !state.item) return;
   state.rangeHours = Number(btn.dataset.hours);
-  savePrefs({ rangeHours: state.rangeHours });
   syncHourButtons(el.rangeButtons, state.rangeHours);
   resetChartView = true;
   cycleHistoryPage = 0;
-  drawChart();
+  await drawChart();
+  saveCurrentItemSettings({ rangeHours: state.rangeHours, chartFollowLive: true });
 });
 
 el.predictionButtons.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-hours]");
   if (!btn || !state.item) return;
   state.predictionHours = Number(btn.dataset.hours);
-  savePrefs({ predictionHours: state.predictionHours });
+  saveCurrentItemSettings({ predictionHours: state.predictionHours });
   syncHourButtons(el.predictionButtons, state.predictionHours);
   redrawPrediction();
 });
@@ -3292,7 +3327,7 @@ if (el.flightVarianceToggle) {
   el.flightVarianceToggle.checked = state.flightTimeVariance;
   el.flightVarianceToggle.addEventListener("change", () => {
     state.flightTimeVariance = el.flightVarianceToggle.checked;
-    savePrefs({ flightTimeVariance: state.flightTimeVariance });
+    saveCurrentItemSettings({ flightTimeVariance: state.flightTimeVariance });
     redrawPrediction();
   });
 }
@@ -3323,7 +3358,7 @@ if (el.safeWindowUseRate) {
   el.safeWindowUseRate.checked = state.safeWindowUseRateSelection;
   el.safeWindowUseRate.addEventListener("change", () => {
     state.safeWindowUseRateSelection = el.safeWindowUseRate.checked;
-    savePrefs({ safeWindowUseRateSelection: state.safeWindowUseRateSelection });
+    saveCurrentItemSettings({ safeWindowUseRateSelection: state.safeWindowUseRateSelection });
     redrawPrediction();
   });
 }
@@ -3332,7 +3367,7 @@ if (el.historicalRatePrediction) {
   syncHistoricalRatePredictionUi();
   el.historicalRatePrediction.addEventListener("change", () => {
     state.historicalRatePrediction = el.historicalRatePrediction.checked;
-    savePrefs({ historicalRatePrediction: state.historicalRatePrediction });
+    saveCurrentItemSettings({ historicalRatePrediction: state.historicalRatePrediction });
     syncHistoricalRatePredictionUi();
     renderCycleHistory();
     redrawPrediction();
@@ -3344,7 +3379,7 @@ if (el.historicalRateMaxAge) {
     const raw = el.historicalRateMaxAge.value.trim();
     if (raw === "") {
       state.historicalRateMaxAgeDays = null;
-      savePrefs({ historicalRateMaxAgeDays: null });
+      saveCurrentItemSettings({ historicalRateMaxAgeDays: null });
       syncHistoricalRatePredictionUi();
       renderCycleHistory();
       redrawPrediction();
@@ -3357,7 +3392,7 @@ if (el.historicalRateMaxAge) {
       return;
     }
     state.historicalRateMaxAgeDays = days;
-    savePrefs({ historicalRateMaxAgeDays: days });
+    saveCurrentItemSettings({ historicalRateMaxAgeDays: days });
     syncHistoricalRatePredictionUi();
     renderCycleHistory();
     redrawPrediction();
@@ -3369,10 +3404,10 @@ initSampleExtremaButtons(el.avgButtons, state.avgSamples, "stockoutTiming", ({ m
   if (mode === "avg") {
     state.stockoutTiming = "avg";
     state.avgSamples = n;
-    savePrefs({ stockoutTiming: "avg", avgSamples: n });
+    saveCurrentItemSettings({ stockoutTiming: "avg", avgSamples: n });
   } else {
     state.stockoutTiming = mode;
-    savePrefs({ stockoutTiming: mode });
+    saveCurrentItemSettings({ stockoutTiming: mode });
   }
   renderCycleHistory();
   redrawPrediction();
@@ -3381,10 +3416,10 @@ initSampleExtremaButtons(el.rateAvgButtons, state.avgRateSamples, "rateTiming", 
   if (mode === "avg") {
     state.rateTiming = "avg";
     state.avgRateSamples = n;
-    savePrefs({ rateTiming: "avg", avgRateSamples: n });
+    saveCurrentItemSettings({ rateTiming: "avg", avgRateSamples: n });
   } else {
     state.rateTiming = mode;
-    savePrefs({ rateTiming: mode });
+    saveCurrentItemSettings({ rateTiming: mode });
   }
   renderCycleHistory();
   redrawPrediction();

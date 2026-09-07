@@ -64,7 +64,7 @@ el.rangeButtons.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-hours]");
   if (!btn || !state.item) return;
   state.rangeHours = Number(btn.dataset.hours);
-  savePrefs({ rangeHours: state.rangeHours });
+  saveCurrentItemSettings({ rangeHours: state.rangeHours });
   syncHourButtons(el.rangeButtons, state.rangeHours);
   drawChart();
 });
@@ -85,6 +85,8 @@ window.addEventListener("timeformatchange", () => {
     return;
   }
   setupItemHeader(item, "price");
+  applyItemPageSettings(item.country, item.itemId);
+  syncHourButtons(el.rangeButtons, state.rangeHours);
   await drawChart();
   startStockUpdateWatcher(drawChart);
 })();

@@ -2,7 +2,7 @@
 const emptyForChartUi = {
   chart: null,
   axesSwapped: false,
-  showExcluded: loadPrefs().emptyForShowExcluded !== false,
+  showExcluded: true,
   offsetSec: 0,
   scale: null,
   timeline: null,
@@ -393,6 +393,7 @@ function syncEmptyForChart() {
 
 function setEmptyForAxesSwapped(swapped) {
   emptyForChartUi.axesSwapped = Boolean(swapped);
+  saveCurrentItemSettings({ emptyForAxesSwapped: emptyForChartUi.axesSwapped });
   // Scale types change (linear ↔ time); recreate instead of updating in place.
   destroyEmptyForChart();
   syncEmptyForChart();
@@ -400,7 +401,7 @@ function setEmptyForAxesSwapped(swapped) {
 
 function setEmptyForShowExcluded(show) {
   emptyForChartUi.showExcluded = Boolean(show);
-  savePrefs({ emptyForShowExcluded: emptyForChartUi.showExcluded });
+  saveCurrentItemSettings({ emptyForShowExcluded: emptyForChartUi.showExcluded });
   destroyEmptyForChart();
   syncEmptyForChart();
 }
@@ -425,6 +426,7 @@ function initEmptyForChartOptions() {
       return;
     }
     emptyForChartUi.offsetSec = offsetSec;
+    saveCurrentItemSettings({ emptyForOffsetSec: offsetSec });
     syncEmptyForChart();
   });
   emptyForChartEl.scale?.addEventListener("change", () => {
@@ -438,6 +440,7 @@ function initEmptyForChartOptions() {
     }
     emptyForChartUi.offsetSec = emptyForOffsetForScaleAtCenter(timeline, scale);
     emptyForChartUi.scale = scale;
+    saveCurrentItemSettings({ emptyForOffsetSec: emptyForChartUi.offsetSec, emptyForScale: scale });
     syncEmptyForChart();
   });
 }
@@ -470,6 +473,7 @@ function emptyForDragChartView(timeline, pan, deltaX, deltaY, currentX, currentY
 function applyEmptyForChartView(timeline, { offsetSec, scale }) {
   emptyForChartUi.offsetSec = offsetSec;
   emptyForChartUi.scale = scale;
+  saveCurrentItemSettings({ emptyForOffsetSec: offsetSec, emptyForScale: scale });
   syncEmptyForChart();
 }
 

@@ -1,6 +1,4 @@
 // Shared stock / empty-for / rate-by-hour / buy-price chart view toggle on the item page.
-const ITEM_CHART_TYPES = ["stock", "empty-for", "rate-tod", "buy-price"];
-
 const itemChartViewUi = {
   type: "stock",
 };
@@ -42,7 +40,7 @@ function syncActiveItemChartView() {
   if (typeof syncEmptyForChartOptions === "function") syncEmptyForChartOptions();
 }
 
-function setItemChartType(type) {
+function setItemChartType(type, { persist = true } = {}) {
   if (!ITEM_CHART_TYPES.includes(type)) {
     throw new Error(`Unknown chart type: ${type}`);
   }
@@ -56,6 +54,7 @@ function setItemChartType(type) {
   }
 
   syncChartOptionsVisibility();
+  if (persist) saveCurrentItemSettings({ chartType: type });
   if (type === "stock") {
     if (state.chart) state.chart.resize();
     return;

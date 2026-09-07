@@ -569,8 +569,11 @@ function usableRestockDurations(restocks) {
 }
 
 function selectedStockoutSec(restocks, country, itemId) {
-  const prefs = typeof loadPrefs === "function" ? loadPrefs() : {};
-  const timing = ["avg", "min", "max"].includes(prefs.stockoutTiming) ? prefs.stockoutTiming : "avg";
+  const settings =
+    typeof itemSettingsFor === "function" ? itemSettingsFor(country, itemId) : {};
+  const timing = ["avg", "min", "max"].includes(settings.stockoutTiming)
+    ? settings.stockoutTiming
+    : "avg";
   if ((timing === "min" || timing === "max") && country != null) {
     const bounds = getEmptyForBounds(country, itemId);
     const configured = timing === "min" ? bounds.minEmptyFor : bounds.maxEmptyFor;
@@ -581,20 +584,21 @@ function selectedStockoutSec(restocks, country, itemId) {
   const durations = rows.map((r) => r.duration);
   if (timing === "min") return Math.min(...durations);
   if (timing === "max") return Math.max(...durations);
-  const n = Number(prefs.avgSamples);
+  const n = Number(settings.avgSamples);
   const sample = rows.slice(0, Number.isFinite(n) && n > 0 ? n : 5);
   return sample.reduce((sum, r) => sum + r.duration, 0) / sample.length;
 }
 
-function selectedDepletionRate(rates) {
-  const prefs = typeof loadPrefs === "function" ? loadPrefs() : {};
+function selectedDepletionRate(rates, country, itemId) {
+  const settings =
+    typeof itemSettingsFor === "function" ? itemSettingsFor(country, itemId) : {};
   const rows = (rates || []).filter((w) => !w.open && w.rate != null && w.rate > 0);
   if (!rows.length) return null;
-  const timing = ["avg", "min", "max"].includes(prefs.rateTiming) ? prefs.rateTiming : "avg";
+  const timing = ["avg", "min", "max"].includes(settings.rateTiming) ? settings.rateTiming : "avg";
   const values = rows.map((w) => w.rate);
   if (timing === "min") return Math.min(...values);
   if (timing === "max") return Math.max(...values);
-  const n = Number(prefs.avgRateSamples);
+  const n = Number(settings.avgRateSamples);
   const sample = rows.slice(0, Number.isFinite(n) && n > 0 ? n : 3);
   return sample.reduce((sum, w) => sum + w.rate, 0) / sample.length;
 }
@@ -619,7 +623,7 @@ function computeNextRestockAlarmTarget({ restocks, rates, quantity, now, country
   }
 
   if (quantity == null || quantity <= 0) return null;
-  const rate = selectedDepletionRate(rates);
+  const rate = selectedDepletionRate(rates, country, itemId);
   if (rate == null || rate <= 0) return null;
   const depleteTs = Math.round(now + (quantity / rate) * 60);
   const restockTs = Math.round(depleteTs + restockSec);
