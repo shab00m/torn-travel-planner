@@ -589,7 +589,8 @@ function applyChartView(
     );
   }
   state.chart.update("none");
-  if (!live) updateChartMarkers(state.chart);
+  if (live) repositionChartMarkers(state.chart);
+  else updateChartMarkers(state.chart);
   return { visMin, visMax };
 }
 
@@ -2203,27 +2204,88 @@ function destroyChart() {
   el.chartCanvas?.parentNode?.querySelector(".chart-tooltip")?.remove();
 }
 
-function appendVerticalChartMarker(container, chart, { ts, lineClass, labelClass, labelHtml, labelYAdjust }) {
+function chartMarkerPixelX(chart, ts) {
   const { chartArea, scales } = chart;
-  const xScale = scales.x;
-  if (!xScale || !chartArea) return;
-
+  const xScale = scales?.x;
+  if (!xScale || !chartArea) return null;
+  const xMs = tsMs(ts);
   const xMin = chart.options.scales.x.min;
   const xMax = chart.options.scales.x.max;
-  const xMs = tsMs(ts);
-  if (xMs < xMin || xMs > xMax) return;
-
+  if (xMs < xMin || xMs > xMax) return null;
   const x = xScale.getPixelForValue(xMs);
-  if (x < chartArea.left || x > chartArea.right) return;
+  if (x < chartArea.left || x > chartArea.right) return null;
+  return x;
+}
+
+function setChartMarkerX(el, chart, ts) {
+  const x = chartMarkerPixelX(chart, ts);
+  el.hidden = x == null;
+  if (x != null) el.style.left = `${x}px`;
+}
+
+function repositionSafeWindowOverlay(el, chart) {
+  const startTs = Number(el.dataset.startTs);
+  const endTs = Number(el.dataset.endTs);
+  const { chartArea, scales } = chart;
+  const xScale = scales?.x;
+  if (!xScale || !chartArea || !Number.isFinite(startTs) || !Number.isFinite(endTs)) {
+    el.hidden = true;
+    return;
+  }
+  const xMin = chart.options.scales.x.min;
+  const xMax = chart.options.scales.x.max;
+  const startMs = tsMs(startTs);
+  const endMs = tsMs(endTs);
+  if (endMs < xMin || startMs > xMax) {
+    el.hidden = true;
+    return;
+  }
+  const x1 = xScale.getPixelForValue(Math.max(startMs, xMin));
+  const x2 = xScale.getPixelForValue(Math.min(endMs, xMax));
+  if (x2 <= chartArea.left || x1 >= chartArea.right) {
+    el.hidden = true;
+    return;
+  }
+  const left = Math.max(x1, chartArea.left);
+  const right = Math.min(x2, chartArea.right);
+  const width = right - left;
+  if (width <= 0) {
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.style.left = `${left}px`;
+  el.style.width = `${width}px`;
+}
+
+/** Move existing overlay markers with the viewport; does not create or rebuild nodes. */
+function repositionChartMarkers(chart) {
+  if (!chart?.chartArea) return;
+  for (const container of [el.timeMarkers, el.eventMarkers, el.restockMarkers]) {
+    container?.querySelectorAll("[data-ts]").forEach((node) => {
+      setChartMarkerX(node, chart, Number(node.dataset.ts));
+    });
+  }
+  el.safeWindowMarkers?.querySelectorAll("[data-start-ts]").forEach((node) => {
+    repositionSafeWindowOverlay(node, chart);
+  });
+}
+
+function appendVerticalChartMarker(container, chart, { ts, lineClass, labelClass, labelHtml, labelYAdjust }) {
+  const x = chartMarkerPixelX(chart, ts);
+  if (x == null) return;
+  const { chartArea } = chart;
 
   const line = document.createElement("div");
   line.className = lineClass;
+  line.dataset.ts = String(ts);
   line.style.left = `${x}px`;
   line.style.top = `${chart.canvas.offsetTop + chartArea.top}px`;
   line.style.height = `${chartArea.bottom - chartArea.top}px`;
 
   const label = document.createElement("span");
   label.className = labelClass;
+  label.dataset.ts = String(ts);
   label.innerHTML = labelHtml;
   label.style.left = `${x}px`;
   label.style.top = `${chartMarkerTop(chart, chartArea, labelYAdjust)}px`;
@@ -2265,6 +2327,7 @@ function updateTimeMarkers(chart) {
 
     const markerLabel = document.createElement("span");
     markerLabel.className = "chart-time-marker-label";
+    markerLabel.dataset.ts = String(ts);
     markerLabel.style.left = `${x}px`;
     markerLabel.style.top = `${chartMarkerTop(chart, chartArea, CHART_TIME_MARKER_LABEL_Y_ADJUST)}px`;
     markerLabel.style.color = color;
@@ -2387,6 +2450,8 @@ function updateSafeWindowMarkers(chart) {
 
     const box = document.createElement("div");
     box.className = "safe-window-overlay";
+    box.dataset.startTs = String(safeStart);
+    box.dataset.endTs = String(safeEnd);
     box.style.left = `${left}px`;
     box.style.top = `${canvasTop + chartArea.top}px`;
     box.style.width = `${width}px`;
