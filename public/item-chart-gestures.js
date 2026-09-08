@@ -289,11 +289,14 @@ function initStockChartGestures() {
         scale: state.chartScale,
       };
     },
-    applyView: (ctx, view) => applyChartView(ctx.timeline, view),
+    applyView: (ctx, view) => applyChartView(ctx.timeline, view, { live: true }),
     mouseDragView: (timeline, pan, deltaX, deltaY, currentX, _currentY, chart) =>
       dragChartView(timeline, pan, deltaX, deltaY, currentX, chart),
     panAxisFor: (ctx) => chartViewportPanAxisX(ctx.chart),
-    onGestureEnd: () => saveCurrentItemSettings(),
+    onGestureEnd: () => {
+      if (state.lastTimeline) applyChartView(state.lastTimeline);
+      saveCurrentItemSettings();
+    },
   });
 }
 

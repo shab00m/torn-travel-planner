@@ -557,7 +557,8 @@ function endActiveChartDrags() {
 
 function applyChartView(
   timeline,
-  { offsetSec = state.chartOffsetSec, scale = state.chartScale } = {}
+  { offsetSec = state.chartOffsetSec, scale = state.chartScale } = {},
+  { live = false } = {}
 ) {
   const { visMin, visMax, offsetSec: clampedOffset, scale: clampedScale } = getVisibleChartRange(
     timeline,
@@ -566,9 +567,11 @@ function applyChartView(
   );
   state.chartOffsetSec = clampedOffset;
   state.chartScale = clampedScale;
-  syncOffsetInput(timeline);
-  syncScaleInput(timeline);
-  syncChartViewInteraction(timeline);
+  if (!live) {
+    syncOffsetInput(timeline);
+    syncScaleInput(timeline);
+    syncChartViewInteraction(timeline);
+  }
 
   if (!state.chart) return { visMin, visMax };
 
@@ -578,13 +581,15 @@ function applyChartView(
   state.chart.options.scales.x.max = visMax;
   state.chart.options.scales.x.time.unit = timeUnit;
   state.chart.options.scales.x.time.stepSize = timeUnit === "minute" ? 1 : undefined;
-  state.chart.options.plugins.annotation.annotations = buildAnnotations(
-    state.restocks,
-    state.rates,
-    { ...timeline, xMin: visMin, xMax: visMax }
-  );
+  if (!live) {
+    state.chart.options.plugins.annotation.annotations = buildAnnotations(
+      state.restocks,
+      state.rates,
+      { ...timeline, xMin: visMin, xMax: visMax }
+    );
+  }
   state.chart.update("none");
-  updateChartMarkers(state.chart);
+  if (!live) updateChartMarkers(state.chart);
   return { visMin, visMax };
 }
 

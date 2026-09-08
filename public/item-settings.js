@@ -23,9 +23,11 @@ function loadItemSettings(country, itemId) {
 }
 
 function writeItemSettings(country, itemId, settings) {
+  const key = restockAmountKey(country, itemId);
   const all = loadAllItemSettings();
-  all[restockAmountKey(country, itemId)] = settings;
+  all[key] = settings;
   localStorage.setItem(ITEM_SETTINGS_KEY, JSON.stringify(all));
+  console.debug("[item-settings] saved to localStorage", key, settings);
 }
 
 function optionalFiniteNumber(value, { min = null } = {}) {
