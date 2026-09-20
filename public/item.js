@@ -2939,11 +2939,16 @@ async function drawChart() {
     itemViewportRestore.followLive = false;
   } else {
     state.chartScale = clampChartScale(state.chartScale, timeline);
-    if (itemViewportRestore.followLive) {
+    const wasFollowingLive =
+      itemViewportRestore.followLive ||
+      (state.lastTimeline &&
+        state.chartOffsetSec >= getMaxChartOffsetSec(state.lastTimeline, state.chartScale) - 0.5);
+    if (wasFollowingLive) {
       state.chartOffsetSec = getMaxChartOffsetSec(timeline, state.chartScale);
-      itemViewportRestore.followLive = false;
+      itemViewportRestore.followLive = true;
     } else {
       state.chartOffsetSec = clampChartOffsetSec(state.chartOffsetSec, timeline);
+      itemViewportRestore.followLive = false;
     }
   }
   refreshChart(timeline);
