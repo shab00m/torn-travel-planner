@@ -53,6 +53,7 @@ test("fixed events ignore personal time; unrelated events do not double capacity
 });
 
 test("login applies calendar bonus to base, suitcase, faction, book and general job slots", async (t) => {
+  t.mock.method(Date, "now", () => Date.parse("2026-09-26T18:00:00Z"));
   const calls = [];
   const now = Math.floor(Date.now() / 1000);
   t.mock.method(globalThis, "fetch", async (url, options) => {
@@ -84,6 +85,7 @@ test("login applies calendar bonus to base, suitcase, faction, book and general 
 });
 
 test("login reads the personal calendar and leaves normal capacity outside the event", async (t) => {
+  t.mock.method(Date, "now", () => Date.parse("2026-09-25T18:00:00Z"));
   const calls = [];
   t.mock.method(globalThis, "fetch", async (url) => {
     calls.push(String(url));
@@ -102,6 +104,7 @@ test("login reads the personal calendar and leaves normal capacity outside the e
 });
 
 test("calendar permission errors preserve login and clearly mark capacity as unverified", async (t) => {
+  t.mock.method(Date, "now", () => Date.parse("2026-09-26T18:00:00Z"));
   t.mock.method(globalThis, "fetch", async (url) => ({
     ok: true,
     json: async () => String(url).includes("selections=")
@@ -112,4 +115,39 @@ test("calendar permission errors preserve login and clearly mark capacity as unv
   assert.equal(player.name, "Traveller");
   assert.equal(player.capacity, 5);
   assert.match(player.capacityWarning, /unverified/);
+});
+
+test("calendar requests only run September 25–29 UTC, including in future years", async (t) => {
+  let now;
+  const calls = [];
+  t.mock.method(Date, "now", () => Date.parse(now));
+  t.mock.method(globalThis, "fetch", async (url) => {
+    calls.push(String(url));
+    return {
+      ok: true,
+      json: async () => String(url).includes("selections=")
+        ? { property_perks: ["Airstrip"], faction_perks: ["+ 8 travel items"] }
+        : { calendar: { events: [] } },
+    };
+  });
+  for (const [date, calendarExpected] of [
+    ["2026-01-27T12:00:00Z", false],
+    ["2026-09-24T23:59:59Z", false],
+    ["2026-09-25T00:00:00Z", true],
+    ["2026-09-29T23:59:59Z", true],
+    ["2026-09-30T00:00:00Z", false],
+    ["2026-10-27T12:00:00Z", false],
+    ["2027-09-27T12:00:00Z", true],
+    ["2026-09-25T01:00:00+02:00", false],
+    ["2026-09-30T01:00:00+02:00", true],
+  ]) {
+    now = date;
+    calls.length = 0;
+    const player = await getPlayerInfo("test-key");
+    assert.equal(calls.length, calendarExpected ? 2 : 1, date);
+    assert.ok(calls[0].includes("selections=basic,perks"));
+    assert.equal(player.capacity, 23);
+    assert.equal(player.capacityMultiplier, 1);
+    assert.equal(player.capacityWarning, null);
+  }
 });

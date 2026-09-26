@@ -115,6 +115,12 @@ export function tourismDayIsActive(events, startTime, now = Date.now() / 1000) {
 }
 
 async function getTourismDay(apiKey) {
+  // Only request detailed calendars within two calendar days of Sep 27.
+  // Use TCT (UTC), independently of the server's local timezone.
+  const today = new Date(Date.now());
+  if (today.getUTCMonth() !== 8 || today.getUTCDate() < 25 || today.getUTCDate() > 29) {
+    return false;
+  }
   const options = { headers: { Authorization: `ApiKey ${apiKey}` } };
   const { calendar } = await fetchTornJson("https://api.torn.com/v2/torn/calendar", options);
   if (!Array.isArray(calendar?.events)) throw new Error("Missing Torn calendar events");

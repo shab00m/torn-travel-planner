@@ -374,7 +374,7 @@ Requires a Torn API key with **Minimal** access (or a Custom key that includes `
 
 **Response:** `{ name, playerId, level, travelType, capacity, baseCapacity, bonusCapacity, capacityMultiplier, capacityPerks, capacityWarning, isAdmin, isAllowed }`
 
-Login also reads API v2 `torn/calendar` and, for events using personal start times, `user/calendar`. Custom keys should include both calendar selections. During the player's Tourism Day window, `capacityMultiplier` is 2 and `capacity` is twice the sum of base and general perk capacity. The base and bonus fields remain the unmultiplied breakdown. Item-specific flower/plushie job slots are excluded from general capacity.
+From September 25 through September 29 inclusive (TCT/UTC), login also reads API v2 `torn/calendar` and, for events using personal start times, `user/calendar`. Outside this two-day margin around September 27, both calendar requests are skipped and normal capacity is returned without an event warning. Custom keys should include both calendar selections. During the player's Tourism Day window, `capacityMultiplier` is 2 and `capacity` is twice the sum of base and general perk capacity. The base and bonus fields remain the unmultiplied breakdown. Item-specific flower/plushie job slots are excluded from general capacity.
 
 Calendar failures do not prevent login: normal capacity is returned with a visible `capacityWarning` explaining that the event bonus could not be verified. On success the warning is null. Capacity is recalculated on login/page reload; guest capacity remains manually controlled.
 

@@ -43,3 +43,9 @@ The parser now accepts the TCT suffix and surrounding whitespace. For a nominal 
 Regression tests now use the observed calendar response format and check that 38 normal slots become 76 on September 26. All seven tests passed, along with the server module syntax check and whitespace validation. A live `getPlayerInfo` call then returned base capacity 15, bonus capacity 23, total capacity 76, multiplier 2, and no warning. No API key or player identity was printed or added to the journal.
 
 The correction is local and has not been deployed by the assistant. The earlier statement that no live authenticated response had been verified applies to the initial implementation, not this follow-up. The original mocked tests failed to catch the real response format; higher API key access was not the cause of this failure.
+
+## 2026-09-26 — Limit calendar requests to the Tourism Day season
+
+The user suggested checking the date before requesting detailed calendar data. Logged-in page loads run auto-login, which previously fetched the calendars throughout the year. Calendar requests now run only September 25–29 inclusive in TCT/UTC: two calendar days either side of September 27. Outside that window, normal capacity is returned without calendar requests or an event warning. The normal basic/perks request still runs; within the window, calendar data continues to determine whether the player's bonus is actually active.
+
+All eight tests passed, including request-count checks at the UTC window boundaries, timezone-offset cases, and a future year. Existing login tests now freeze the date so they remain reliable year-round. Syntax and whitespace checks passed. API documentation was updated. This change has not been deployed by the assistant.
