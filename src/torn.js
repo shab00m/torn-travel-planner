@@ -88,15 +88,27 @@ export function tourismDayIsActive(events, startTime, now = Date.now() / 1000) {
       throw new Error("Invalid Tourism Day dates");
     }
     if (event.fixed_start_time !== true) {
-      const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(startTime ?? "");
+      const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s+TCT)?$/i.exec(
+        typeof startTime === "string" ? startTime.trim() : ""
+      );
       if (!match || +match[1] > 23 || +match[2] > 59 || +(match[3] ?? 0) > 59) {
         throw new Error("Missing personal calendar start time");
       }
       const date = new Date(start * 1000);
       date.setUTCHours(+match[1], +match[2], +(match[3] ?? 0), 0);
-      const offset = date.getTime() / 1000 - start;
-      start += offset;
-      end += offset;
+      // Torn currently lists Tourism Day as Sep 27 00:00–23:59:59 UTC.
+      // That nominal calendar day represents a 48-hour personal event,
+      // beginning the previous day at the player's chosen TCT time.
+      // Also accept a full event window if Torn supplies one in future.
+      if (end - start <= 86400) {
+        date.setUTCDate(date.getUTCDate() - 1);
+        start = date.getTime() / 1000;
+        end = start + 2 * 86400;
+      } else {
+        const offset = date.getTime() / 1000 - start;
+        start += offset;
+        end += offset;
+      }
     }
     return now >= start && now < end;
   });

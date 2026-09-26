@@ -5,19 +5,43 @@ import { getPlayerInfo, tourismDayIsActive } from "../src/torn.js";
 const ts = (date) => Date.parse(date) / 1000;
 const event = {
   title: "World Tourism Day",
-  start: ts("2026-09-26T12:00:00Z"),
-  end: ts("2026-09-28T12:00:00Z"),
+  // Public event dates observed in Torn's live calendar response.
+  start: 1790467200,
+  end: 1790553599,
   fixed_start_time: false,
 };
 
 test("personal Tourism Day covers exactly 48 hours including September 26", () => {
-  for (const time of ["10:00", "14:15", "16:00:00"]) {
-    const start = ts(`2026-09-26T${time.length === 5 ? time + ":00" : time}Z`);
+  for (const time of ["10:00", "10:15 TCT", "14:15 TCT", "16:00:00 TCT", " 10:15 TCT "]) {
+    const clock = time.trim().replace(/ TCT$/, "");
+    const start = ts(`2026-09-26T${clock.length === 5 ? clock + ":00" : clock}Z`);
     assert.equal(tourismDayIsActive([event], time, start - 1), false);
     assert.equal(tourismDayIsActive([event], time, start), true);
     assert.equal(tourismDayIsActive([event], time, start + 172799), true);
     assert.equal(tourismDayIsActive([event], time, start + 172800), false);
   }
+});
+
+test("already expanded personal event windows retain their duration", () => {
+  const expanded = { ...event, start: ts("2026-09-26T12:00:00Z"), end: ts("2026-09-28T12:00:00Z") };
+  assert.equal(tourismDayIsActive([expanded], "10:15 TCT", ts("2026-09-26T10:15:00Z")), true);
+  assert.equal(tourismDayIsActive([expanded], "10:15 TCT", ts("2026-09-28T10:15:00Z")), false);
+});
+
+test("live calendar response format doubles 38 slots to 76 on September 26", async (t) => {
+  t.mock.method(Date, "now", () => Date.parse("2026-09-26T18:00:00Z"));
+  t.mock.method(globalThis, "fetch", async (url) => ({
+    ok: true,
+    json: async () => String(url).includes("selections=")
+      ? { property_perks: ["Airstrip"], faction_perks: ["+ 8 travel items"], enhancer_perks: ["+ 5 travel items"], book_perks: ["+ 10 travel items"] }
+      : String(url).endsWith("/torn/calendar")
+        ? { calendar: { events: [{ ...event, title: "Tourism Day" }] } }
+        : { calendar: { start_time: "10:15 TCT" } },
+  }));
+  const player = await getPlayerInfo("test-key");
+  assert.equal(player.capacity, 76);
+  assert.equal(player.capacityMultiplier, 2);
+  assert.equal(player.capacityWarning, null);
 });
 
 test("fixed events ignore personal time; unrelated events do not double capacity", () => {
