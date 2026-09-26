@@ -77,14 +77,15 @@ function showLoggedIn(player) {
   const icon = TRAVEL_TYPE_ICONS[player.travelType] ?? "🎫";
   const capacityTitle =
     `Base ${player.baseCapacity} (${player.travelType})` +
-    (player.capacityPerks.length ? `\n${player.capacityPerks.join("\n")}` : "");
+    (player.capacityPerks.length ? `\n${player.capacityPerks.join("\n")}` : "") +
+    (player.capacityWarning ? `\n${player.capacityWarning}` : "");
   const adminLinks = player.isAdmin
     ? `<span class="admin-links"><a href="/users" class="users-link">Users</a><a href="/analytics" class="users-link">Analytics</a></span>`
     : "";
   authEl.playerInfo.innerHTML = `
     <span class="player-name">${player.name} <span class="player-id">[${player.playerId}]</span></span>
     <span class="player-stat" title="Travel type">${icon} ${player.travelType}</span>
-    <span class="player-stat" title="${capacityTitle}">🧳 ${player.capacity} slots</span>
+    <span class="player-stat" title="${capacityTitle}">🧳 ${player.capacity} slots${player.capacityMultiplier === 2 ? " (Tourism Day ×2)" : ""}${player.capacityWarning ? " — event bonus unverified" : ""}</span>
     ${adminLinks}
     <button id="logout-btn" class="logout-btn" title="Log out">Log out</button>
   `;

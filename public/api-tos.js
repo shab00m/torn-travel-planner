@@ -28,7 +28,7 @@ const API_TOS_ROWS = [
   {
     label: "Key Access Level",
     question: "What key access level or specific selections are required?",
-    value: "Custom — user → basic, perks, travel; market → itemmarket",
+    value: "Custom — user → basic, perks, travel, calendar; torn → calendar; market → itemmarket",
   },
 ];
 
@@ -71,6 +71,7 @@ function apiTosProseHtml() {
       <ul>
         <li><code>user</code> → <code>basic</code>, <code>perks</code> — login, travel type, and capacity</li>
         <li><code>user</code> → <code>travel</code> — whether you are flying to a destination</li>
+        <li><code>torn</code> → <code>calendar</code> and <code>user</code> → <code>calendar</code> — Tourism Day capacity bonus and your event start time</li>
         <li><code>market</code> → <code>itemmarket</code> — item market average prices (cached)</li>
       </ul>
     </div>

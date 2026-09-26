@@ -383,7 +383,7 @@ function siteSettingsPanelHtml() {
           </label>
           <label class="guest-travel-field" title="Travel item inventory slots">
             <span class="guest-travel-label">🧳</span>
-            <input id="guest-capacity" type="number" min="1" max="50" step="1" />
+            <input id="guest-capacity" type="number" min="1" step="1" />
             <span class="guest-travel-suffix">slots</span>
           </label>
         </div>

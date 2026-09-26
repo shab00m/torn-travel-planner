@@ -23,7 +23,7 @@ const PERK_ARRAYS = [
  * The Torn API has no direct capacity field; this mirrors what community
  * tools (Torn PDA etc.) do.
  */
-function parseTravelPerks(data) {
+function parseTravelPerks(data, tourismDay = false) {
   const propertyPerks = data.property_perks ?? [];
   const stockPerks = data.stock_perks ?? [];
 
@@ -41,16 +41,20 @@ function parseTravelPerks(data) {
   for (const arrayName of PERK_ARRAYS) {
     for (const perk of data[arrayName] ?? []) {
       const match = perk.match(/\+\s*(\d+)\s*travel item/i);
-      if (match) {
+      // Item-specific flower/plushie bonuses are not general carrying slots.
+      if (match && !/flower|plushie/i.test(perk)) {
         bonus += Number(match[1]);
         perkDetails.push(perk.trim());
       }
     }
   }
 
+  const normalCapacity = BASE_CAPACITY[travelType] + bonus;
+  if (tourismDay) perkDetails.push("World Tourism Day: ×2 travel capacity");
   return {
     travelType,
-    capacity: BASE_CAPACITY[travelType] + bonus,
+    capacity: normalCapacity * (tourismDay ? 2 : 1),
+    capacityMultiplier: tourismDay ? 2 : 1,
     baseCapacity: BASE_CAPACITY[travelType],
     bonusCapacity: bonus,
     capacityPerks: perkDetails,
@@ -59,7 +63,11 @@ function parseTravelPerks(data) {
 
 async function fetchTornUser(apiKey, selections) {
   const url = `${TORN_URL}?selections=${selections}&key=${encodeURIComponent(apiKey)}&timestamp=${Date.now()}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  return fetchTornJson(url);
+}
+
+async function fetchTornJson(url, options = {}) {
+  const res = await fetch(url, { ...options, signal: AbortSignal.timeout(15_000) });
   if (!res.ok) {
     throw new Error(`Torn API responded with HTTP ${res.status}`);
   }
@@ -70,17 +78,63 @@ async function fetchTornUser(apiKey, selections) {
   return data;
 }
 
+/** Calendar timestamps are seconds; personal event times are expressed in TCT (UTC). */
+export function tourismDayIsActive(events, startTime, now = Date.now() / 1000) {
+  if (!Array.isArray(events)) throw new Error("Missing Torn calendar events");
+  return events.some((event) => {
+    if (!/^(?:world\s+)?tourism day$/i.test(event.title?.trim() ?? "")) return false;
+    let { start, end } = event;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      throw new Error("Invalid Tourism Day dates");
+    }
+    if (event.fixed_start_time !== true) {
+      const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(startTime ?? "");
+      if (!match || +match[1] > 23 || +match[2] > 59 || +(match[3] ?? 0) > 59) {
+        throw new Error("Missing personal calendar start time");
+      }
+      const date = new Date(start * 1000);
+      date.setUTCHours(+match[1], +match[2], +(match[3] ?? 0), 0);
+      const offset = date.getTime() / 1000 - start;
+      start += offset;
+      end += offset;
+    }
+    return now >= start && now < end;
+  });
+}
+
+async function getTourismDay(apiKey) {
+  const options = { headers: { Authorization: `ApiKey ${apiKey}` } };
+  const { calendar } = await fetchTornJson("https://api.torn.com/v2/torn/calendar", options);
+  if (!Array.isArray(calendar?.events)) throw new Error("Missing Torn calendar events");
+  const needsPersonalTime = calendar.events.some((event) =>
+    /^(?:world\s+)?tourism day$/i.test(event.title?.trim() ?? "") && event.fixed_start_time !== true
+  );
+  const personal = needsPersonalTime
+    ? await fetchTornJson("https://api.torn.com/v2/user/calendar", options)
+    : null;
+  return tourismDayIsActive(calendar.events, personal?.calendar?.start_time);
+}
+
 /**
  * Validate an API key against the Torn API and return player info.
  * Throws with a user-presentable message on failure.
  */
 export async function getPlayerInfo(apiKey) {
   const data = await fetchTornUser(apiKey, "basic,perks");
+  let tourismDay = false;
+  let capacityWarning = null;
+  try {
+    tourismDay = await getTourismDay(apiKey);
+  } catch {
+    // Existing custom keys may not include the new calendar selections.
+    capacityWarning = "Event bonus unverified; showing normal capacity. Retry or enable torn/calendar and user/calendar on your API key.";
+  }
   return {
     name: data.name,
     playerId: data.player_id,
     level: data.level,
-    ...parseTravelPerks(data),
+    ...parseTravelPerks(data, tourismDay),
+    capacityWarning,
   };
 }
 
