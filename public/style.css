@@ -2751,3 +2751,18 @@ body.page-item {
 	opacity: 0.45;
 	cursor: not-allowed;
 }
+
+.favorites-card .favorite-window-line {
+	white-space: nowrap;
+}
+.favorites-card .favorite-window-line + .favorite-window-line {
+	margin-top: 4px;
+	font-size: 0.8rem;
+}
+.favorites-card .regular-window {
+	color: var(--text-dim);
+}
+.favorites-card .regular-leave-by {
+	color: #f0c674;
+	font-weight: 600;
+}

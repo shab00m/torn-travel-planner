@@ -437,6 +437,8 @@ function createContext({
     getHistoricalExtents,
     getAverages,
     computeSafeWindows,
+    simulatePredictions,
+    getCurrentRestockRate,
   };
 }
 
@@ -555,41 +557,57 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
     emptyForBounds,
   });
 
-  const { minEmptyFor, maxEmptyFor } = ctx.getHistoricalExtents();
-  if (minEmptyFor == null || maxEmptyFor == null) {
-    return safeWindowResponse(
-      { country, itemId, available: false, safeWindow: null, reason: "insufficient_history" },
-      restockAmount
-    );
-  }
-
   const endTs = dataTs + opts.predictionHours * 3600;
-  const safeWindows = ctx.computeSafeWindows(dataTs, endTs, startQty);
-  if (!safeWindows.length) {
-    const reason = "no_upcoming_restock";
-    return safeWindowResponse(
-      {
-        country,
-        itemId,
-        available: false,
-        safeWindow: null,
-        reason,
-        hint: safeWindowHint(reason, {
-          restockAmount,
-          startQty,
-          restocks,
-        }),
-      },
-      restockAmount
-    );
-  }
-
   let flightSec;
   try {
     flightSec = getFlightSeconds(country, opts.travelType);
   } catch {
     return safeWindowResponse(
-      { country, itemId, available: false, safeWindow: null, reason: "unknown_travel_type" },
+      { country, itemId, available: false, safeWindow: null, nextWindow: null, reason: "unknown_travel_type" },
+      restockAmount
+    );
+  }
+
+  // Regular predictions use the same selected timing and rate as the item page.
+  let nextWindow = null;
+  const averages = ctx.getAverages();
+  if (averages) {
+    const { events, segments } = ctx.simulatePredictions(dataTs, endTs, startQty, averages);
+    const upcoming = events.filter((e) => e.type === "restock" && e.ts >= dataTs);
+    const lastZeroLookup = buildLastZeroLookup(chartPoints);
+    for (const event of upcoming) {
+      let start = event.ts;
+      if (restockAmount && averages.rate) {
+        start = adjustRestockTime(
+          lastZeroLookup, event.ts, event.qty,
+          startQty > 0 && event === upcoming[0]
+            ? ctx.getCurrentRestockRate(startQty, dataTs) ?? averages.rate
+            : averages.rate,
+          restockAmount, event.depleted_ts
+        );
+      }
+      const end = events.find((e) => e.type === "deplete" && e.ts > event.ts)?.ts
+        ?? segments.find((s) => s.start_ts >= event.ts && s.end_qty === 0)?.end_ts
+        ?? start;
+      const leaveEarliest = start - flightSec;
+      const leaveLatest = end - flightSec;
+      if (leaveLatest > opts.wallTs) {
+        nextWindow = { start, end, leaveEarliest, leaveLatest };
+        break;
+      }
+    }
+  }
+
+  const safeWindows = ctx.computeSafeWindows(dataTs, endTs, startQty);
+  if (!safeWindows.length) {
+    const { minEmptyFor, maxEmptyFor } = ctx.getHistoricalExtents();
+    const reason = minEmptyFor == null || maxEmptyFor == null
+      ? "insufficient_history" : "no_upcoming_restock";
+    return safeWindowResponse(
+      {
+        country, itemId, nextWindow, available: false, safeWindow: null, reason,
+        hint: safeWindowHint(reason, { restockAmount, startQty, restocks }),
+      },
       restockAmount
     );
   }
@@ -608,6 +626,7 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
           country,
           itemId,
           available: true,
+          nextWindow,
           safeWindow: {
             safeStart: bounds.safeStart,
             safeEnd: bounds.safeEnd,
@@ -623,7 +642,7 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
   }
 
   return safeWindowResponse(
-    { country, itemId, available: false, safeWindow: null, reason: "missed" },
+    { country, itemId, nextWindow, available: false, safeWindow: null, reason: "missed" },
     restockAmount
   );
 }
@@ -638,6 +657,7 @@ export async function computeSafeWindowsBatch(items, opts = {}) {
       (await getStoredRestockAmount(item.country, item.itemId));
     windows[key] = await computeNextSafeWindow(item.country, item.itemId, {
       ...opts,
+      ...item.settings,
       restockAmount,
     });
   }

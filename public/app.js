@@ -89,7 +89,7 @@ const FAVORITES_SORT_COLUMNS = [
 	{ key: "items", label: "Items" },
 	{ key: "totalCost", label: "Total cost" },
 	{ key: "profit", label: "Profit/hr" },
-	{ key: "safeWindow", label: 'Safe<span class="col-label-full"> window</span>' },
+	{ key: "safeWindow", label: 'Next<span class="col-label-full"> window</span>' },
 	{ key: "leaveBy", label: "Leave by" },
 ];
 
@@ -180,15 +180,15 @@ function compareSortValues(a, b, dir) {
 
 function favoriteSafeWindowSortValue(country, itemId) {
 	const { data } = getSafeWindowDisplayData(country, itemId);
-	return data?.available && data.safeWindow
-		? data.safeWindow.safeStart
+	return data?.nextWindow
+		? data.nextWindow.start
 		: null;
 }
 
 function favoriteLeaveBySortValue(country, itemId) {
 	const { data } = getSafeWindowDisplayData(country, itemId);
-	return data?.available && data.safeWindow
-		? data.safeWindow.leaveEarliest
+	return data?.nextWindow
+		? data.nextWindow.leaveEarliest
 		: null;
 }
 
@@ -467,58 +467,52 @@ function safeWindowStatusCell(country, itemId, cellClass, render) {
 	return `<td class="${cellClass} ${cls}${staleCls}" title="${escapeHtml((data.reason ?? "") + staleTitle)}">${text}</td>`;
 }
 
+function favoriteWindowLine(start, end, className, title, suffix = "") {
+	const label = `${fmtTimeShort(start)}${suffix}<span class="window-range-end"> – ${fmtTimeShort(end)}</span>`;
+	return `<div class="favorite-window-line ${className}" title="${escapeHtml(title)}">${label}</div>`;
+}
+
+function favoriteWindowCell(country, itemId, cellClass, render) {
+	const { data, stale } = getSafeWindowDisplayData(country, itemId);
+	if (!data?.nextWindow && !data?.safeWindow) {
+		return safeWindowStatusCell(country, itemId, cellClass, () => "");
+	}
+	const regular = data.nextWindow
+		? render(data.nextWindow, false)
+		: '<div class="safe-window-unavailable">—</div>';
+	const safe = data.safeWindow ? render(data.safeWindow, true) : "";
+	return `<td class="${cellClass}${stale ? " safe-window-stale" : ""}">${regular}${safe}</td>`;
+}
+
 function safeWindowCell(country, itemId) {
-	return safeWindowStatusCell(
-		country,
-		itemId,
-		"safe-window-cell",
-		(sw, stale) => {
-			const label = `${fmtTimeShort(sw.safeStart)}<span class="window-range-end"> – ${fmtTimeShort(sw.safeEnd)}</span>`;
-			const title = `Safe ${fmtTime(sw.safeStart)} – ${fmtTime(sw.safeEnd)} · Leave ${fmtTime(sw.leaveEarliest)} – ${fmtTime(sw.leaveLatest)}${stale ? " (updating…)" : ""}`;
-			const staleCls = stale ? " safe-window-stale" : "";
-			return `<td class="safe-window-cell safe-window-ok${staleCls}" title="${escapeHtml(title)}">${label}</td>`;
-		},
-	);
+	return favoriteWindowCell(country, itemId, "safe-window-cell", (window, safe) => {
+		const start = safe ? window.safeStart : window.start;
+		const end = safe ? window.safeEnd : window.end;
+		return favoriteWindowLine(start, end, safe ? "safe-window-ok" : "regular-window",
+			`${safe ? "Safe" : "Next"} window ${fmtTime(start)} – ${fmtTime(end)}`);
+	});
 }
 
 function leaveByCell(country, itemId, itemName) {
-	return safeWindowStatusCell(
-		country,
-		itemId,
-		"leave-by-cell",
-		(sw, stale) => {
-			const wallTs = Math.floor(Date.now() / 1000);
-			const canAlarm =
-				sw.leaveEarliest != null &&
-				sw.leaveEarliest > wallTs &&
-				typeof alarmButtonHtml === "function";
-			const windowIndex =
-				typeof FAVORITE_NEXT_WINDOW_INDEX === "number"
-					? FAVORITE_NEXT_WINDOW_INDEX
-					: -1;
-			const armed =
-				canAlarm &&
-				typeof hasLeaveAlarm === "function" &&
-				hasLeaveAlarm("leave_safe", country, itemId, windowIndex);
-			const btn = canAlarm
-				? ` ${alarmButtonHtml({
-						armed,
-						attrs: {
-							"data-alarm-type": "leave_safe",
-							"data-window-index": windowIndex,
-							"data-leave-earliest": sw.leaveEarliest,
-							"data-country": country,
-							"data-item-id": itemId,
-							"data-item-name": itemName ?? "",
-						},
-					})}`
-				: "";
-			const label = `${fmtTimeShort(sw.leaveEarliest)}${btn}<span class="window-range-end"> – ${fmtTimeShort(sw.leaveLatest)}</span>`;
-			const title = `Leave ${fmtTime(sw.leaveEarliest)} – ${fmtTime(sw.leaveLatest)} · Safe ${fmtTime(sw.safeStart)} – ${fmtTime(sw.safeEnd)}${stale ? " (updating…)" : ""}`;
-			const staleCls = stale ? " safe-window-stale" : "";
-			return `<td class="leave-by-cell leave-by-ok${staleCls}" title="${escapeHtml(title)}">${label}</td>`;
-		},
-	);
+	return favoriteWindowCell(country, itemId, "leave-by-cell", (window, safe) => {
+		const wallTs = Math.floor(Date.now() / 1000);
+		const canAlarm = safe && window.leaveEarliest > wallTs && typeof alarmButtonHtml === "function";
+		const windowIndex = typeof FAVORITE_NEXT_WINDOW_INDEX === "number" ? FAVORITE_NEXT_WINDOW_INDEX : -1;
+		const btn = canAlarm ? ` ${alarmButtonHtml({
+			armed: typeof hasLeaveAlarm === "function" && hasLeaveAlarm("leave_safe", country, itemId, windowIndex),
+			attrs: {
+				"data-alarm-type": "leave_safe",
+				"data-window-index": windowIndex,
+				"data-leave-earliest": window.leaveEarliest,
+				"data-country": country,
+				"data-item-id": itemId,
+				"data-item-name": itemName ?? "",
+			},
+		})}` : "";
+		return favoriteWindowLine(window.leaveEarliest, window.leaveLatest,
+			safe ? "leave-by-ok" : "regular-leave-by",
+			`${safe ? "Safe leave" : "Leave"} ${fmtTime(window.leaveEarliest)} – ${fmtTime(window.leaveLatest)}`, btn);
+	});
 }
 
 function stockRowHtml(country, item) {
@@ -728,10 +722,14 @@ async function loadSafeWindows() {
 	state.safeWindowsStatus = "loading";
 	renderFavoritesOnly();
 
-	const items = favorites.map(({ country, item }) => ({
-		country,
-		itemId: item.id,
-	}));
+	const items = favorites.map(({ country, item }) => {
+		const settings = itemSettingsFor(country, item.id);
+		return {
+			country,
+			itemId: item.id,
+			settings: { ...settings, predictionHours: settings.predictionHours || 24 },
+		};
+	});
 
 	try {
 		const data = await fetchJsonWithBody("/api/safe-windows", {

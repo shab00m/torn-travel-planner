@@ -459,6 +459,12 @@ app.post("/api/safe-windows", async (req, res) => {
       }
       entry.restockAmount = amount;
     }
+    try {
+      entry.settings = parseSafeWindowOptions({}, raw.settings ?? {});
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
     parsed.push(entry);
   }
   try {
