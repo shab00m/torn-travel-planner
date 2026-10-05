@@ -467,8 +467,8 @@ function safeWindowStatusCell(country, itemId, cellClass, render) {
 	return `<td class="${cellClass} ${cls}${staleCls}" title="${escapeHtml((data.reason ?? "") + staleTitle)}">${text}</td>`;
 }
 
-function favoriteWindowLine(start, end, className, title, suffix = "") {
-	const label = `${fmtTimeShort(start)}${suffix}<span class="window-range-end"> – ${fmtTimeShort(end)}</span>`;
+function favoriteWindowLine(start, end, className, title, suffix = "", annotation = "") {
+	const label = `${fmtTimeShort(start)}${suffix}<span class="window-range-end"> – ${fmtTimeShort(end)}</span>${annotation}`;
 	return `<div class="favorite-window-line ${className}" title="${escapeHtml(title)}">${label}</div>`;
 }
 
@@ -489,7 +489,8 @@ function safeWindowCell(country, itemId) {
 		const start = safe ? window.safeStart : window.start;
 		const end = safe ? window.safeEnd : window.end;
 		return favoriteWindowLine(start, end, safe ? "safe-window-ok" : "regular-window",
-			`${safe ? "Safe" : "Next"} window ${fmtTime(start)} – ${fmtTime(end)}`);
+			`${safe ? "Safe" : "Next"} window ${fmtTime(start)} – ${fmtTime(end)}`,
+			"", safe ? "" : ` (${itemSettingsFor(country, itemId).stockoutTiming.toUpperCase()})`);
 	});
 }
 
