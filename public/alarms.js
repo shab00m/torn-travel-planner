@@ -1425,9 +1425,6 @@ function injectAlarmsPanel() {
       <span class="settings-group-title">Alarms</span>
       <div class="alarms-banner-slot"></div>
     </div>
-    <p class="alarms-banner">Click Test sound to enable and check audio for this tab.
-      <button type="button" class="settings-toggle alarms-test-sound">Test sound</button>
-    </p>
     <ul id="alarms-list" class="alarms-list"></ul>
   `;
   header.appendChild(panel);
@@ -1437,10 +1434,6 @@ function injectAlarmsPanel() {
   });
 
   panel.addEventListener("click", (e) => {
-    if (e.target.closest(".alarms-test-sound")) {
-      if (!alarmState.sound) playAlarmBeep(null, ALARM_BEEP_PATTERN_MS + 50);
-      return;
-    }
     const dismiss = e.target.closest(".alarms-dismiss-btn");
     if (dismiss) {
       dismissAlarmById(dismiss.dataset.alarmId);
@@ -1490,6 +1483,7 @@ function injectAlarmSettings() {
   group.innerHTML = `
     <span class="settings-group-title">Alarms</span>
     <div class="settings-group-controls alarm-settings-controls">
+      <button type="button" class="settings-toggle alarms-test-sound" title="Enable and check audio for this tab">Test sound</button>
       <label class="alarm-setting-field" title="Default minutes before leave-window start">
         <span>Leave offset</span>
         <input id="leave-alarm-offset" type="number" min="0" step="0.5" value="${prefs.leaveAlarmOffsetMin}" />
@@ -1527,11 +1521,18 @@ function injectAlarmSettings() {
         <input id="auto-alarm-end" type="time" value="${prefs.autoAlarmAllowedEnd}" />
       </label>
     </div>
+    <p class="alarms-banner">Click Test sound to enable and check audio for this tab.</p>
   `;
   settingsPanel.appendChild(group);
 
   if (alarmState.settingsBound) return;
   alarmState.settingsBound = true;
+
+  settingsPanel.addEventListener("click", (e) => {
+    if (e.target.closest(".alarms-test-sound") && !alarmState.sound) {
+      playAlarmBeep(null, ALARM_BEEP_PATTERN_MS + 50);
+    }
+  });
 
   settingsPanel.addEventListener("change", async (e) => {
     const t = e.target;
