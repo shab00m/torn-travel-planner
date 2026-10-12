@@ -8,7 +8,9 @@ const alarmState = {
   tickerId: null,
   travelPollId: null,
   settingsBound: false,
-  /** @type {{ ctx: AudioContext | null, timers: number[], alarmId: string | null } | null} */
+  /** @type {AudioContext | null} Shared context, unlocked by a user gesture. */
+  audioContext: null,
+  /** @type {{ master: GainNode, timers: number[], alarmId: string | null } | null} */
   sound: null,
   /** @type {Record<string, number>} last resolve attempt (unix sec) per restock alarm id */
   restockCheckAt: {},
@@ -214,19 +216,33 @@ async function ensureNotificationPermission() {
   }
 }
 
+function getAlarmAudioContext() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  if (!alarmState.audioContext || alarmState.audioContext.state === "closed") {
+    alarmState.audioContext = new Ctx();
+  }
+  return alarmState.audioContext;
+}
+
+function unlockAlarmAudio(event) {
+  if (event && !event.isTrusted) return;
+  try {
+    const ctx = getAlarmAudioContext();
+    if (ctx && ctx.state !== "running") void ctx.resume().catch(() => {});
+  } catch {
+    /* Audio may be unavailable; retry on the next interaction. */
+  }
+}
+
 function stopAlarmSound(alarmId = null) {
   const sound = alarmState.sound;
   if (!sound) return;
   if (alarmId != null && sound.alarmId != null && sound.alarmId !== alarmId) return;
   for (const id of sound.timers) clearTimeout(id);
   sound.timers = [];
-  if (sound.ctx) {
-    try {
-      sound.ctx.close();
-    } catch {
-      /* ignore */
-    }
-  }
+  // Silence scheduled notes without discarding the context's autoplay permission.
+  sound.master.disconnect();
   alarmState.sound = null;
 }
 
@@ -249,28 +265,28 @@ function scheduleBeepPattern(ctx, master, offsetSec) {
 }
 
 /** Repeat the beep pattern (2s pause between) for up to 1 minute or until dismissed. */
-function playAlarmBeep(alarmId) {
+function playAlarmBeep(alarmId, durationMs = ALARM_BEEP_MAX_MS) {
   stopAlarmSound();
   try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
+    const ctx = getAlarmAudioContext();
+    if (!ctx) return;
     const master = ctx.createGain();
     master.gain.value = 0.35;
     master.connect(ctx.destination);
 
-    const sound = { ctx, timers: [], alarmId };
+    const sound = { master, timers: [], alarmId };
     alarmState.sound = sound;
     const startedAt = Date.now();
     const cycleMs = ALARM_BEEP_PATTERN_MS + ALARM_BEEP_PAUSE_MS;
 
     const playCycle = () => {
       if (alarmState.sound !== sound) return;
-      if (Date.now() - startedAt >= ALARM_BEEP_MAX_MS) {
+      if (Date.now() - startedAt >= durationMs) {
         stopAlarmSound(alarmId);
         return;
       }
-      scheduleBeepPattern(ctx, master, 0);
+      // Do not queue notes against a frozen clock while autoplay is blocked.
+      if (ctx.state === "running") scheduleBeepPattern(ctx, master, 0);
       const timer = setTimeout(playCycle, cycleMs);
       sound.timers.push(timer);
     };
@@ -278,11 +294,19 @@ function playAlarmBeep(alarmId) {
     const maxTimer = setTimeout(() => {
       if (alarmState.sound !== sound) return;
       stopAlarmSound(alarmId);
-    }, ALARM_BEEP_MAX_MS);
+    }, durationMs);
     sound.timers.push(maxTimer);
-    playCycle();
+    if (ctx.state === "running") {
+      playCycle();
+    } else {
+      void ctx.resume().then(() => {
+        if (ctx.state === "running") playCycle();
+      }).catch(() => {
+        if (alarmState.sound === sound) stopAlarmSound(alarmId);
+      });
+    }
   } catch {
-    alarmState.sound = null;
+    stopAlarmSound(alarmId);
   }
 }
 
@@ -1401,6 +1425,9 @@ function injectAlarmsPanel() {
       <span class="settings-group-title">Alarms</span>
       <div class="alarms-banner-slot"></div>
     </div>
+    <p class="alarms-banner">Click Test sound to enable and check audio for this tab.
+      <button type="button" class="settings-toggle alarms-test-sound">Test sound</button>
+    </p>
     <ul id="alarms-list" class="alarms-list"></ul>
   `;
   header.appendChild(panel);
@@ -1410,6 +1437,10 @@ function injectAlarmsPanel() {
   });
 
   panel.addEventListener("click", (e) => {
+    if (e.target.closest(".alarms-test-sound")) {
+      if (!alarmState.sound) playAlarmBeep(null, ALARM_BEEP_PATTERN_MS + 50);
+      return;
+    }
     const dismiss = e.target.closest(".alarms-dismiss-btn");
     if (dismiss) {
       dismissAlarmById(dismiss.dataset.alarmId);
@@ -1617,6 +1648,10 @@ function alarmButtonHtml({ armed, attrs }) {
 }
 
 function initAlarms() {
+  // Capture the gesture before async alarm-setting/notification handlers run.
+  for (const type of ["click", "keydown", "touchend"]) {
+    document.addEventListener(type, unlockAlarmAudio, { capture: true, passive: true });
+  }
   alarmState.alarms = loadAlarms();
   injectAlarmsPanel();
   injectAlarmSettings();
