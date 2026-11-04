@@ -1070,6 +1070,7 @@ function buildTimeline(historicalPoints, predictionHours) {
     y: p.quantity,
     cost: p.cost,
     snapshot_ts: p.snapshot_ts,
+    source: p.source,
     predicted: false,
   }));
 
@@ -2019,14 +2020,18 @@ function chartMarkerTop(chart, chartArea, yAdjust) {
   return chart.canvas.offsetTop + chartArea.top + yAdjust;
 }
 
-function isSnapshotSelected(snapshotTs) {
-  return snapshotTs != null && snapshotInspector.selected.has(snapshotTs);
+function snapshotIdentity(snapshotTs, source = "YATA") {
+  return `${snapshotTs}:${source}`;
+}
+
+function isSnapshotSelected(snapshotTs, source = "YATA") {
+  return snapshotTs != null && snapshotInspector.selected.has(snapshotIdentity(snapshotTs, source));
 }
 
 function snapshotPointRadius(ctx, defaultRadius) {
   const raw = ctx.raw;
   if (snapshotInspector.enabled && raw?.snapshot_ts != null) {
-    if (isSnapshotSelected(raw.snapshot_ts)) return 7;
+    if (isSnapshotSelected(raw.snapshot_ts, raw.source)) return 7;
     return defaultRadius > 0 ? Math.max(defaultRadius, 4) : 4;
   }
   return defaultRadius;
@@ -2043,9 +2048,9 @@ function chartDatasets(timeline) {
       fill: true,
       pointRadius: (ctx) => snapshotPointRadius(ctx, defaultRadius),
       pointBackgroundColor: (ctx) =>
-        isSnapshotSelected(ctx.raw?.snapshot_ts) ? "#ff6b6b" : "#4f9cf9",
+        isSnapshotSelected(ctx.raw?.snapshot_ts, ctx.raw?.source) ? "#ff6b6b" : "#4f9cf9",
       pointBorderColor: (ctx) =>
-        isSnapshotSelected(ctx.raw?.snapshot_ts) ? "#ff6b6b" : "#4f9cf9",
+        isSnapshotSelected(ctx.raw?.snapshot_ts, ctx.raw?.source) ? "#ff6b6b" : "#4f9cf9",
       tension: 0,
       spanGaps: false,
     },
@@ -2579,13 +2584,14 @@ function clearSnapshotSelection() {
   refreshSnapshotHighlight();
 }
 
-function selectSnapshot(snapshotTs, { additive = false, toggle = false } = {}) {
+function selectSnapshot(snapshotTs, { additive = false, toggle = false, source = "YATA" } = {}) {
+  const key = snapshotIdentity(snapshotTs, source);
   if (snapshotTs == null) return;
   if (!additive) snapshotInspector.selected.clear();
-  if (toggle && snapshotInspector.selected.has(snapshotTs)) {
-    snapshotInspector.selected.delete(snapshotTs);
+  if (toggle && snapshotInspector.selected.has(key)) {
+    snapshotInspector.selected.delete(key);
   } else {
-    snapshotInspector.selected.add(snapshotTs);
+    snapshotInspector.selected.add(key);
   }
   refreshSnapshotHighlight();
 }
@@ -2594,8 +2600,8 @@ function selectSnapshotsInRange(minTs, maxTs, { additive = false } = {}) {
   const lo = Math.min(minTs, maxTs);
   const hi = Math.max(minTs, maxTs);
   if (!additive) snapshotInspector.selected.clear();
-  for (const p of state.chartPoints) {
-    if (p.snapshot_ts >= lo && p.snapshot_ts <= hi) snapshotInspector.selected.add(p.snapshot_ts);
+  for (const p of state.snapshotRows ?? []) {
+    if (p.snapshot_ts >= lo && p.snapshot_ts <= hi) snapshotInspector.selected.add(snapshotIdentity(p.snapshot_ts, p.source));
   }
   refreshSnapshotHighlight();
 }
@@ -2615,7 +2621,7 @@ function selectNearestSnapshot(pixelX, opts) {
     }
   }
   if (!nearest || minDist > 14) return;
-  selectSnapshot(nearest.snapshot_ts, opts);
+  selectSnapshot(nearest.snapshot_ts, { ...opts, source: nearest.source });
 }
 
 function updateChartSelectionBox(drag) {
@@ -2649,14 +2655,14 @@ function setInspectMode(enabled) {
   renderSnapshotInspector();
 }
 
-function snapshotByTs(snapshotTs) {
-  return state.chartPoints.find((p) => p.snapshot_ts === snapshotTs) ?? null;
+function snapshotByTs(key) {
+  return (state.snapshotRows ?? []).find((p) => snapshotIdentity(p.snapshot_ts, p.source) === key) ?? null;
 }
 
 function renderSnapshotInspector() {
   if (!el.snapshotInspectorBody) return;
 
-  const selected = [...snapshotInspector.selected].sort((a, b) => a - b);
+  const selected = [...snapshotInspector.selected].sort((a, b) => Number(a.split(":")[0]) - Number(b.split(":")[0]) || a.localeCompare(b));
   el.snapshotInspectorHint.textContent = snapshotInspector.enabled
     ? `${selected.length} selected · click a point or drag on the chart · Shift+click to toggle`
     : "";
@@ -2672,10 +2678,11 @@ function renderSnapshotInspector() {
   }
 
   el.snapshotInspectorBody.innerHTML = selected
-    .map((snapshotTs) => {
-      const row = snapshotByTs(snapshotTs);
+    .map((key) => {
+      const row = snapshotByTs(key);
       if (!row) return "";
-      return `<tr data-snapshot-ts="${snapshotTs}">
+      const snapshotTs = row.snapshot_ts;
+      return `<tr data-snapshot-key="${key}">
         <td>
           <input data-field="snapshot_ts" type="number" min="1" step="1" value="${snapshotTs}" title="${fmtTime(snapshotTs)}" />
           <span class="snapshot-ts-label">${fmtTime(snapshotTs)}</span>
@@ -2719,14 +2726,15 @@ function syncInspectAdminAccess() {
   if (state.item) renderCycleHistory();
 }
 
-async function saveSnapshotRow(originalTs) {
+async function saveSnapshotRow(originalKey) {
+  const [originalTs, source] = originalKey.split(":");
   const item = state.item;
   if (!item) return;
   if (!isAdminUser()) {
     alert("Admin access required.");
     return;
   }
-  const tr = el.snapshotInspectorBody.querySelector(`tr[data-snapshot-ts="${originalTs}"]`);
+  const tr = el.snapshotInspectorBody.querySelector(`tr[data-snapshot-key="${originalKey}"]`);
   if (!tr) return;
 
   const snapshot_ts = Number.parseInt(tr.querySelector('[data-field="snapshot_ts"]').value, 10);
@@ -2750,11 +2758,11 @@ async function saveSnapshotRow(originalTs) {
   btn.textContent = "…";
   try {
     const body = await fetchJsonWithBody(
-      `/api/snapshots/${item.country}/${item.itemId}/${originalTs}`,
+      `/api/snapshots/${item.country}/${item.itemId}/${originalTs}?source=${source}`,
       { method: "PATCH", body: { snapshot_ts, quantity, cost }, headers: adminApiHeaders() }
     );
-    snapshotInspector.selected.delete(originalTs);
-    snapshotInspector.selected.add(body.snapshot.snapshot_ts);
+    snapshotInspector.selected.delete(originalKey);
+    snapshotInspector.selected.add(snapshotIdentity(body.snapshot.snapshot_ts, body.snapshot.source));
     await drawChart();
   } catch (err) {
     alert(`Save failed: ${err.message}`);
@@ -2782,8 +2790,8 @@ async function deleteSnapshotRows(snapshotTsList) {
   el.snapshotDeleteAllBtn.disabled = true;
   try {
     if (snapshotTsList.length === 1) {
-      const ts = snapshotTsList[0];
-      const res = await fetch(`/api/snapshots/${item.country}/${item.itemId}/${ts}`, {
+      const [ts, source] = snapshotTsList[0].split(":");
+      const res = await fetch(`/api/snapshots/${item.country}/${item.itemId}/${ts}?source=${source}`, {
         method: "DELETE",
         headers: adminApiHeaders(),
       });
@@ -2791,7 +2799,10 @@ async function deleteSnapshotRows(snapshotTsList) {
     } else {
       await fetchJsonWithBody(`/api/snapshots/${item.country}/${item.itemId}/delete`, {
         method: "POST",
-        body: { snapshot_ts: snapshotTsList },
+        body: { snapshots: snapshotTsList.map((key) => {
+          const [ts, source] = key.split(":");
+          return { snapshot_ts: Number(ts), source };
+        }) },
         headers: adminApiHeaders(),
       });
     }
@@ -2854,11 +2865,11 @@ function initSnapshotInspector() {
   el.snapshotInspectorBody?.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-action]");
     if (!btn) return;
-    const tr = btn.closest("tr[data-snapshot-ts]");
+    const tr = btn.closest("tr[data-snapshot-key]");
     if (!tr) return;
-    const originalTs = Number.parseInt(tr.dataset.snapshotTs, 10);
-    if (btn.dataset.action === "save") saveSnapshotRow(originalTs);
-    else if (btn.dataset.action === "delete") deleteSnapshotRows([originalTs]);
+    const originalKey = tr.dataset.snapshotKey;
+    if (btn.dataset.action === "save") saveSnapshotRow(originalKey);
+    else if (btn.dataset.action === "delete") deleteSnapshotRows([originalKey]);
   });
 
   el.chartInspectLayer?.addEventListener("mousedown", (e) => {
@@ -2924,7 +2935,14 @@ async function drawChart() {
     loadEmptyForBoundsForItem(country, itemId).catch(() => {}),
   ]);
   if (window.EmptyForBounds) fillEmptyForBoundInputs();
-  state.chartPoints = history.points;
+  state.snapshotRows = history.points;
+  // Use one observation per instant for charts/predictions; retain both raw
+  // sources above so the inspector can edit or delete either independently.
+  const effective = new Map();
+  for (const point of history.points) {
+    if (!effective.has(point.snapshot_ts) || point.source === "API") effective.set(point.snapshot_ts, point);
+  }
+  state.chartPoints = [...effective.values()];
   rebuildLastZeroLookup();
   loadRestockData(restockData);
 
@@ -2932,7 +2950,7 @@ async function drawChart() {
   el.status.textContent = `${history.points.length} snapshots in range — updates when YATA polls (~every minute)`;
   renderCycleHistory();
 
-  const timeline = buildTimeline(history.points, state.predictionHours);
+  const timeline = buildTimeline(state.chartPoints, state.predictionHours);
   if (resetChartView) {
     state.chartScale = 1;
     state.chartOffsetSec = getMaxChartOffsetSec(timeline, 1);

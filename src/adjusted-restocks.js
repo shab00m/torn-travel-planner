@@ -163,7 +163,7 @@ export async function recomputeAdjustedRestockCycle(db, country, itemId, deplete
   // Snapshots from empty start through a bit after restock (for early A→B rate).
   const points = await many(
     db,
-    `SELECT snapshot_ts, quantity FROM snapshots
+    `SELECT snapshot_ts, quantity FROM effective_snapshots
      WHERE country = $1 AND item_id = $2
        AND snapshot_ts >= $3 AND snapshot_ts <= $4
      ORDER BY snapshot_ts ASC`,
@@ -251,7 +251,7 @@ export async function recomputeAdjustedRestocksForItem(
   const maxTs = Math.max(...cycles.map((c) => c.restocked_ts)) + 3600;
   const points = await many(
     db,
-    `SELECT snapshot_ts, quantity FROM snapshots
+    `SELECT snapshot_ts, quantity FROM effective_snapshots
      WHERE country = $1 AND item_id = $2
        AND snapshot_ts >= $3 AND snapshot_ts <= $4
      ORDER BY snapshot_ts ASC`,

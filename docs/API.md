@@ -324,10 +324,12 @@ The item detail page and favorites list pass options from browser state. A bare 
 
 ### `PUT /api/internal/snapshots`
 
-Insert observations collected outside YATA. Requires the server-only hardcoded key
-`INTERNAL_API_KEY` from `src/internal-auth.js` in the **`X-Internal-Key`** header.
+Insert observations collected outside YATA. Requires the server's
+`INTERNAL_API_KEY` environment variable in the **`X-Internal-Key`** header.
 This is separate from Torn API keys and admin login; query parameters and body
 fields cannot authorize a request. The key is never sent to the frontend.
+Set the variable in local `.env` or on the Railway web service. Missing or blank
+configuration disables ingestion with HTTP 503; there is no hardcoded fallback.
 
 **Headers:** `Content-Type: application/json`, `X-Internal-Key: <INTERNAL_API_KEY>`
 
@@ -354,18 +356,22 @@ fields cannot authorize a request. The key is never sent to the frontend.
 - `snapshot_ts` is positive Unix **seconds**, at most 60 seconds ahead of the server clock.
 - `quantity` and `cost` are non-negative safe integers (JSON numbers).
 - Omit `source`: the server always records `API` and rejects attempts to specify it.
-- Duplicate `(country, itemId, snapshot_ts)` identities within a batch are invalid.
+- Duplicate `(country, itemId, snapshot_ts, source)` identities within a batch are invalid (`source` is always `API` for this endpoint).
 
 **Response (200):** `{ "ok": true, "inserted": 1, "skipped": 0, "source": "API" }`
 
-An existing country/item/timestamp is skipped, regardless of its source. Repeating
+An existing country/item/timestamp/source is skipped. A YATA row and an API row
+at the same country/item/timestamp are stored independently. Repeating
 a request does not overwrite quantities, prices, or attribution. All observations
 and derived restock changes in a batch commit together. Historical observations
 rebuild the affected item's retained restock/depletion history in timestamp order.
 Concurrent YATA and API ingestion is serialized per country/item.
+For restock/rate calculations and charts, API takes precedence when both sources
+have an observation at the same instant. Raw history retains both rows.
 
 **Errors:** 401 for a missing/incorrect key; 400 for an invalid batch (no writes);
-500 if persistence fails (the transaction rolls back).
+500 if persistence fails (the transaction rolls back); 503 if `INTERNAL_API_KEY`
+is missing or blank.
 
 Imports appear in database-backed history and analysis, including the admin Data
 Inspector's Source column. `/api/stocks` continues to expose the latest in-memory
@@ -376,6 +382,9 @@ YATA response. The same 30-day snapshot retention applies to both sources.
 ## Snapshots (manual edit)
 
 Mutating snapshot routes require a whitelisted admin (`X-Api-Key` or `apiKey` in the body). The Data Inspector UI is only shown to admins.
+Single-row GET, PATCH and DELETE routes accept `?source=API` or `?source=YATA`
+(default `YATA`). Source is part of row identity; operations only target that
+source. The inspector supplies the selected row's source automatically.
 
 ### `GET /api/snapshots/:country/:itemId/:snapshotTs`
 
@@ -406,7 +415,9 @@ Admin only.
 
 Admin only. Bulk delete.
 
-**Body:** `{ "snapshot_ts": [1783961506, 1783960900] }`
+**Body:** `{ "snapshots": [{ "snapshot_ts": 1783961506, "source": "API" }, { "snapshot_ts": 1783960900, "source": "YATA" }] }`
+
+The legacy `{ "snapshot_ts": [1783961506, 1783960900] }` form only deletes YATA rows.
 
 **Response:** `{ ok, deleted, restocks, rates }`
 

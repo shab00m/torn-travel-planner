@@ -50,17 +50,23 @@ test("snapshot migration and ingestion against PostgreSQL", {
       await db.initDb(); // Already-applied migrations are safe to rerun.
     });
 
-    await t.test("YATA and API ingestion retain distinct sources and skip existing identities", async () => {
+    await t.test("source is part of identity and API wins timestamp ties only in derived views", async () => {
       assert.equal(await db.saveSnapshot(yata(60, 0)), 1);
+      assert.deepEqual(await db.saveApiSnapshots([record(60, 0)]), { inserted: 1, skipped: 0 });
       assert.deepEqual(await db.saveApiSnapshots([record(60, 999)]), { inserted: 0, skipped: 1 });
-      assert.equal((await db.getSnapshot("mex", itemId, ts + 60)).source, "YATA");
-      assert.equal((await db.getSnapshot("mex", itemId, ts + 60)).quantity, 0);
+      assert.equal((await db.getSnapshot("mex", itemId, ts + 60, "YATA")).quantity, 0);
+      assert.equal((await db.getSnapshot("mex", itemId, ts + 60, "API")).quantity, 0);
       assert.deepEqual(await db.saveApiSnapshots([record(90, 50)]), { inserted: 1, skipped: 0 });
-      assert.equal((await db.getSnapshot("mex", itemId, ts + 90)).source, "API");
-      assert.equal(await db.saveSnapshot(yata(90, 0)), 0);
-      assert.equal((await db.getSnapshot("mex", itemId, ts + 90)).quantity, 50);
+      assert.equal(await db.saveSnapshot(yata(90, 0)), 1);
+      assert.equal(await db.saveSnapshot(yata(90, 888)), 0);
+      assert.equal((await db.getSnapshot("mex", itemId, ts + 90, "YATA")).quantity, 0);
+      assert.equal((await db.getSnapshot("mex", itemId, ts + 90, "API")).quantity, 50);
+      const effective = await db.getHistory("mex", itemId, 0, { effective: true });
+      assert.equal(effective.filter((r) => r.snapshot_ts === ts + 90).length, 1);
+      assert.equal(effective.at(-1).quantity, 50);
+      assert.equal(effective.at(-1).source, "API");
       assert.equal((await pool.query("SELECT * FROM restocks")).rowCount, 1,
-        "an ignored conflicting payload must not create a depletion event");
+        "a conflicting YATA observation must not manufacture a depletion event");
     });
 
     await t.test("historical API imports rebuild depletion/refill events chronologically", async () => {
@@ -86,7 +92,7 @@ test("snapshot migration and ingestion against PostgreSQL", {
       const { rows } = await pool.query("SELECT depleted_ts, restocked_ts FROM restocks ORDER BY depleted_ts DESC LIMIT 1");
       assert.deepEqual(rows, [{ depleted_ts: ts + 300, restocked_ts: ts + 330 }]);
       const history = await db.getHistory("mex", itemId, 0);
-      assert.equal(history.length, 9);
+      assert.equal(history.length, 11);
       assert.equal(history.at(-1).source, "API");
       assert.ok(history.every((r) => Number.isSafeInteger(r.snapshot_ts)));
     });
@@ -101,10 +107,25 @@ test("snapshot migration and ingestion against PostgreSQL", {
     });
 
     await t.test("admin timestamp edits preserve the original source", async () => {
-      const updated = await db.updateSnapshot("mex", itemId, ts + 330, { snapshot_ts: ts + 331 });
+      const updated = await db.updateSnapshot("mex", itemId, ts + 330, { snapshot_ts: ts + 331 }, "API");
       assert.equal(updated.source, "API");
       assert.equal(await db.getSnapshot("mex", itemId, ts + 330), null);
-      assert.equal((await db.getSnapshot("mex", itemId, ts + 331)).source, "API");
+      assert.equal((await db.getSnapshot("mex", itemId, ts + 331, "API")).source, "API");
+    });
+
+    await t.test("source-specific edits and deletions cannot affect the other source", async () => {
+      await db.saveSnapshot(yata(600, 10));
+      await db.saveApiSnapshots([record(600, 20)]);
+      await db.updateSnapshot("mex", itemId, ts + 600, { quantity: 30 }, "API");
+      assert.equal((await db.getSnapshot("mex", itemId, ts + 600, "YATA")).quantity, 10);
+      assert.equal((await db.getSnapshot("mex", itemId, ts + 600, "API")).quantity, 30);
+      // Moving an API observation onto an existing YATA timestamp is also valid.
+      await db.updateSnapshot("mex", itemId, ts + 600, { snapshot_ts: ts }, "API");
+      assert.equal((await db.getSnapshot("mex", itemId, ts, "YATA")).quantity, 100);
+      assert.equal((await db.getSnapshot("mex", itemId, ts, "API")).quantity, 30);
+      await db.deleteSnapshot("mex", itemId, ts, "API");
+      assert.ok(await db.getSnapshot("mex", itemId, ts, "YATA"));
+      assert.equal(await db.deleteSnapshots("mex", itemId, [{ snapshot_ts: ts + 600, source: "YATA" }]), 1);
     });
 
     await t.test("retention purges old observations from either source", async () => {
@@ -112,7 +133,7 @@ test("snapshot migration and ingestion against PostgreSQL", {
       await pool.query("INSERT INTO snapshots VALUES ('mex', $1, $2, 1, 1, 'YATA'), ('mex', $1, $3, 1, 1, 'API')", [itemId, oldTs, oldTs + 1]);
       const { purgeOldSnapshots } = await import("../src/snapshot-retention.js");
       assert.equal((await purgeOldSnapshots()).deleted, 2);
-      assert.equal((await db.getHistory("mex", itemId, 0)).length, 9);
+      assert.equal((await db.getHistory("mex", itemId, 0)).length, 11);
     });
   } finally {
     await closePool();

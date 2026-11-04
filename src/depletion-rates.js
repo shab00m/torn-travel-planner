@@ -137,7 +137,7 @@ export async function fillRateWindowsForItem(db, country, itemId, options = {}) 
   const events = await many(db, eventSql, eventParams);
   const snapshots = await many(
     db,
-    `SELECT snapshot_ts, quantity FROM snapshots
+    `SELECT snapshot_ts, quantity FROM effective_snapshots
      WHERE country = $1 AND item_id = $2
      ORDER BY snapshot_ts ASC`,
     [country, itemId]
@@ -164,7 +164,7 @@ export async function finalizeRateWindowOnDepletion(client, country, itemId, dep
   if (startQty == null || startQty <= 0) {
     const start = await one(
       client,
-      `SELECT quantity FROM snapshots
+      `SELECT quantity FROM effective_snapshots
        WHERE country = $1 AND item_id = $2 AND snapshot_ts = $3`,
       [country, itemId, prev.restocked_ts]
     );
@@ -174,7 +174,7 @@ export async function finalizeRateWindowOnDepletion(client, country, itemId, dep
 
   const lastPositive = await one(
     client,
-    `SELECT snapshot_ts, quantity FROM snapshots
+    `SELECT snapshot_ts, quantity FROM effective_snapshots
      WHERE country = $1 AND item_id = $2 AND snapshot_ts < $3 AND quantity > 0
      ORDER BY snapshot_ts DESC
      LIMIT 1`,
@@ -221,7 +221,7 @@ export async function getDepletionRates(country, itemId, limit) {
     ),
     one(
       pool,
-      `SELECT snapshot_ts, quantity FROM snapshots
+      `SELECT snapshot_ts, quantity FROM effective_snapshots
        WHERE country = $1 AND item_id = $2
        ORDER BY snapshot_ts DESC
        LIMIT 1`,

@@ -504,7 +504,7 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
   const [restocks, rates, chartPoints, rateTod] = await Promise.all([
     getRestocks(country, itemId),
     getDepletionRates(country, itemId),
-    getHistory(country, itemId, 0),
+    getHistory(country, itemId, 0, { effective: true }),
     historicalRatePrediction && maxAgeDays == null
       ? getDepletionRateTod(country, itemId)
       : Promise.resolve({ hours: null, updatedAt: null }),

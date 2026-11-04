@@ -27,6 +27,7 @@ function buyPriceMedian(values, minSamples = 5) {
  * that spike the stepped line and collapse the y-scale.
  */
 function buyPriceChartDataFromPoints(points) {
+  points = [...new Map(points.map((p) => [p.snapshot_ts, p])).values()];
   const positive = points.filter((p) => Number.isFinite(p.cost) && p.cost > 0);
   const median = buyPriceMedian(positive.map((p) => p.cost));
   const usable =

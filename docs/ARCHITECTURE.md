@@ -49,7 +49,7 @@ Do not point the web service at `railway.cron.toml` or `railway.market-cron.toml
    A 15-second deadline covers both the fetch and response body. It aborts the request and releases the poller even if the network operation fails to settle after abort; late responses are discarded.
 2. The latest payload is kept in memory and served as `GET /api/stocks`.
 3. Persistence is queued separately so a slow `saveSnapshot` cannot skip the next fetch.
-4. `saveSnapshot` inserts new `(country, item_id, snapshot_ts)` rows (deduped on YATA’s per-country update time) and opens/closes `restocks` rows when quantity hits 0 or returns.
+4. `saveSnapshot` inserts new `(country, item_id, snapshot_ts, source)` rows (deduped per source on the observation timestamp) and opens/closes `restocks` rows when quantity hits 0 or returns.
 
 ### Item page
 
@@ -74,7 +74,8 @@ Timestamps are Unix seconds (`BIGINT`). `pg` parses `INT8` as JS numbers.
 | Table | Role |
 | --- | --- |
 | `items` | Catalogue (`item_id`, `name`, `item_type`) |
-| `snapshots` | YATA/API stock observations; PK `(country, item_id, snapshot_ts)`; `source` is `YATA` or `API` |
+| `snapshots` | YATA/API stock observations; PK `(country, item_id, snapshot_ts, source)` |
+| `effective_snapshots` (view) | One observation per country/item/timestamp, preferring `API` over `YATA` for derived calculations |
 | `restocks` | Depletion/refill cycles; PK `(country, item_id, depleted_ts)` |
 | `market_prices` | Cached Torn average item-market price |
 | `restock_amounts` | Admin-set typical restock quantity |
@@ -89,12 +90,19 @@ timestamps or dropping indexes, and attributes existing rows to `YATA`. Current
 queries, frontend data fields, admin tools, retention, and SQLite import targets
 use `snapshot_ts`; legacy SQLite source files still use `yata_ts`.
 
-`PUT /api/internal/snapshots` accepts up to 100 observations using the hardcoded
-server-only `X-Internal-Key` in `src/internal-auth.js`. Source is assigned by the
+`015_snapshot_identity_source.sql` extends the primary key with `source`, allowing
+both observations at the same timestamp. The `effective_snapshots` view prefers
+API for timestamp ties, so derived restock and rate calculations remain deterministic
+without duplicate-time transitions. Raw history and source-specific admin tools
+retain access to both records; stock/price charts use the same precedence.
+
+`PUT /api/internal/snapshots` accepts up to 100 observations using the server's
+`INTERNAL_API_KEY` environment variable via `X-Internal-Key`. Missing or blank
+configuration disables ingestion (503); no hardcoded key is used. Source is assigned by the
 server. Both ingestion paths use a shared transactional writer with ordered
 per-item advisory locks. New live observations incrementally update restocks;
 historical or multi-observation inserts replay the affected retained timeline.
-Conflicting identities are skipped without changing the original source or data.
+Conflicting identities within the same source are skipped without changing data.
 
 The column rename is incompatible with old running code. Coordinate the web and
 cron rollout so old processes cannot query the database after migration, especially
@@ -172,6 +180,7 @@ Scripts that need DB/API config import `scripts/load-local-env.mjs` first. It lo
 | `DATABASE_URL` | Web, both crons, all DB scripts | Local Docker: `postgres://travel:travel@localhost:5432/travel_planner`. From a laptop against Railway, use `DATABASE_PUBLIC_URL` (internal `*.railway.internal` hosts do not resolve off-platform). |
 | `DATABASE_SSL` | Optional | `true` forces SSL. Also auto-enabled for `proxy.rlwy.net` / `railway.app` / `sslmode=require`. |
 | `TORN_API_KEY` | Market cron; item-type populate | Server key. Not used per browser client for market refresh. |
+| `INTERNAL_API_KEY` | Web, when internal ingestion is enabled | Shared secret sent as `X-Internal-Key`. Missing/blank disables ingestion; never exposed to browsers. |
 | `PORT` | Web | Default `3000` locally; Railway injects this. |
 | `MARKET_CACHE_TTL_SEC` | Market | Default `300`. |
 | `MARKET_CALLS_PER_MINUTE` | Market | Default `50`. |

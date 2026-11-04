@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
 import { createInternalSnapshotsRouter } from "../src/internal-snapshots.js";
-import { INTERNAL_API_KEY } from "../src/internal-auth.js";
+const INTERNAL_API_KEY = "test-only-internal-key";
 
 const record = () => ({
   country: "mex", itemId: 260, name: "Dahlia", snapshot_ts: 1_700_000_000,
@@ -10,6 +10,12 @@ const record = () => ({
 });
 
 async function fixture(t, save = async () => ({ inserted: 1, skipped: 0 })) {
+  const previous = process.env.INTERNAL_API_KEY;
+  process.env.INTERNAL_API_KEY = INTERNAL_API_KEY;
+  t.after(() => {
+    if (previous === undefined) delete process.env.INTERNAL_API_KEY;
+    else process.env.INTERNAL_API_KEY = previous;
+  });
   const app = express();
   app.use(express.json());
   app.use("/api/internal/snapshots", createInternalSnapshotsRouter(save));
@@ -77,4 +83,27 @@ test("database failures return a generic error without exposing internal details
   const result = await put({ snapshots: [record()] });
   assert.equal(result.status, 500);
   assert.deepEqual(result.body, { error: "Could not save snapshots" });
+});
+
+
+test("unconfigured or blank environment keys disable ingestion without allowing empty credentials", async (t) => {
+  let writes = 0;
+  const put = await fixture(t, async () => { writes++; });
+  for (const key of [undefined, "", "   "]) {
+    if (key === undefined) delete process.env.INTERNAL_API_KEY;
+    else process.env.INTERNAL_API_KEY = key;
+    for (const supplied of [null, "", INTERNAL_API_KEY]) {
+      const result = await put({ snapshots: [record()] }, supplied);
+      assert.equal(result.status, 503);
+      assert.deepEqual(result.body, { error: "Internal API is not configured" });
+    }
+  }
+  assert.equal(writes, 0);
+});
+
+test("authentication uses the current environment key without a hardcoded fallback", async (t) => {
+  const put = await fixture(t);
+  process.env.INTERNAL_API_KEY = "rotated-test-key";
+  assert.equal((await put({ snapshots: [record()] }, INTERNAL_API_KEY)).status, 401);
+  assert.equal((await put({ snapshots: [record()] }, "rotated-test-key")).status, 200);
 });

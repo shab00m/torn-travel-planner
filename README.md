@@ -35,6 +35,10 @@ Then open http://localhost:3000.
 
 `DATABASE_URL` is required. Schema is applied by `npm run migrate` (also runs on server startup).
 
+To enable [internal snapshot ingestion](docs/API.md#internal-snapshot-ingestion),
+set `INTERNAL_API_KEY` to a secret in `.env` or the web service's Railway variables.
+Clients send it in `X-Internal-Key`. Without it, ingestion returns 503.
+
 `npm run backfill` replays stored snapshots through the restock detection logic. Closed restocks older than the oldest remaining snapshot per item are preserved.
 
 `npm run backfill-depletion-rates` fills closed restock cycles that are still missing persisted depletion-rate columns. This is not run on server startup.

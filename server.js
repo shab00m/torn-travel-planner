@@ -559,6 +559,15 @@ function parseSnapshotTs(req, res) {
   return snapshotTs;
 }
 
+function parseSnapshotSource(req, res) {
+  const source = req.query.source ?? "YATA";
+  if (source !== "YATA" && source !== "API") {
+    res.status(400).json({ error: "source must be YATA or API" });
+    return null;
+  }
+  return source;
+}
+
 async function rerunRestocks(country, itemId) {
   await backfillRestocksForItem(country, itemId);
   return loadRestockViews(country, itemId);
@@ -567,13 +576,15 @@ async function rerunRestocks(country, itemId) {
 app.post("/api/snapshots/:country/:itemId/delete", requireAdmin, async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
-  const list = req.body?.snapshot_ts;
+  const list = req.body?.snapshots ?? req.body?.snapshot_ts;
   if (!Array.isArray(list) || !list.length) {
     res.status(400).json({ error: "snapshot_ts array is required" });
     return;
   }
-  if (!list.every((ts) => Number.isInteger(ts) && ts > 0)) {
-    res.status(400).json({ error: "snapshot_ts values must be positive integers" });
+  if (!list.every((row) => typeof row === "number"
+    ? Number.isSafeInteger(row) && row > 0
+    : row && Number.isSafeInteger(row.snapshot_ts) && row.snapshot_ts > 0 && ["YATA", "API"].includes(row.source))) {
+    res.status(400).json({ error: "snapshots require a positive snapshot_ts and source YATA or API" });
     return;
   }
   try {
@@ -590,7 +601,9 @@ app.get("/api/snapshots/:country/:itemId/:snapshotTs", async (req, res) => {
   if (!params) return;
   const snapshotTs = parseSnapshotTs(req, res);
   if (snapshotTs == null) return;
-  const row = await getSnapshot(params.country, params.id, snapshotTs);
+  const source = parseSnapshotSource(req, res);
+  if (!source) return;
+  const row = await getSnapshot(params.country, params.id, snapshotTs, source);
   if (!row) {
     res.status(404).json({ error: "Snapshot not found" });
     return;
@@ -603,6 +616,8 @@ app.patch("/api/snapshots/:country/:itemId/:snapshotTs", requireAdmin, async (re
   if (!params) return;
   const snapshotTs = parseSnapshotTs(req, res);
   if (snapshotTs == null) return;
+  const source = parseSnapshotSource(req, res);
+  if (!source) return;
   const body = req.body ?? {};
   if (body.quantity != null && !Number.isInteger(body.quantity)) {
     res.status(400).json({ error: "quantity must be an integer" });
@@ -617,7 +632,7 @@ app.patch("/api/snapshots/:country/:itemId/:snapshotTs", requireAdmin, async (re
     return;
   }
   try {
-    const updated = await updateSnapshot(params.country, params.id, snapshotTs, body);
+    const updated = await updateSnapshot(params.country, params.id, snapshotTs, body, source);
     const { restocks, rates } = await rerunRestocks(params.country, params.id);
     res.json({ ok: true, snapshot: updated, restocks, rates });
   } catch (err) {
@@ -630,8 +645,10 @@ app.delete("/api/snapshots/:country/:itemId/:snapshotTs", requireAdmin, async (r
   if (!params) return;
   const snapshotTs = parseSnapshotTs(req, res);
   if (snapshotTs == null) return;
+  const source = parseSnapshotSource(req, res);
+  if (!source) return;
   try {
-    await deleteSnapshot(params.country, params.id, snapshotTs);
+    await deleteSnapshot(params.country, params.id, snapshotTs, source);
     const { restocks, rates } = await rerunRestocks(params.country, params.id);
     res.json({ ok: true, restocks, rates });
   } catch (err) {
