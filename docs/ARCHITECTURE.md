@@ -104,6 +104,15 @@ per-item advisory locks. New live observations incrementally update restocks;
 historical or multi-observation inserts replay the affected retained timeline.
 Conflicting identities within the same source are skipped without changing data.
 
+The ingest predecessor lookup reads `snapshots` directly with
+`ORDER BY snapshot_ts DESC, source ASC LIMIT 1`, preserving API precedence while
+using an indexed lookup instead of repeatedly sorting the effective-history view.
+Newer observations and same-time peer sources use separate indexed existence
+checks. Historical imports replay from two cycles before the earliest inserted
+observation, retaining older cycles; explicit maintenance backfills still replay
+the full retained history. Ingest errors carry the failed stage and per-item context
+to request-ID-correlated endpoint diagnostics.
+
 The column rename is incompatible with old running code. Coordinate the web and
 cron rollout so old processes cannot query the database after migration, especially
 the daily cron's retention query. No Railway project or service identities change.

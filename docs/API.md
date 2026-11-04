@@ -373,6 +373,34 @@ have an observation at the same instant. Raw history retains both rows.
 500 if persistence fails (the transaction rolls back); 503 if `INTERNAL_API_KEY`
 is missing or blank.
 
+Authenticated requests include an `X-Request-Id` response header. Persistence
+errors also return the request ID and diagnostic details, for example:
+
+```json
+{
+  "ok": false,
+  "error": "Could not save snapshots",
+  "requestId": "matching-request-id-in-server-logs",
+  "details": {
+    "code": "57014",
+    "message": "canceling statement due to statement timeout",
+    "stage": "load_previous_snapshots",
+    "retryable": true,
+    "recordCount": 100,
+    "itemCount": 1,
+    "durationMs": 60000
+  }
+}
+```
+
+Stages identify connection, lock acquisition, item metadata, snapshot insertion,
+previous-observation lookup, restock replay/tracking, or commit. Replay errors
+also identify the country/item/timestamp being processed. Configured secrets and
+database URLs are redacted; headers, request credentials, SQL parameters and stack
+traces are not returned. Clients should parse JSON bodies even on non-2xx responses
+to display these diagnostics. Server logs record start, completion/failure and duration
+using the same request ID.
+
 Imports appear in database-backed history and analysis, including the admin Data
 Inspector's Source column. `/api/stocks` continues to expose the latest in-memory
 YATA response. The same 30-day snapshot retention applies to both sources.

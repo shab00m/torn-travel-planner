@@ -345,16 +345,27 @@ async function minSnapshotTs(client, country, itemId) {
  * rebuild only replaces cycles that can still be derived from snapshots
  * (plus any open/incomplete cycles).
  * @param {import("pg").PoolClient} client
- * @param {{ country?: string, itemId?: number }} [scope]
+ * @param {{ country?: string, itemId?: number, sinceTs?: number }} [scope]
  *   When set, only that country/item is rebuilt.
  */
 async function replayRestocks(client, scope = {}) {
   const scoped = scope.country != null && scope.itemId != null;
 
   if (scoped) {
-    const minTs = await minSnapshotTs(client, scope.country, scope.itemId);
+    let minTs = await minSnapshotTs(client, scope.country, scope.itemId);
     if (minTs == null) {
       return { opened: 0, closed: 0 };
+    }
+
+    if (scope.sinceTs != null) {
+      // An import can affect the cycle containing it and the preceding rate
+      // window. Replay from two cycles back, preserving older derived history.
+      const anchor = await one(client,
+        `SELECT depleted_ts FROM restocks
+         WHERE country = $1 AND item_id = $2 AND depleted_ts < $3
+         ORDER BY depleted_ts DESC OFFSET 1 LIMIT 1`,
+        [scope.country, scope.itemId, scope.sinceTs]);
+      if (anchor) minTs = Math.max(minTs, anchor.depleted_ts);
     }
 
     const ignoredRows = await many(
@@ -382,8 +393,12 @@ async function replayRestocks(client, scope = {}) {
       `SELECT country, item_id, snapshot_ts, quantity
        FROM effective_snapshots
        WHERE country = $1 AND item_id = $2
+         AND snapshot_ts >= COALESCE((
+           SELECT MAX(snapshot_ts) FROM snapshots
+           WHERE country = $1 AND item_id = $2 AND snapshot_ts < $3
+         ), $3)
        ORDER BY snapshot_ts ASC`,
-      [scope.country, scope.itemId]
+      [scope.country, scope.itemId, minTs]
     );
 
     for (const row of snapshots) {
@@ -588,10 +603,13 @@ export async function saveApiSnapshots(records) {
 
 async function saveSnapshotRecords(records, source) {
   if (!records.length) return 0;
+  let stage = "connect";
+  let item = null;
   return withTransaction(async (client) => {
     // Both ingest paths take the same locks, in the same order. In particular,
     // a historical import must not replay restocks while a live write changes them.
     const keys = [...new Set(records.map((r) => `snapshots:${r.country}:${r.itemId}`))].sort();
+    stage = "acquire_snapshot_locks";
     await client.query(
       `SELECT pg_advisory_xact_lock(hashtextextended(key, 0))
        FROM (SELECT unnest($1::text[]) AS key ORDER BY key) AS ordered_keys`,
@@ -601,12 +619,14 @@ async function saveSnapshotRecords(records, source) {
     // Item metadata is shared across countries; lock/update it in item-id order.
     const names = [...new Map(records.map((r) => [r.itemId, r.name]))]
       .sort((a, b) => a[0] - b[0]);
+    stage = "upsert_items";
     await client.query(
       `INSERT INTO items (item_id, name)
        SELECT * FROM UNNEST($1::int[], $2::text[])
        ON CONFLICT (item_id) DO UPDATE SET name = EXCLUDED.name`,
       [names.map(([id]) => id), names.map(([, name]) => name)]
     );
+    stage = "insert_snapshots";
     const { rows: inserted } = await client.query(
       `INSERT INTO snapshots (country, item_id, snapshot_ts, quantity, cost, source)
        SELECT t.*, $6::text
@@ -619,6 +639,7 @@ async function saveSnapshotRecords(records, source) {
     );
     if (!inserted.length) return 0;
 
+    stage = "load_previous_snapshots";
     const { rows: previous } = await client.query(
       `WITH req AS (
          SELECT * FROM UNNEST($1::text[], $2::int[], $3::bigint[])
@@ -628,13 +649,15 @@ async function saveSnapshotRecords(records, source) {
               p.snapshot_ts AS prev_ts, p.quantity AS prev_quantity,
               EXISTS (SELECT 1 FROM snapshots n
                       WHERE n.country = req.country AND n.item_id = req.item_id
-                        AND (n.snapshot_ts > req.snapshot_ts OR
-                             (n.snapshot_ts = req.snapshot_ts AND n.source <> $4))) AS has_newer
+                        AND n.snapshot_ts > req.snapshot_ts)
+              OR EXISTS (SELECT 1 FROM snapshots n
+                         WHERE n.country = req.country AND n.item_id = req.item_id
+                           AND n.snapshot_ts = req.snapshot_ts AND n.source <> $4) AS has_newer
        FROM req
        LEFT JOIN LATERAL (
-         SELECT snapshot_ts, quantity FROM effective_snapshots
+         SELECT snapshot_ts, quantity FROM snapshots
          WHERE country = req.country AND item_id = req.item_id AND snapshot_ts < req.snapshot_ts
-         ORDER BY snapshot_ts DESC LIMIT 1
+         ORDER BY snapshot_ts DESC, source ASC LIMIT 1
        ) p ON true`,
       [inserted.map((r) => r.country), inserted.map((r) => r.item_id),
        inserted.map((r) => r.snapshot_ts), source]
@@ -648,15 +671,22 @@ async function saveSnapshotRecords(records, source) {
       const itemKey = `${row.country}:${row.item_id}`;
       if (replayed.has(itemKey)) continue;
       const prev = previousByKey.get(`${itemKey}:${row.snapshot_ts}`);
+      item = { country: row.country, itemId: row.item_id, snapshot_ts: row.snapshot_ts };
       if (prev.has_newer) {
-        await replayRestocks(client, { country: row.country, itemId: row.item_id });
+        stage = "replay_restocks";
+        await replayRestocks(client, { country: row.country, itemId: row.item_id, sinceTs: row.snapshot_ts });
         replayed.add(itemKey);
       } else {
+        stage = "track_restock";
         await trackRestock(client, row.country, row.item_id, row.snapshot_ts, row.quantity,
           prev.prev_ts == null ? null : { snapshot_ts: prev.prev_ts, quantity: prev.prev_quantity });
       }
     }
+    stage = "commit";
     return inserted.length;
+  }).catch((err) => {
+    err.snapshotContext = { stage, ...item };
+    throw err;
   });
 }
 

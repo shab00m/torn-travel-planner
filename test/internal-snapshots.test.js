@@ -77,12 +77,35 @@ test("invalid batches are rejected in full, including source spoofing and millis
   assert.equal(writes, 0);
 });
 
-test("database failures return a generic error without exposing internal details", async (t) => {
+test("database failures include a request ID and safe diagnostic details", async (t) => {
   t.mock.method(console, "error", () => {});
   const put = await fixture(t, async () => { throw new Error("database details"); });
   const result = await put({ snapshots: [record()] });
   assert.equal(result.status, 500);
-  assert.deepEqual(result.body, { error: "Could not save snapshots" });
+  assert.equal(result.body.error, "Could not save snapshots");
+  assert.equal(result.body.ok, false);
+  assert.match(result.body.requestId, /^[a-f0-9-]{36}$/);
+  assert.equal(result.body.details.message, "database details");
+  assert.equal(result.body.details.code, "INTERNAL_ERROR");
+  assert.equal(result.body.details.stage, "save_snapshots");
+  assert.equal(result.body.details.recordCount, 1);
+  assert.equal(result.body.details.retryable, false);
+});
+
+test("timeout diagnostics report the failed stage and redact configured secrets", async (t) => {
+  t.mock.method(console, "error", () => {});
+  const put = await fixture(t, async () => {
+    throw Object.assign(new Error(`statement timeout ${INTERNAL_API_KEY} postgres://user:password@db/app`), {
+      code: "57014", snapshotContext: { stage: "load_previous_snapshots" },
+    });
+  });
+  const result = await put({ snapshots: [record()] });
+  assert.equal(result.status, 500);
+  assert.equal(result.body.details.code, "57014");
+  assert.equal(result.body.details.stage, "load_previous_snapshots");
+  assert.equal(result.body.details.retryable, true);
+  assert.ok(!JSON.stringify(result.body).includes(INTERNAL_API_KEY));
+  assert.ok(!JSON.stringify(result.body).includes("password"));
 });
 
 

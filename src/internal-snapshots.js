@@ -1,9 +1,26 @@
 import express from "express";
+import { randomUUID } from "node:crypto";
 import { COUNTRIES } from "./countries.js";
 import { saveApiSnapshots } from "./db.js";
 import { requireInternalKey } from "./internal-auth.js";
 
 const MAX_BATCH_SIZE = 100;
+
+function errorDetails(err) {
+  let message = String(err.message || "Unknown persistence error");
+  for (const name of ["INTERNAL_API_KEY", "TORN_API_KEY", "DATABASE_URL"]) {
+    const secret = process.env[name];
+    if (secret) message = message.replaceAll(secret, "[redacted]");
+  }
+  message = message.replace(/postgres(?:ql)?:\/\/\S+/gi, "[database URL]").slice(0, 500);
+  const code = typeof err.code === "string" && /^[A-Z0-9_]{2,40}$/.test(err.code) ? err.code : "INTERNAL_ERROR";
+  return {
+    code, message,
+    stage: err.snapshotContext?.stage ?? "save_snapshots",
+    ...err.snapshotContext,
+    retryable: ["57014", "55P03", "40P01", "40001", "53300", "08006", "ECONNRESET", "ETIMEDOUT"].includes(code),
+  };
+}
 
 function validateBatch(body) {
   const records = body?.snapshots;
@@ -39,6 +56,9 @@ function validateBatch(body) {
 export function createInternalSnapshotsRouter(save = saveApiSnapshots) {
   const router = express.Router();
   router.put("/", requireInternalKey, async (req, res) => {
+    const requestId = randomUUID();
+    const started = performance.now();
+    res.set("X-Request-Id", requestId);
     let records;
     try {
       records = validateBatch(req.body);
@@ -46,12 +66,21 @@ export function createInternalSnapshotsRouter(save = saveApiSnapshots) {
       res.status(400).json({ error: err.message });
       return;
     }
+    const context = {
+      requestId, recordCount: records.length,
+      itemCount: new Set(records.map((r) => `${r.country}:${r.itemId}`)).size,
+    };
+    console.log("[internal-snapshots] write started:", JSON.stringify(context));
     try {
       const result = await save(records);
+      console.log("[internal-snapshots] write completed:", JSON.stringify({
+        ...context, ...result, durationMs: Math.round(performance.now() - started),
+      }));
       res.json({ ok: true, ...result, source: "API" });
     } catch (err) {
-      console.error("[internal-snapshots] write failed:", err.message);
-      res.status(500).json({ error: "Could not save snapshots" });
+      const details = { ...errorDetails(err), ...context, durationMs: Math.round(performance.now() - started) };
+      console.error("[internal-snapshots] write failed:", JSON.stringify(details));
+      res.status(500).json({ ok: false, error: "Could not save snapshots", requestId, details });
     }
   });
   return router;

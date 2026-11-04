@@ -128,6 +128,25 @@ test("snapshot migration and ingestion against PostgreSQL", {
       assert.equal(await db.deleteSnapshots("mex", itemId, [{ snapshot_ts: ts + 600, source: "YATA" }]), 1);
     });
 
+    await t.test("100 historical observations replay a bounded suffix with the same results as full replay", async () => {
+      const otherId = 999998;
+      await pool.query("INSERT INTO items (item_id, name) VALUES ($1, 'Replay test')", [otherId]);
+      await pool.query(`INSERT INTO snapshots (country,item_id,snapshot_ts,quantity,cost,source)
+        SELECT 'mex',$1,$2 + n, CASE WHEN n % 100 >= 80 THEN 0 ELSE 100 - n % 100 END,300,'YATA'
+        FROM generate_series(0,999) AS n`, [otherId, ts - 2000]);
+      await db.backfillRestocksForItem("mex", otherId);
+      const oldRows = (await pool.query("SELECT * FROM restocks WHERE item_id=$1 AND depleted_ts<$2 ORDER BY depleted_ts", [otherId, ts - 1300])).rows;
+      const imported = Array.from({ length: 100 }, (_, n) => ({ ...record(0, n < 50 ? 50 : 0),
+        itemId: otherId, snapshot_ts: ts - 1100 + n, name: "Replay test" }));
+      assert.deepEqual(await db.saveApiSnapshots(imported), { inserted: 100, skipped: 0 });
+      const partial = (await pool.query("SELECT * FROM restocks WHERE item_id=$1 ORDER BY depleted_ts", [otherId])).rows;
+      assert.deepEqual((await pool.query("SELECT * FROM restocks WHERE item_id=$1 AND depleted_ts<$2 ORDER BY depleted_ts", [otherId, ts - 1300])).rows, oldRows);
+      await db.backfillRestocksForItem("mex", otherId);
+      assert.deepEqual((await pool.query("SELECT * FROM restocks WHERE item_id=$1 ORDER BY depleted_ts", [otherId])).rows, partial);
+      assert.deepEqual(await db.saveApiSnapshots(imported), { inserted: 0, skipped: 100 });
+      await pool.query("DELETE FROM snapshots WHERE item_id=$1", [otherId]);
+    });
+
     await t.test("retention purges old observations from either source", async () => {
       const oldTs = ts - 31 * 86400;
       await pool.query("INSERT INTO snapshots VALUES ('mex', $1, $2, 1, 1, 'YATA'), ('mex', $1, $3, 1, 1, 'API')", [itemId, oldTs, oldTs + 1]);
