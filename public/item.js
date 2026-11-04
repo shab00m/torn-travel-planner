@@ -692,7 +692,7 @@ function rebuildLastZeroLookup() {
   const prefixLastZero = new Array(points.length);
   let lastZero = null;
   for (let i = 0; i < points.length; i++) {
-    if (points[i].quantity === 0) lastZero = points[i].yata_ts;
+    if (points[i].quantity === 0) lastZero = points[i].snapshot_ts;
     prefixLastZero[i] = lastZero;
   }
   lastZeroLookup = { points, prefixLastZero };
@@ -704,13 +704,13 @@ function lastZeroBeforeRestock(restockedTs, depletedTs) {
   if (!lookup?.points.length) return depletedTs ?? null;
   const { points, prefixLastZero } = lookup;
   // Restock outside loaded snapshot window — no reliable last-zero from history.
-  if (restockedTs < points[0].yata_ts) return null;
+  if (restockedTs < points[0].snapshot_ts) return null;
   let lo = 0;
   let hi = points.length - 1;
   let idx = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (points[mid].yata_ts < restockedTs) {
+    if (points[mid].snapshot_ts < restockedTs) {
       idx = mid;
       lo = mid + 1;
     } else {
@@ -727,7 +727,7 @@ function adjustRestockTime(restockedTs, observedQty, ratePerMin, restockAmount, 
   if (!api) throw new Error("AdjustRestockTime module not loaded");
   // Need snapshot context around the restock; truncated History Time Range can't provide it.
   const points = state.chartPoints;
-  if (!points.length || restockedTs < points[0].yata_ts) return restockedTs;
+  if (!points.length || restockedTs < points[0].snapshot_ts) return restockedTs;
   return api.adjustRestockTime({
     restockedTs,
     observedQty,
@@ -1061,15 +1061,15 @@ function buildTimeline(historicalPoints, predictionHours) {
     };
   }
 
-  const firstTs = historicalPoints[0].yata_ts;
+  const firstTs = historicalPoints[0].snapshot_ts;
   const lastHist = historicalPoints[historicalPoints.length - 1];
-  const dataTs = lastHist.yata_ts;
+  const dataTs = lastHist.snapshot_ts;
 
   const actualData = historicalPoints.map((p) => ({
-    x: tsMs(p.yata_ts),
+    x: tsMs(p.snapshot_ts),
     y: p.quantity,
     cost: p.cost,
-    yata_ts: p.yata_ts,
+    snapshot_ts: p.snapshot_ts,
     predicted: false,
   }));
 
@@ -2019,14 +2019,14 @@ function chartMarkerTop(chart, chartArea, yAdjust) {
   return chart.canvas.offsetTop + chartArea.top + yAdjust;
 }
 
-function isSnapshotSelected(yataTs) {
-  return yataTs != null && snapshotInspector.selected.has(yataTs);
+function isSnapshotSelected(snapshotTs) {
+  return snapshotTs != null && snapshotInspector.selected.has(snapshotTs);
 }
 
 function snapshotPointRadius(ctx, defaultRadius) {
   const raw = ctx.raw;
-  if (snapshotInspector.enabled && raw?.yata_ts != null) {
-    if (isSnapshotSelected(raw.yata_ts)) return 7;
+  if (snapshotInspector.enabled && raw?.snapshot_ts != null) {
+    if (isSnapshotSelected(raw.snapshot_ts)) return 7;
     return defaultRadius > 0 ? Math.max(defaultRadius, 4) : 4;
   }
   return defaultRadius;
@@ -2043,9 +2043,9 @@ function chartDatasets(timeline) {
       fill: true,
       pointRadius: (ctx) => snapshotPointRadius(ctx, defaultRadius),
       pointBackgroundColor: (ctx) =>
-        isSnapshotSelected(ctx.raw?.yata_ts) ? "#ff6b6b" : "#4f9cf9",
+        isSnapshotSelected(ctx.raw?.snapshot_ts) ? "#ff6b6b" : "#4f9cf9",
       pointBorderColor: (ctx) =>
-        isSnapshotSelected(ctx.raw?.yata_ts) ? "#ff6b6b" : "#4f9cf9",
+        isSnapshotSelected(ctx.raw?.snapshot_ts) ? "#ff6b6b" : "#4f9cf9",
       tension: 0,
       spanGaps: false,
     },
@@ -2579,13 +2579,13 @@ function clearSnapshotSelection() {
   refreshSnapshotHighlight();
 }
 
-function selectSnapshot(yataTs, { additive = false, toggle = false } = {}) {
-  if (yataTs == null) return;
+function selectSnapshot(snapshotTs, { additive = false, toggle = false } = {}) {
+  if (snapshotTs == null) return;
   if (!additive) snapshotInspector.selected.clear();
-  if (toggle && snapshotInspector.selected.has(yataTs)) {
-    snapshotInspector.selected.delete(yataTs);
+  if (toggle && snapshotInspector.selected.has(snapshotTs)) {
+    snapshotInspector.selected.delete(snapshotTs);
   } else {
-    snapshotInspector.selected.add(yataTs);
+    snapshotInspector.selected.add(snapshotTs);
   }
   refreshSnapshotHighlight();
 }
@@ -2595,7 +2595,7 @@ function selectSnapshotsInRange(minTs, maxTs, { additive = false } = {}) {
   const hi = Math.max(minTs, maxTs);
   if (!additive) snapshotInspector.selected.clear();
   for (const p of state.chartPoints) {
-    if (p.yata_ts >= lo && p.yata_ts <= hi) snapshotInspector.selected.add(p.yata_ts);
+    if (p.snapshot_ts >= lo && p.snapshot_ts <= hi) snapshotInspector.selected.add(p.snapshot_ts);
   }
   refreshSnapshotHighlight();
 }
@@ -2607,7 +2607,7 @@ function selectNearestSnapshot(pixelX, opts) {
   let nearest = null;
   let minDist = Infinity;
   for (const p of state.chartPoints) {
-    const px = xScale.getPixelForValue(tsMs(p.yata_ts));
+    const px = xScale.getPixelForValue(tsMs(p.snapshot_ts));
     const dist = Math.abs(px - pixelX);
     if (dist < minDist) {
       minDist = dist;
@@ -2615,7 +2615,7 @@ function selectNearestSnapshot(pixelX, opts) {
     }
   }
   if (!nearest || minDist > 14) return;
-  selectSnapshot(nearest.yata_ts, opts);
+  selectSnapshot(nearest.snapshot_ts, opts);
 }
 
 function updateChartSelectionBox(drag) {
@@ -2649,8 +2649,8 @@ function setInspectMode(enabled) {
   renderSnapshotInspector();
 }
 
-function snapshotByTs(yataTs) {
-  return state.chartPoints.find((p) => p.yata_ts === yataTs) ?? null;
+function snapshotByTs(snapshotTs) {
+  return state.chartPoints.find((p) => p.snapshot_ts === snapshotTs) ?? null;
 }
 
 function renderSnapshotInspector() {
@@ -2672,16 +2672,17 @@ function renderSnapshotInspector() {
   }
 
   el.snapshotInspectorBody.innerHTML = selected
-    .map((yataTs) => {
-      const row = snapshotByTs(yataTs);
+    .map((snapshotTs) => {
+      const row = snapshotByTs(snapshotTs);
       if (!row) return "";
-      return `<tr data-yata-ts="${yataTs}">
+      return `<tr data-snapshot-ts="${snapshotTs}">
         <td>
-          <input data-field="yata_ts" type="number" min="1" step="1" value="${yataTs}" title="${fmtTime(yataTs)}" />
-          <span class="snapshot-ts-label">${fmtTime(yataTs)}</span>
+          <input data-field="snapshot_ts" type="number" min="1" step="1" value="${snapshotTs}" title="${fmtTime(snapshotTs)}" />
+          <span class="snapshot-ts-label">${fmtTime(snapshotTs)}</span>
         </td>
         <td><input data-field="quantity" type="number" min="0" step="1" value="${row.quantity}" /></td>
         <td><input data-field="cost" type="number" min="0" step="1" value="${row.cost}" /></td>
+        <td>${row.source === "API" ? "API" : "YATA"}</td>
         <td class="snapshot-row-actions">
           <button type="button" class="snapshot-save-btn" data-action="save">Save</button>
           <button type="button" class="snapshot-delete-btn" data-action="delete">Delete</button>
@@ -2725,13 +2726,13 @@ async function saveSnapshotRow(originalTs) {
     alert("Admin access required.");
     return;
   }
-  const tr = el.snapshotInspectorBody.querySelector(`tr[data-yata-ts="${originalTs}"]`);
+  const tr = el.snapshotInspectorBody.querySelector(`tr[data-snapshot-ts="${originalTs}"]`);
   if (!tr) return;
 
-  const yata_ts = Number.parseInt(tr.querySelector('[data-field="yata_ts"]').value, 10);
+  const snapshot_ts = Number.parseInt(tr.querySelector('[data-field="snapshot_ts"]').value, 10);
   const quantity = Number.parseInt(tr.querySelector('[data-field="quantity"]').value, 10);
   const cost = Number.parseInt(tr.querySelector('[data-field="cost"]').value, 10);
-  if (!Number.isInteger(yata_ts) || yata_ts <= 0) {
+  if (!Number.isInteger(snapshot_ts) || snapshot_ts <= 0) {
     alert("Timestamp must be a positive integer (unix seconds).");
     return;
   }
@@ -2750,10 +2751,10 @@ async function saveSnapshotRow(originalTs) {
   try {
     const body = await fetchJsonWithBody(
       `/api/snapshots/${item.country}/${item.itemId}/${originalTs}`,
-      { method: "PATCH", body: { yata_ts, quantity, cost }, headers: adminApiHeaders() }
+      { method: "PATCH", body: { snapshot_ts, quantity, cost }, headers: adminApiHeaders() }
     );
     snapshotInspector.selected.delete(originalTs);
-    snapshotInspector.selected.add(body.snapshot.yata_ts);
+    snapshotInspector.selected.add(body.snapshot.snapshot_ts);
     await drawChart();
   } catch (err) {
     alert(`Save failed: ${err.message}`);
@@ -2763,16 +2764,16 @@ async function saveSnapshotRow(originalTs) {
   }
 }
 
-async function deleteSnapshotRows(yataTsList) {
+async function deleteSnapshotRows(snapshotTsList) {
   const item = state.item;
-  if (!item || !yataTsList.length) return;
+  if (!item || !snapshotTsList.length) return;
   if (!isAdminUser()) {
     alert("Admin access required.");
     return;
   }
   if (
     !confirm(
-      `Delete ${yataTsList.length} snapshot${yataTsList.length === 1 ? "" : "s"}? Restock history will be rebuilt.`
+      `Delete ${snapshotTsList.length} snapshot${snapshotTsList.length === 1 ? "" : "s"}? Restock history will be rebuilt.`
     )
   ) {
     return;
@@ -2780,8 +2781,8 @@ async function deleteSnapshotRows(yataTsList) {
 
   el.snapshotDeleteAllBtn.disabled = true;
   try {
-    if (yataTsList.length === 1) {
-      const ts = yataTsList[0];
+    if (snapshotTsList.length === 1) {
+      const ts = snapshotTsList[0];
       const res = await fetch(`/api/snapshots/${item.country}/${item.itemId}/${ts}`, {
         method: "DELETE",
         headers: adminApiHeaders(),
@@ -2790,11 +2791,11 @@ async function deleteSnapshotRows(yataTsList) {
     } else {
       await fetchJsonWithBody(`/api/snapshots/${item.country}/${item.itemId}/delete`, {
         method: "POST",
-        body: { yata_ts: yataTsList },
+        body: { snapshot_ts: snapshotTsList },
         headers: adminApiHeaders(),
       });
     }
-    for (const ts of yataTsList) snapshotInspector.selected.delete(ts);
+    for (const ts of snapshotTsList) snapshotInspector.selected.delete(ts);
     await drawChart();
   } catch (err) {
     alert(`Delete failed: ${err.message}`);
@@ -2853,9 +2854,9 @@ function initSnapshotInspector() {
   el.snapshotInspectorBody?.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-action]");
     if (!btn) return;
-    const tr = btn.closest("tr[data-yata-ts]");
+    const tr = btn.closest("tr[data-snapshot-ts]");
     if (!tr) return;
-    const originalTs = Number.parseInt(tr.dataset.yataTs, 10);
+    const originalTs = Number.parseInt(tr.dataset.snapshotTs, 10);
     if (btn.dataset.action === "save") saveSnapshotRow(originalTs);
     else if (btn.dataset.action === "delete") deleteSnapshotRows([originalTs]);
   });

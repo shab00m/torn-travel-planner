@@ -13,7 +13,7 @@ export function rateFromEndpoints(startTs, endTs, startQty, endQty) {
 
 /**
  * Opening depletion rate from the restock snapshot and the next positive point.
- * @param {{ yata_ts: number, quantity: number }[]} points ascending by yata_ts
+ * @param {{ snapshot_ts: number, quantity: number }[]} points ascending by snapshot_ts
  * @param {number} restockedTs timestamp of the first in-stock snapshot
  * @returns {number|null} items/minute, or null if unusable
  */
@@ -21,11 +21,11 @@ export function earlyDepletionRate(points, restockedTs) {
   if (!points?.length || restockedTs == null) return null;
   let aIdx = -1;
   for (let i = 0; i < points.length; i++) {
-    if (points[i].yata_ts === restockedTs && points[i].quantity > 0) {
+    if (points[i].snapshot_ts === restockedTs && points[i].quantity > 0) {
       aIdx = i;
       break;
     }
-    if (points[i].yata_ts > restockedTs) break;
+    if (points[i].snapshot_ts > restockedTs) break;
   }
   if (aIdx < 0) return null;
 
@@ -40,7 +40,7 @@ export function earlyDepletionRate(points, restockedTs) {
 
   const a = points[aIdx];
   const b = points[bIdx];
-  return rateFromEndpoints(a.yata_ts, b.yata_ts, a.quantity, b.quantity);
+  return rateFromEndpoints(a.snapshot_ts, b.snapshot_ts, a.quantity, b.quantity);
 }
 
 /**
@@ -55,7 +55,7 @@ export function earlyDepletionRate(points, restockedTs) {
  * @param {number} opts.restockAmount configured full restock size
  * @param {number|null|undefined} [opts.depletedTs]
  * @param {number|null|undefined} [opts.lastZero] last qty=0 timestamp before restockedTs
- * @param {{ yata_ts: number, quantity: number }[]|null|undefined} [opts.points]
+ * @param {{ snapshot_ts: number, quantity: number }[]|null|undefined} [opts.points]
  */
 export function adjustRestockTime({
   restockedTs,

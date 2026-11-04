@@ -39,7 +39,7 @@ function buildLastZeroLookup(points) {
   const prefixLastZero = new Array(points.length);
   let lastZero = null;
   for (let i = 0; i < points.length; i++) {
-    if (points[i].quantity === 0) lastZero = points[i].yata_ts;
+    if (points[i].quantity === 0) lastZero = points[i].snapshot_ts;
     prefixLastZero[i] = lastZero;
   }
   return { points, prefixLastZero };
@@ -53,7 +53,7 @@ function lastZeroBeforeRestock(lookup, restockedTs, depletedTs) {
   let idx = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (points[mid].yata_ts < restockedTs) {
+    if (points[mid].snapshot_ts < restockedTs) {
       idx = mid;
       lo = mid + 1;
     } else {
@@ -83,7 +83,7 @@ function fallbackRatePerMin(cycle, startQty) {
 
 function resolveStartQty(cycle, points) {
   if (cycle.rate_start_qty != null && cycle.rate_start_qty > 0) return cycle.rate_start_qty;
-  const snap = points.find((p) => p.yata_ts === cycle.restocked_ts);
+  const snap = points.find((p) => p.snapshot_ts === cycle.restocked_ts);
   return snap?.quantity ?? null;
 }
 
@@ -163,10 +163,10 @@ export async function recomputeAdjustedRestockCycle(db, country, itemId, deplete
   // Snapshots from empty start through a bit after restock (for early A→B rate).
   const points = await many(
     db,
-    `SELECT yata_ts, quantity FROM snapshots
+    `SELECT snapshot_ts, quantity FROM snapshots
      WHERE country = $1 AND item_id = $2
-       AND yata_ts >= $3 AND yata_ts <= $4
-     ORDER BY yata_ts ASC`,
+       AND snapshot_ts >= $3 AND snapshot_ts <= $4
+     ORDER BY snapshot_ts ASC`,
     [country, itemId, adjDepleted, cycle.restocked_ts + 3600]
   );
   const startQty = resolveStartQty(cycle, points);
@@ -251,10 +251,10 @@ export async function recomputeAdjustedRestocksForItem(
   const maxTs = Math.max(...cycles.map((c) => c.restocked_ts)) + 3600;
   const points = await many(
     db,
-    `SELECT yata_ts, quantity FROM snapshots
+    `SELECT snapshot_ts, quantity FROM snapshots
      WHERE country = $1 AND item_id = $2
-       AND yata_ts >= $3 AND yata_ts <= $4
-     ORDER BY yata_ts ASC`,
+       AND snapshot_ts >= $3 AND snapshot_ts <= $4
+     ORDER BY snapshot_ts ASC`,
     [country, itemId, minTs, maxTs]
   );
   const lookup = buildLastZeroLookup(points);

@@ -5,6 +5,7 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
+    "test": "node --test",
     "start": "node scripts/start.mjs",
     "migrate": "node scripts/migrate.mjs",
     "backfill": "node scripts/backfill-restocks.mjs",

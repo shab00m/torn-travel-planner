@@ -37,6 +37,7 @@ import { getDepletionRateTod } from "./src/depletion-rate-tod.js";
 import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
 import { listUsers, createUser, updateUser, deleteUser, seedBootstrapAdmin } from "./src/users.js";
 import { recordPageView, listPageViews, getClientIp } from "./src/analytics.js";
+import { createInternalSnapshotsRouter } from "./src/internal-snapshots.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -47,6 +48,7 @@ app.set("trust proxy", 1);
 
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
+app.use("/api/internal/snapshots", createInternalSnapshotsRouter());
 
 // Validate a Torn API key, auto-allow new accounts, return player + role flags.
 // The key is only relayed to the Torn API, never stored server-side.
@@ -548,13 +550,13 @@ app.post("/api/restocks/:country/:itemId/backfill", requireAdmin, async (req, re
   }
 });
 
-function parseYataTs(req, res) {
-  const yataTs = Number.parseInt(req.params.yataTs, 10);
-  if (!Number.isInteger(yataTs) || yataTs <= 0) {
-    res.status(400).json({ error: "yataTs must be a positive integer" });
+function parseSnapshotTs(req, res) {
+  const snapshotTs = Number.parseInt(req.params.snapshotTs, 10);
+  if (!Number.isInteger(snapshotTs) || snapshotTs <= 0) {
+    res.status(400).json({ error: "snapshotTs must be a positive integer" });
     return null;
   }
-  return yataTs;
+  return snapshotTs;
 }
 
 async function rerunRestocks(country, itemId) {
@@ -565,13 +567,13 @@ async function rerunRestocks(country, itemId) {
 app.post("/api/snapshots/:country/:itemId/delete", requireAdmin, async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
-  const list = req.body?.yata_ts;
+  const list = req.body?.snapshot_ts;
   if (!Array.isArray(list) || !list.length) {
-    res.status(400).json({ error: "yata_ts array is required" });
+    res.status(400).json({ error: "snapshot_ts array is required" });
     return;
   }
   if (!list.every((ts) => Number.isInteger(ts) && ts > 0)) {
-    res.status(400).json({ error: "yata_ts values must be positive integers" });
+    res.status(400).json({ error: "snapshot_ts values must be positive integers" });
     return;
   }
   try {
@@ -583,12 +585,12 @@ app.post("/api/snapshots/:country/:itemId/delete", requireAdmin, async (req, res
   }
 });
 
-app.get("/api/snapshots/:country/:itemId/:yataTs", async (req, res) => {
+app.get("/api/snapshots/:country/:itemId/:snapshotTs", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
-  const yataTs = parseYataTs(req, res);
-  if (yataTs == null) return;
-  const row = await getSnapshot(params.country, params.id, yataTs);
+  const snapshotTs = parseSnapshotTs(req, res);
+  if (snapshotTs == null) return;
+  const row = await getSnapshot(params.country, params.id, snapshotTs);
   if (!row) {
     res.status(404).json({ error: "Snapshot not found" });
     return;
@@ -596,11 +598,11 @@ app.get("/api/snapshots/:country/:itemId/:yataTs", async (req, res) => {
   res.json({ country: params.country, itemId: params.id, ...row });
 });
 
-app.patch("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, async (req, res) => {
+app.patch("/api/snapshots/:country/:itemId/:snapshotTs", requireAdmin, async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
-  const yataTs = parseYataTs(req, res);
-  if (yataTs == null) return;
+  const snapshotTs = parseSnapshotTs(req, res);
+  if (snapshotTs == null) return;
   const body = req.body ?? {};
   if (body.quantity != null && !Number.isInteger(body.quantity)) {
     res.status(400).json({ error: "quantity must be an integer" });
@@ -610,12 +612,12 @@ app.patch("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, async (req, r
     res.status(400).json({ error: "cost must be an integer" });
     return;
   }
-  if (body.yata_ts != null && !Number.isInteger(body.yata_ts)) {
-    res.status(400).json({ error: "yata_ts must be an integer" });
+  if (body.snapshot_ts != null && !Number.isInteger(body.snapshot_ts)) {
+    res.status(400).json({ error: "snapshot_ts must be an integer" });
     return;
   }
   try {
-    const updated = await updateSnapshot(params.country, params.id, yataTs, body);
+    const updated = await updateSnapshot(params.country, params.id, snapshotTs, body);
     const { restocks, rates } = await rerunRestocks(params.country, params.id);
     res.json({ ok: true, snapshot: updated, restocks, rates });
   } catch (err) {
@@ -623,13 +625,13 @@ app.patch("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, async (req, r
   }
 });
 
-app.delete("/api/snapshots/:country/:itemId/:yataTs", requireAdmin, async (req, res) => {
+app.delete("/api/snapshots/:country/:itemId/:snapshotTs", requireAdmin, async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
-  const yataTs = parseYataTs(req, res);
-  if (yataTs == null) return;
+  const snapshotTs = parseSnapshotTs(req, res);
+  if (snapshotTs == null) return;
   try {
-    await deleteSnapshot(params.country, params.id, yataTs);
+    await deleteSnapshot(params.country, params.id, snapshotTs);
     const { restocks, rates } = await rerunRestocks(params.country, params.id);
     res.json({ ok: true, restocks, rates });
   } catch (err) {

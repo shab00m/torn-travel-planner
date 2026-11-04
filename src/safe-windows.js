@@ -25,7 +25,7 @@ function buildLastZeroLookup(chartPoints) {
   const prefixLastZero = new Array(chartPoints.length);
   let lastZero = null;
   for (let i = 0; i < chartPoints.length; i++) {
-    if (chartPoints[i].quantity === 0) lastZero = chartPoints[i].yata_ts;
+    if (chartPoints[i].quantity === 0) lastZero = chartPoints[i].snapshot_ts;
     prefixLastZero[i] = lastZero;
   }
   return { points: chartPoints, prefixLastZero };
@@ -39,7 +39,7 @@ function lastZeroBeforeRestock(lookup, restockedTs, depletedTs) {
   let idx = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (points[mid].yata_ts < restockedTs) {
+    if (points[mid].snapshot_ts < restockedTs) {
       idx = mid;
       lo = mid + 1;
     } else {
@@ -451,7 +451,7 @@ function resolveCurrentStock(chartPoints) {
   return {
     quantity: lastPoint.quantity,
     cost: lastPoint.cost,
-    dataTs: lastPoint.yata_ts,
+    dataTs: lastPoint.snapshot_ts,
   };
 }
 

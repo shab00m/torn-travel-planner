@@ -34,21 +34,21 @@ await withTransaction(async (client) => {
   console.log(`items: ${items.length}`);
 
   const snapshots = all(
-    `SELECT country, item_id, yata_ts, quantity, cost FROM snapshots`
+    `SELECT country, item_id, yata_ts AS snapshot_ts, quantity, cost FROM snapshots`
   );
   const batchSize = 500;
   for (let i = 0; i < snapshots.length; i += batchSize) {
     const chunk = snapshots.slice(i, i + batchSize);
     const countries = chunk.map((r) => r.country);
     const itemIds = chunk.map((r) => r.item_id);
-    const yataTs = chunk.map((r) => r.yata_ts);
+    const snapshotTs = chunk.map((r) => r.snapshot_ts);
     const quantities = chunk.map((r) => r.quantity);
     const costs = chunk.map((r) => r.cost);
     await client.query(
-      `INSERT INTO snapshots (country, item_id, yata_ts, quantity, cost)
+      `INSERT INTO snapshots (country, item_id, snapshot_ts, quantity, cost)
        SELECT * FROM UNNEST($1::text[], $2::int[], $3::bigint[], $4::bigint[], $5::bigint[])
        ON CONFLICT DO NOTHING`,
-      [countries, itemIds, yataTs, quantities, costs]
+      [countries, itemIds, snapshotTs, quantities, costs]
     );
   }
   console.log(`snapshots: ${snapshots.length}`);

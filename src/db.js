@@ -90,7 +90,7 @@ async function depletionRateBefore(client, country, itemId, endTs, endQty) {
   if (restockedTs != null && restockedTs < endTs) {
     const startRow = await one(
       client,
-      `SELECT quantity FROM snapshots WHERE country = $1 AND item_id = $2 AND yata_ts = $3`,
+      `SELECT quantity FROM snapshots WHERE country = $1 AND item_id = $2 AND snapshot_ts = $3`,
       [country, itemId, restockedTs]
     );
     if (startRow != null) {
@@ -101,21 +101,21 @@ async function depletionRateBefore(client, country, itemId, endTs, endQty) {
 
   const earlier = await one(
     client,
-    `SELECT yata_ts, quantity FROM snapshots
-     WHERE country = $1 AND item_id = $2 AND yata_ts < $3 AND quantity > 0
-     ORDER BY yata_ts DESC LIMIT 1`,
+    `SELECT snapshot_ts, quantity FROM snapshots
+     WHERE country = $1 AND item_id = $2 AND snapshot_ts < $3 AND quantity > 0
+     ORDER BY snapshot_ts DESC LIMIT 1`,
     [country, itemId, endTs]
   );
   if (earlier && earlier.quantity > endQty) {
     const zeroHit = await one(
       client,
       `SELECT 1 AS hit FROM snapshots
-       WHERE country = $1 AND item_id = $2 AND yata_ts > $3 AND yata_ts < $4 AND quantity = 0
+       WHERE country = $1 AND item_id = $2 AND snapshot_ts > $3 AND snapshot_ts < $4 AND quantity = 0
        LIMIT 1`,
-      [country, itemId, earlier.yata_ts, endTs]
+      [country, itemId, earlier.snapshot_ts, endTs]
     );
     if (!zeroHit) {
-      return rateFromEndpoints(earlier.yata_ts, endTs, earlier.quantity, endQty);
+      return rateFromEndpoints(earlier.snapshot_ts, endTs, earlier.quantity, endQty);
     }
   }
   return null;
@@ -216,32 +216,32 @@ async function applyTransition(
     if (depletedTs == null) {
       const missed = await one(
         client,
-        `SELECT s.yata_ts FROM snapshots s
-         WHERE s.country = $1 AND s.item_id = $2 AND s.yata_ts < $3 AND s.quantity = 0
+        `SELECT s.snapshot_ts FROM snapshots s
+         WHERE s.country = $1 AND s.item_id = $2 AND s.snapshot_ts < $3 AND s.quantity = 0
            AND (
              SELECT p.quantity FROM snapshots p
-             WHERE p.country = s.country AND p.item_id = s.item_id AND p.yata_ts < s.yata_ts
-             ORDER BY p.yata_ts DESC LIMIT 1
+             WHERE p.country = s.country AND p.item_id = s.item_id AND p.snapshot_ts < s.snapshot_ts
+             ORDER BY p.snapshot_ts DESC LIMIT 1
            ) > 0
-         ORDER BY s.yata_ts DESC LIMIT 1`,
+         ORDER BY s.snapshot_ts DESC LIMIT 1`,
         [country, itemId, ts]
       );
       const firstZero = missed
         ? null
         : await one(
             client,
-            `SELECT yata_ts FROM snapshots
-             WHERE country = $1 AND item_id = $2 AND yata_ts < $3 AND quantity = 0
-             ORDER BY yata_ts ASC LIMIT 1`,
+            `SELECT snapshot_ts FROM snapshots
+             WHERE country = $1 AND item_id = $2 AND snapshot_ts < $3 AND quantity = 0
+             ORDER BY snapshot_ts ASC LIMIT 1`,
             [country, itemId, ts]
           );
-      const observedZero = missed?.yata_ts ?? firstZero?.yata_ts ?? null;
+      const observedZero = missed?.snapshot_ts ?? firstZero?.snapshot_ts ?? null;
       if (observedZero != null) {
         const prev = await one(
           client,
-          `SELECT yata_ts, quantity FROM snapshots
-           WHERE country = $1 AND item_id = $2 AND yata_ts < $3
-           ORDER BY yata_ts DESC LIMIT 1`,
+          `SELECT snapshot_ts, quantity FROM snapshots
+           WHERE country = $1 AND item_id = $2 AND snapshot_ts < $3
+           ORDER BY snapshot_ts DESC LIMIT 1`,
           [country, itemId, observedZero]
         );
         const adjustedDepletedTs =
@@ -251,7 +251,7 @@ async function applyTransition(
                 country,
                 itemId,
                 observedZero,
-                prev.yata_ts,
+                prev.snapshot_ts,
                 prev.quantity
               )
             : observedZero;
@@ -294,7 +294,7 @@ async function applyTransition(
 
 /**
  * @param {import("pg").PoolClient} client
- * @param {{ yata_ts: number, quantity: number } | null | undefined} [prevHint]
+ * @param {{ snapshot_ts: number, quantity: number } | null | undefined} [prevHint]
  *   Optional preloaded previous snapshot; when omitted, loads from DB.
  */
 async function trackRestock(client, country, itemId, ts, quantity, prevHint) {
@@ -303,9 +303,9 @@ async function trackRestock(client, country, itemId, ts, quantity, prevHint) {
       ? prevHint
       : await one(
           client,
-          `SELECT yata_ts, quantity FROM snapshots
-           WHERE country = $1 AND item_id = $2 AND yata_ts < $3
-           ORDER BY yata_ts DESC LIMIT 1`,
+          `SELECT snapshot_ts, quantity FROM snapshots
+           WHERE country = $1 AND item_id = $2 AND snapshot_ts < $3
+           ORDER BY snapshot_ts DESC LIMIT 1`,
           [country, itemId, ts]
         );
   if (!prev) return null;
@@ -314,7 +314,7 @@ async function trackRestock(client, country, itemId, ts, quantity, prevHint) {
     country,
     itemId,
     ts,
-    prev.yata_ts,
+    prev.snapshot_ts,
     prev.quantity,
     quantity
   );
@@ -332,7 +332,7 @@ async function trackRestock(client, country, itemId, ts, quantity, prevHint) {
 async function minSnapshotTs(client, country, itemId) {
   const row = await one(
     client,
-    `SELECT MIN(yata_ts) AS min_ts FROM snapshots
+    `SELECT MIN(snapshot_ts) AS min_ts FROM snapshots
      WHERE country = $1 AND item_id = $2`,
     [country, itemId]
   );
@@ -379,10 +379,10 @@ async function replayRestocks(client, scope = {}) {
 
     const snapshots = await many(
       client,
-      `SELECT country, item_id, yata_ts, quantity
+      `SELECT country, item_id, snapshot_ts, quantity
        FROM snapshots
        WHERE country = $1 AND item_id = $2
-       ORDER BY yata_ts ASC`,
+       ORDER BY snapshot_ts ASC`,
       [scope.country, scope.itemId]
     );
 
@@ -392,7 +392,7 @@ async function replayRestocks(client, scope = {}) {
           client,
           row.country,
           row.item_id,
-          row.yata_ts,
+          row.snapshot_ts,
           prevTs,
           prevQuantity,
           row.quantity,
@@ -401,7 +401,7 @@ async function replayRestocks(client, scope = {}) {
         if (result === "depleted") opened += 1;
         else if (result === "restocked") closed += 1;
       }
-      prevTs = row.yata_ts;
+      prevTs = row.snapshot_ts;
       prevQuantity = row.quantity;
     }
 
@@ -442,7 +442,7 @@ async function replayRestocks(client, scope = {}) {
     `SELECT r.country, r.item_id, r.depleted_ts
      FROM restocks r
      INNER JOIN (
-       SELECT country, item_id, MIN(yata_ts) AS min_ts
+       SELECT country, item_id, MIN(snapshot_ts) AS min_ts
        FROM snapshots
        GROUP BY country, item_id
      ) s ON s.country = r.country AND s.item_id = r.item_id
@@ -453,7 +453,7 @@ async function replayRestocks(client, scope = {}) {
   await client.query(
     `DELETE FROM restocks r
      USING (
-       SELECT country, item_id, MIN(yata_ts) AS min_ts
+       SELECT country, item_id, MIN(snapshot_ts) AS min_ts
        FROM snapshots
        GROUP BY country, item_id
      ) s
@@ -469,21 +469,21 @@ async function replayRestocks(client, scope = {}) {
 
   const snapshots = await many(
     client,
-    `SELECT country, item_id, yata_ts, quantity
+    `SELECT country, item_id, snapshot_ts, quantity
      FROM snapshots
-     ORDER BY country, item_id, yata_ts ASC`
+     ORDER BY country, item_id, snapshot_ts ASC`
   );
 
   const minTsByItem = new Map();
   for (const row of snapshots) {
     const rowKey = `${row.country}:${row.item_id}`;
-    if (!minTsByItem.has(rowKey)) minTsByItem.set(rowKey, row.yata_ts);
+    if (!minTsByItem.has(rowKey)) minTsByItem.set(rowKey, row.snapshot_ts);
     if (rowKey === key) {
       const result = await applyTransition(
         client,
         row.country,
         row.item_id,
-        row.yata_ts,
+        row.snapshot_ts,
         prevTs,
         prevQuantity,
         row.quantity,
@@ -493,7 +493,7 @@ async function replayRestocks(client, scope = {}) {
       else if (result === "restocked") closed += 1;
     }
     key = rowKey;
-    prevTs = row.yata_ts;
+    prevTs = row.snapshot_ts;
     prevQuantity = row.quantity;
   }
 
@@ -568,100 +568,94 @@ export async function backfillRestocksForItem(country, itemId) {
   return withTransaction((client) => replayRestocks(client, { country, itemId }));
 }
 
-/**
- * Persist one YATA export payload. Returns the number of new rows stored.
- * @param {object} stocks - the "stocks" object from the YATA export
- */
+/** Persist YATA observations through the same write path as internal imports. */
 export async function saveSnapshot(stocks) {
+  const records = [];
+  for (const [country, data] of Object.entries(stocks)) {
+    for (const item of data.stocks) {
+      records.push({ country, itemId: item.id, name: item.name,
+        snapshot_ts: data.update, quantity: item.quantity, cost: item.cost });
+    }
+  }
+  return saveSnapshotRecords(records, "YATA");
+}
+
+/** Internal ingestion: callers cannot choose or spoof the stored source. */
+export async function saveApiSnapshots(records) {
+  const inserted = await saveSnapshotRecords(records, "API");
+  return { inserted, skipped: records.length - inserted };
+}
+
+async function saveSnapshotRecords(records, source) {
+  if (!records.length) return 0;
   return withTransaction(async (client) => {
-    let inserted = 0;
-    const itemEntries = [];
-    const snapshotEntries = [];
+    // Both ingest paths take the same locks, in the same order. In particular,
+    // a historical import must not replay restocks while a live write changes them.
+    const keys = [...new Set(records.map((r) => `snapshots:${r.country}:${r.itemId}`))].sort();
+    await client.query(
+      `SELECT pg_advisory_xact_lock(hashtextextended(key, 0))
+       FROM (SELECT unnest($1::text[]) AS key ORDER BY key) AS ordered_keys`,
+      [keys]
+    );
 
-    for (const [country, data] of Object.entries(stocks)) {
-      for (const item of data.stocks) {
-        itemEntries.push({ id: item.id, name: item.name });
-        snapshotEntries.push({
-          country,
-          itemId: item.id,
-          yataTs: data.update,
-          quantity: item.quantity,
-          cost: item.cost,
-        });
+    // Item metadata is shared across countries; lock/update it in item-id order.
+    const names = [...new Map(records.map((r) => [r.itemId, r.name]))]
+      .sort((a, b) => a[0] - b[0]);
+    await client.query(
+      `INSERT INTO items (item_id, name)
+       SELECT * FROM UNNEST($1::int[], $2::text[])
+       ON CONFLICT (item_id) DO UPDATE SET name = EXCLUDED.name`,
+      [names.map(([id]) => id), names.map(([, name]) => name)]
+    );
+    const { rows: inserted } = await client.query(
+      `INSERT INTO snapshots (country, item_id, snapshot_ts, quantity, cost, source)
+       SELECT t.*, $6::text
+       FROM UNNEST($1::text[], $2::int[], $3::bigint[], $4::bigint[], $5::bigint[]) AS t
+       ON CONFLICT DO NOTHING
+       RETURNING country, item_id, snapshot_ts, quantity`,
+      [records.map((r) => r.country), records.map((r) => r.itemId),
+       records.map((r) => r.snapshot_ts), records.map((r) => r.quantity),
+       records.map((r) => r.cost), source]
+    );
+    if (!inserted.length) return 0;
+
+    const { rows: previous } = await client.query(
+      `WITH req AS (
+         SELECT * FROM UNNEST($1::text[], $2::int[], $3::bigint[])
+           AS t(country, item_id, snapshot_ts)
+       )
+       SELECT req.country, req.item_id, req.snapshot_ts,
+              p.snapshot_ts AS prev_ts, p.quantity AS prev_quantity,
+              EXISTS (SELECT 1 FROM snapshots n
+                      WHERE n.country = req.country AND n.item_id = req.item_id
+                        AND n.snapshot_ts > req.snapshot_ts) AS has_newer
+       FROM req
+       LEFT JOIN LATERAL (
+         SELECT snapshot_ts, quantity FROM snapshots
+         WHERE country = req.country AND item_id = req.item_id AND snapshot_ts < req.snapshot_ts
+         ORDER BY snapshot_ts DESC LIMIT 1
+       ) p ON true`,
+      [inserted.map((r) => r.country), inserted.map((r) => r.item_id),
+       inserted.map((r) => r.snapshot_ts)]
+    );
+    const previousByKey = new Map(previous.map((r) =>
+      [`${r.country}:${r.item_id}:${r.snapshot_ts}`, r]));
+    const replayed = new Set();
+    // Ascending order ensures multi-observation imports replay once per item.
+    inserted.sort((a, b) => a.snapshot_ts - b.snapshot_ts);
+    for (const row of inserted) {
+      const itemKey = `${row.country}:${row.item_id}`;
+      if (replayed.has(itemKey)) continue;
+      const prev = previousByKey.get(`${itemKey}:${row.snapshot_ts}`);
+      if (prev.has_newer) {
+        await replayRestocks(client, { country: row.country, itemId: row.item_id });
+        replayed.add(itemKey);
+      } else {
+        await trackRestock(client, row.country, row.item_id, row.snapshot_ts, row.quantity,
+          prev.prev_ts == null ? null : { snapshot_ts: prev.prev_ts, quantity: prev.prev_quantity });
       }
     }
-
-    if (itemEntries.length) {
-      // Same item can appear in multiple countries; Postgres rejects
-      // ON CONFLICT DO UPDATE when a row is proposed twice in one INSERT.
-      const byId = new Map();
-      for (const entry of itemEntries) byId.set(entry.id, entry.name);
-      const ids = [...byId.keys()];
-      const names = [...byId.values()];
-      await client.query(
-        `INSERT INTO items (item_id, name)
-         SELECT * FROM UNNEST($1::int[], $2::text[])
-         ON CONFLICT (item_id) DO UPDATE SET name = EXCLUDED.name`,
-        [ids, names]
-      );
-    }
-
-    // One query for prior quantities instead of per-item lookups.
-    const prevByKey = new Map();
-    if (snapshotEntries.length) {
-      const countries = snapshotEntries.map((e) => e.country);
-      const itemIds = snapshotEntries.map((e) => e.itemId);
-      const yataTs = snapshotEntries.map((e) => e.yataTs);
-      const { rows } = await client.query(
-        `WITH req AS (
-           SELECT * FROM UNNEST($1::text[], $2::int[], $3::bigint[])
-             AS t(country, item_id, yata_ts)
-         )
-         SELECT req.country, req.item_id, p.yata_ts, p.quantity
-         FROM req
-         JOIN LATERAL (
-           SELECT yata_ts, quantity FROM snapshots
-           WHERE country = req.country AND item_id = req.item_id AND yata_ts < req.yata_ts
-           ORDER BY yata_ts DESC LIMIT 1
-         ) p ON true`,
-        [countries, itemIds, yataTs]
-      );
-      for (const row of rows) {
-        prevByKey.set(`${row.country}:${row.item_id}`, {
-          yata_ts: row.yata_ts,
-          quantity: row.quantity,
-        });
-      }
-    }
-
-    for (const entry of snapshotEntries) {
-      const prev = prevByKey.get(`${entry.country}:${entry.itemId}`) ?? null;
-      await trackRestock(
-        client,
-        entry.country,
-        entry.itemId,
-        entry.yataTs,
-        entry.quantity,
-        prev
-      );
-    }
-
-    if (snapshotEntries.length) {
-      const countries = snapshotEntries.map((e) => e.country);
-      const itemIds = snapshotEntries.map((e) => e.itemId);
-      const yataTs = snapshotEntries.map((e) => e.yataTs);
-      const quantities = snapshotEntries.map((e) => e.quantity);
-      const costs = snapshotEntries.map((e) => e.cost);
-      const res = await client.query(
-        `INSERT INTO snapshots (country, item_id, yata_ts, quantity, cost)
-         SELECT * FROM UNNEST($1::text[], $2::int[], $3::bigint[], $4::bigint[], $5::bigint[])
-         ON CONFLICT DO NOTHING`,
-        [countries, itemIds, yataTs, quantities, costs]
-      );
-      inserted = res.rowCount ?? 0;
-    }
-
-    return inserted;
+    return inserted.length;
   });
 }
 
@@ -673,10 +667,10 @@ export async function saveSnapshot(stocks) {
 export async function getHistory(country, itemId, sinceTs) {
   return many(
     getPool(),
-    `SELECT yata_ts, quantity, cost
+    `SELECT snapshot_ts, quantity, cost, source
      FROM snapshots
-     WHERE country = $1 AND item_id = $2 AND yata_ts >= $3
-     ORDER BY yata_ts ASC`,
+     WHERE country = $1 AND item_id = $2 AND snapshot_ts >= $3
+     ORDER BY snapshot_ts ASC`,
     [country, itemId, sinceTs]
   );
 }
@@ -869,34 +863,34 @@ export async function flagOutlierRestocks(country, itemId) {
   });
 }
 
-export async function getSnapshot(country, itemId, yataTs) {
+export async function getSnapshot(country, itemId, snapshotTs) {
   return (
     (await one(
       getPool(),
-      `SELECT yata_ts, quantity, cost FROM snapshots
-       WHERE country = $1 AND item_id = $2 AND yata_ts = $3`,
-      [country, itemId, yataTs]
+      `SELECT snapshot_ts, quantity, cost, source FROM snapshots
+       WHERE country = $1 AND item_id = $2 AND snapshot_ts = $3`,
+      [country, itemId, snapshotTs]
     )) ?? null
   );
 }
 
 /**
  * Update quantity, cost, and/or timestamp for one snapshot row.
- * Changing yata_ts replaces the primary-key row.
+ * Changing snapshot_ts replaces the primary-key row.
  */
-export async function updateSnapshot(country, itemId, yataTs, fields) {
+export async function updateSnapshot(country, itemId, snapshotTs, fields) {
   return withTransaction(async (client) => {
     const row = await one(
       client,
-      `SELECT yata_ts, quantity, cost FROM snapshots
-       WHERE country = $1 AND item_id = $2 AND yata_ts = $3`,
-      [country, itemId, yataTs]
+      `SELECT snapshot_ts, quantity, cost, source FROM snapshots
+       WHERE country = $1 AND item_id = $2 AND snapshot_ts = $3`,
+      [country, itemId, snapshotTs]
     );
     if (!row) throw new Error("Snapshot not found");
 
     const quantity = fields.quantity ?? row.quantity;
     const cost = fields.cost ?? row.cost;
-    const newYataTs = fields.yata_ts;
+    const newSnapshotTs = fields.snapshot_ts;
 
     if (!Number.isInteger(quantity) || quantity < 0) {
       throw new Error("quantity must be a non-negative integer");
@@ -905,49 +899,50 @@ export async function updateSnapshot(country, itemId, yataTs, fields) {
       throw new Error("cost must be a non-negative integer");
     }
 
-    if (newYataTs != null && newYataTs !== yataTs) {
-      if (!Number.isInteger(newYataTs) || newYataTs <= 0) {
-        throw new Error("yata_ts must be a positive integer");
+    if (newSnapshotTs != null && newSnapshotTs !== snapshotTs) {
+      if (!Number.isInteger(newSnapshotTs) || newSnapshotTs <= 0) {
+        throw new Error("snapshot_ts must be a positive integer");
       }
       await client.query(
-        `DELETE FROM snapshots WHERE country = $1 AND item_id = $2 AND yata_ts = $3`,
-        [country, itemId, yataTs]
+        `DELETE FROM snapshots WHERE country = $1 AND item_id = $2 AND snapshot_ts = $3`,
+        [country, itemId, snapshotTs]
       );
       await client.query(
-        `INSERT INTO snapshots (country, item_id, yata_ts, quantity, cost)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (country, item_id, yata_ts) DO UPDATE SET
+        `INSERT INTO snapshots (country, item_id, snapshot_ts, quantity, cost, source)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (country, item_id, snapshot_ts) DO UPDATE SET
            quantity = EXCLUDED.quantity,
-           cost = EXCLUDED.cost`,
-        [country, itemId, newYataTs, quantity, cost]
+           cost = EXCLUDED.cost,
+           source = EXCLUDED.source`,
+        [country, itemId, newSnapshotTs, quantity, cost, row.source]
       );
-      return { yata_ts: newYataTs, quantity, cost };
+      return { snapshot_ts: newSnapshotTs, quantity, cost, source: row.source };
     }
 
     await client.query(
       `UPDATE snapshots SET quantity = $1, cost = $2
-       WHERE country = $3 AND item_id = $4 AND yata_ts = $5`,
-      [quantity, cost, country, itemId, yataTs]
+       WHERE country = $3 AND item_id = $4 AND snapshot_ts = $5`,
+      [quantity, cost, country, itemId, snapshotTs]
     );
-    return { yata_ts: yataTs, quantity, cost };
+    return { snapshot_ts: snapshotTs, quantity, cost, source: row.source };
   });
 }
 
-export async function deleteSnapshot(country, itemId, yataTs) {
+export async function deleteSnapshot(country, itemId, snapshotTs) {
   const res = await query(
-    `DELETE FROM snapshots WHERE country = $1 AND item_id = $2 AND yata_ts = $3`,
-    [country, itemId, yataTs]
+    `DELETE FROM snapshots WHERE country = $1 AND item_id = $2 AND snapshot_ts = $3`,
+    [country, itemId, snapshotTs]
   );
   if (res.rowCount === 0) throw new Error("Snapshot not found");
 }
 
 /** Delete many snapshots for one item. Returns the number of rows removed. */
-export async function deleteSnapshots(country, itemId, yataTsList) {
+export async function deleteSnapshots(country, itemId, snapshotTsList) {
   return withTransaction(async (client) => {
     let deleted = 0;
-    for (const ts of yataTsList) {
+    for (const ts of snapshotTsList) {
       const res = await client.query(
-        `DELETE FROM snapshots WHERE country = $1 AND item_id = $2 AND yata_ts = $3`,
+        `DELETE FROM snapshots WHERE country = $1 AND item_id = $2 AND snapshot_ts = $3`,
         [country, itemId, ts]
       );
       deleted += res.rowCount ?? 0;

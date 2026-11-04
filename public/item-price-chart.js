@@ -35,9 +35,9 @@ function buyPriceChartDataFromPoints(points) {
       : positive.filter((p) => p.cost >= median / 10 && p.cost <= median * 10);
 
   return usable.map((p) => ({
-    x: p.yata_ts * 1000,
+    x: p.snapshot_ts * 1000,
     y: p.cost,
-    yata_ts: p.yata_ts,
+    snapshot_ts: p.snapshot_ts,
   }));
 }
 
@@ -47,7 +47,7 @@ function buyPriceChartRange(data) {
   }
   const xMin = data[0].x;
   const nowTs = Math.floor(Date.now() / 1000);
-  const lastTs = data[data.length - 1].yata_ts;
+  const lastTs = data[data.length - 1].snapshot_ts;
   const xMax = Math.max(nowTs, lastTs) * 1000;
   return { xMin, xMax };
 }

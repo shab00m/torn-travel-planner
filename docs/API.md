@@ -73,7 +73,7 @@ Snapshot history from the database.
   "country": "uni",
   "itemId": 206,
   "points": [
-    { "yata_ts": 1783961506, "quantity": 781, "cost": 782617 }
+    { "snapshot_ts": 1783961506, "quantity": 781, "cost": 782617, "source": "YATA" }
   ]
 }
 ```
@@ -320,27 +320,81 @@ The item detail page and favorites list pass options from browser state. A bare 
 
 ---
 
+## Internal snapshot ingestion
+
+### `PUT /api/internal/snapshots`
+
+Insert observations collected outside YATA. Requires the server-only hardcoded key
+`INTERNAL_API_KEY` from `src/internal-auth.js` in the **`X-Internal-Key`** header.
+This is separate from Torn API keys and admin login; query parameters and body
+fields cannot authorize a request. The key is never sent to the frontend.
+
+**Headers:** `Content-Type: application/json`, `X-Internal-Key: <INTERNAL_API_KEY>`
+
+**Body:**
+
+```json
+{
+  "snapshots": [
+    {
+      "country": "mex",
+      "itemId": 260,
+      "name": "Dahlia",
+      "snapshot_ts": 1793799852,
+      "quantity": 100,
+      "cost": 300
+    }
+  ]
+}
+```
+
+- A batch contains 1–100 records, with all fields above required.
+- `country` must be one of the codes returned by `/api/countries`.
+- `itemId` is a positive 32-bit integer; `name` is trimmed and limited to 255 characters.
+- `snapshot_ts` is positive Unix **seconds**, at most 60 seconds ahead of the server clock.
+- `quantity` and `cost` are non-negative safe integers (JSON numbers).
+- Omit `source`: the server always records `API` and rejects attempts to specify it.
+- Duplicate `(country, itemId, snapshot_ts)` identities within a batch are invalid.
+
+**Response (200):** `{ "ok": true, "inserted": 1, "skipped": 0, "source": "API" }`
+
+An existing country/item/timestamp is skipped, regardless of its source. Repeating
+a request does not overwrite quantities, prices, or attribution. All observations
+and derived restock changes in a batch commit together. Historical observations
+rebuild the affected item's retained restock/depletion history in timestamp order.
+Concurrent YATA and API ingestion is serialized per country/item.
+
+**Errors:** 401 for a missing/incorrect key; 400 for an invalid batch (no writes);
+500 if persistence fails (the transaction rolls back).
+
+Imports appear in database-backed history and analysis, including the admin Data
+Inspector's Source column. `/api/stocks` continues to expose the latest in-memory
+YATA response. The same 30-day snapshot retention applies to both sources.
+
+---
+
 ## Snapshots (manual edit)
 
 Mutating snapshot routes require a whitelisted admin (`X-Api-Key` or `apiKey` in the body). The Data Inspector UI is only shown to admins.
 
-### `GET /api/snapshots/:country/:itemId/:yataTs`
+### `GET /api/snapshots/:country/:itemId/:snapshotTs`
 
-**Response:** `{ country, itemId, yata_ts, quantity, cost }`
+**Response:** `{ country, itemId, snapshot_ts, quantity, cost, source }`
 
 ---
 
-### `PATCH /api/snapshots/:country/:itemId/:yataTs`
+### `PATCH /api/snapshots/:country/:itemId/:snapshotTs`
 
-Admin only. Update snapshot fields. Changing `yata_ts` replaces the primary-key row.
+Admin only. Update snapshot fields. Changing `snapshot_ts` replaces the primary-key row.
+The observation's original `source` is preserved.
 
-**Body:** any of `{ yata_ts, quantity, cost }`
+**Body:** any of `{ snapshot_ts, quantity, cost }`
 
 **Response:** `{ ok, snapshot, restocks, rates }`
 
 ---
 
-### `DELETE /api/snapshots/:country/:itemId/:yataTs`
+### `DELETE /api/snapshots/:country/:itemId/:snapshotTs`
 
 Admin only.
 
@@ -352,7 +406,7 @@ Admin only.
 
 Admin only. Bulk delete.
 
-**Body:** `{ "yata_ts": [1783961506, 1783960900] }`
+**Body:** `{ "snapshot_ts": [1783961506, 1783960900] }`
 
 **Response:** `{ ok, deleted, restocks, rates }`
 

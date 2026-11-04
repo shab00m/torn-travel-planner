@@ -12,7 +12,7 @@ Developer-oriented overview of how Torn Travel Planner is put together. Product 
 | Frontend | Vanilla JS + Chart.js under `public/` (no bundler) |
 | Hosting | One Railway project: web app, two cron services, Postgres |
 
-There is no framework, ORM, or test runner. Schema is versioned SQL in `migrations/`, applied by `src/migrate.js` on `npm run migrate` and again when the server starts (`initDb()`).
+There is no frontend framework or ORM. Tests use Node's built-in runner (`npm test`). Schema is versioned SQL in `migrations/`, applied by `src/migrate.js` on `npm run migrate` and again when the server starts (`initDb()`).
 
 ## Runtime topology
 
@@ -49,7 +49,7 @@ Do not point the web service at `railway.cron.toml` or `railway.market-cron.toml
    A 15-second deadline covers both the fetch and response body. It aborts the request and releases the poller even if the network operation fails to settle after abort; late responses are discarded.
 2. The latest payload is kept in memory and served as `GET /api/stocks`.
 3. Persistence is queued separately so a slow `saveSnapshot` cannot skip the next fetch.
-4. `saveSnapshot` inserts new `(country, item_id, yata_ts)` rows (deduped on YATA’s per-country update time) and opens/closes `restocks` rows when quantity hits 0 or returns.
+4. `saveSnapshot` inserts new `(country, item_id, snapshot_ts)` rows (deduped on YATA’s per-country update time) and opens/closes `restocks` rows when quantity hits 0 or returns.
 
 ### Item page
 
@@ -74,7 +74,7 @@ Timestamps are Unix seconds (`BIGINT`). `pg` parses `INT8` as JS numbers.
 | Table | Role |
 | --- | --- |
 | `items` | Catalogue (`item_id`, `name`, `item_type`) |
-| `snapshots` | Raw YATA stock samples; PK `(country, item_id, yata_ts)` |
+| `snapshots` | YATA/API stock observations; PK `(country, item_id, snapshot_ts)`; `source` is `YATA` or `API` |
 | `restocks` | Depletion/refill cycles; PK `(country, item_id, depleted_ts)` |
 | `market_prices` | Cached Torn average item-market price |
 | `restock_amounts` | Admin-set typical restock quantity |
@@ -83,6 +83,22 @@ Timestamps are Unix seconds (`BIGINT`). `pg` parses `INT8` as JS numbers.
 | `page_views` | Page-load analytics |
 | `depletion_rate_tod` | Minute-weighted average rate by UTC hour-of-day |
 | `schema_migrations` | Applied migration IDs |
+
+`014_snapshot_source.sql` renames `yata_ts` to `snapshot_ts` without rewriting the
+timestamps or dropping indexes, and attributes existing rows to `YATA`. Current
+queries, frontend data fields, admin tools, retention, and SQLite import targets
+use `snapshot_ts`; legacy SQLite source files still use `yata_ts`.
+
+`PUT /api/internal/snapshots` accepts up to 100 observations using the hardcoded
+server-only `X-Internal-Key` in `src/internal-auth.js`. Source is assigned by the
+server. Both ingestion paths use a shared transactional writer with ordered
+per-item advisory locks. New live observations incrementally update restocks;
+historical or multi-observation inserts replay the affected retained timeline.
+Conflicting identities are skipped without changing the original source or data.
+
+The column rename is incompatible with old running code. Coordinate the web and
+cron rollout so old processes cannot query the database after migration, especially
+the daily cron's retention query. No Railway project or service identities change.
 
 Important `restocks` columns beyond the PK:
 

@@ -17,8 +17,8 @@ async function many(db, text, params = []) {
 }
 
 /**
- * Last snapshot with quantity > 0 and yata_ts < beforeTs.
- * @param {{ yata_ts: number, quantity: number }[]} snapshots ascending by yata_ts
+ * Last snapshot with quantity > 0 and snapshot_ts < beforeTs.
+ * @param {{ snapshot_ts: number, quantity: number }[]} snapshots ascending by snapshot_ts
  */
 export function lastPositiveBefore(snapshots, beforeTs) {
   let lo = 0;
@@ -26,7 +26,7 @@ export function lastPositiveBefore(snapshots, beforeTs) {
   let idx = -1;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
-    if (snapshots[mid].yata_ts < beforeTs) {
+    if (snapshots[mid].snapshot_ts < beforeTs) {
       idx = mid;
       lo = mid + 1;
     } else {
@@ -42,11 +42,11 @@ export function lastPositiveBefore(snapshots, beforeTs) {
 /**
  * Build rate windows from restock events + full snapshot history (backfill only).
  * @param {{ depleted_ts: number, restocked_ts: number|null, ignored?: boolean|number }[]} events
- * @param {{ yata_ts: number, quantity: number }[]} snapshots
+ * @param {{ snapshot_ts: number, quantity: number }[]} snapshots
  */
 export function computeRateWindowsFromSnapshots(events, snapshots) {
   const qtyAt = new Map();
-  for (const row of snapshots) qtyAt.set(row.yata_ts, row.quantity);
+  for (const row of snapshots) qtyAt.set(row.snapshot_ts, row.quantity);
   const latest = snapshots.length ? snapshots[snapshots.length - 1] : null;
 
   /** @type {{ depleted_ts: number, start_ts: number, end_ts: number, start_qty: number, end_qty: number, open: boolean }[]} */
@@ -64,8 +64,8 @@ export function computeRateWindowsFromSnapshots(events, snapshots) {
     const nextDepletion = events[i + 1]?.depleted_ts;
     if (nextDepletion != null) {
       const lastPositive = lastPositiveBefore(snapshots, nextDepletion);
-      if (lastPositive && lastPositive.yata_ts > startTs) {
-        endTs = lastPositive.yata_ts;
+      if (lastPositive && lastPositive.snapshot_ts > startTs) {
+        endTs = lastPositive.snapshot_ts;
         endQty = lastPositive.quantity;
       } else {
         endTs = nextDepletion;
@@ -73,7 +73,7 @@ export function computeRateWindowsFromSnapshots(events, snapshots) {
       }
     } else {
       if (!latest || latest.quantity === 0) continue;
-      endTs = latest.yata_ts;
+      endTs = latest.snapshot_ts;
       endQty = latest.quantity;
       open = true;
     }
@@ -137,9 +137,9 @@ export async function fillRateWindowsForItem(db, country, itemId, options = {}) 
   const events = await many(db, eventSql, eventParams);
   const snapshots = await many(
     db,
-    `SELECT yata_ts, quantity FROM snapshots
+    `SELECT snapshot_ts, quantity FROM snapshots
      WHERE country = $1 AND item_id = $2
-     ORDER BY yata_ts ASC`,
+     ORDER BY snapshot_ts ASC`,
     [country, itemId]
   );
   const windows = computeRateWindowsFromSnapshots(events, snapshots);
@@ -165,7 +165,7 @@ export async function finalizeRateWindowOnDepletion(client, country, itemId, dep
     const start = await one(
       client,
       `SELECT quantity FROM snapshots
-       WHERE country = $1 AND item_id = $2 AND yata_ts = $3`,
+       WHERE country = $1 AND item_id = $2 AND snapshot_ts = $3`,
       [country, itemId, prev.restocked_ts]
     );
     startQty = start?.quantity;
@@ -174,17 +174,17 @@ export async function finalizeRateWindowOnDepletion(client, country, itemId, dep
 
   const lastPositive = await one(
     client,
-    `SELECT yata_ts, quantity FROM snapshots
-     WHERE country = $1 AND item_id = $2 AND yata_ts < $3 AND quantity > 0
-     ORDER BY yata_ts DESC
+    `SELECT snapshot_ts, quantity FROM snapshots
+     WHERE country = $1 AND item_id = $2 AND snapshot_ts < $3 AND quantity > 0
+     ORDER BY snapshot_ts DESC
      LIMIT 1`,
     [country, itemId, depletedTs]
   );
 
   let endTs;
   let endQty;
-  if (lastPositive && lastPositive.yata_ts > prev.restocked_ts) {
-    endTs = lastPositive.yata_ts;
+  if (lastPositive && lastPositive.snapshot_ts > prev.restocked_ts) {
+    endTs = lastPositive.snapshot_ts;
     endQty = lastPositive.quantity;
   } else {
     endTs = depletedTs;
@@ -221,9 +221,9 @@ export async function getDepletionRates(country, itemId, limit) {
     ),
     one(
       pool,
-      `SELECT yata_ts, quantity FROM snapshots
+      `SELECT snapshot_ts, quantity FROM snapshots
        WHERE country = $1 AND item_id = $2
-       ORDER BY yata_ts DESC
+       ORDER BY snapshot_ts DESC
        LIMIT 1`,
       [country, itemId]
     ),
@@ -253,14 +253,14 @@ export async function getDepletionRates(country, itemId, limit) {
     // Open in-stock window: only the latest restock cycle can still be depleting.
     if (i !== events.length - 1 || row.rate_end_ts != null) continue;
     if (!latest || latest.quantity === 0) continue;
-    if (latest.yata_ts <= startTs) continue;
+    if (latest.snapshot_ts <= startTs) continue;
     const startQty = row.rate_start_qty;
     if (!startQty) continue;
-    const minutes = (latest.yata_ts - startTs) / 60;
+    const minutes = (latest.snapshot_ts - startTs) / 60;
     if (minutes <= 0) continue;
     windows.push({
       start_ts: startTs,
-      end_ts: latest.yata_ts,
+      end_ts: latest.snapshot_ts,
       start_qty: startQty,
       end_qty: latest.quantity,
       rate: (startQty - latest.quantity) / minutes,
