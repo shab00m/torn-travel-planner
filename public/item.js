@@ -2108,6 +2108,8 @@ function externalChartTooltip(context) {
       } else if (predicted) {
         line += " (predicted)";
       }
+      const source = predicted ? "Prediction" : ["API", "YATA"].includes(raw?.source) ? raw.source : "Unknown";
+      line += `<br>Source: ${source}`;
       return `<div>${line}</div>`;
     })
     .join("");

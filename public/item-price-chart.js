@@ -39,6 +39,7 @@ function buyPriceChartDataFromPoints(points) {
     x: p.snapshot_ts * 1000,
     y: p.cost,
     snapshot_ts: p.snapshot_ts,
+    source: p.source,
   }));
 }
 
@@ -68,6 +69,7 @@ function buyPriceChartOptions(xMin, xMax) {
         callbacks: {
           title: (items) => fmtTime(Math.round(items[0].parsed.x / 1000)),
           label: (ctx) => `Buy price: ${fmtMoney(ctx.parsed.y)}`,
+          afterLabel: (ctx) => `Source: ${["API", "YATA"].includes(ctx.raw?.source) ? ctx.raw.source : "Unknown"}`,
         },
       },
     },
