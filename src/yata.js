@@ -2,6 +2,7 @@ import { saveSnapshot } from "./db.js";
 
 const YATA_URL = "https://yata.yt/api/v1/travel/export/";
 const POLL_INTERVAL_MS = 60_000;
+const FETCH_TIMEOUT_MS = 15_000;
 
 let latest = null; // last successful payload, served to the frontend
 let lastError = null;
@@ -11,15 +12,34 @@ let persistInFlight = false;
 let persistQueued = null;
 
 async function fetchOnce() {
-	const res = await fetch(YATA_URL, { signal: AbortSignal.timeout(15_000) });
-	if (!res.ok) {
-		throw new Error(`YATA responded with HTTP ${res.status}`);
+	const controller = new AbortController();
+	let timer;
+	const deadline = new Promise((_, reject) => {
+		timer = setTimeout(() => {
+			const error = new Error(`YATA fetch timed out after ${FETCH_TIMEOUT_MS / 1000}s`);
+			// Release the poller even if fetch/body reading fails to settle on abort.
+			reject(error);
+			controller.abort(error);
+		}, FETCH_TIMEOUT_MS);
+	});
+	try {
+		return await Promise.race([
+			(async () => {
+				const res = await fetch(YATA_URL, { signal: controller.signal });
+				if (!res.ok) {
+					throw new Error(`YATA responded with HTTP ${res.status}`);
+				}
+				const payload = await res.json();
+				if (!payload?.stocks) {
+					throw new Error("YATA payload is missing the 'stocks' field");
+				}
+				return payload;
+			})(),
+			deadline,
+		]);
+	} finally {
+		clearTimeout(timer);
 	}
-	const payload = await res.json();
-	if (!payload?.stocks) {
-		throw new Error("YATA payload is missing the 'stocks' field");
-	}
-	return payload;
 }
 
 async function persistStocks(stocks) {

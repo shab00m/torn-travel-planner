@@ -4,3 +4,4 @@
 [deploy]
 startCommand = "node scripts/cron-market.mjs"
 cronSchedule = "*/5 * * * *"
+restartPolicyType = "NEVER"

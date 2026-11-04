@@ -46,6 +46,7 @@ Do not point the web service at `railway.cron.toml` or `railway.market-cron.toml
 ### Live stocks (home page)
 
 1. `startPolling()` in `src/yata.js` fetches `https://yata.yt/api/v1/travel/export/` every 60s.
+   A 15-second deadline covers both the fetch and response body. It aborts the request and releases the poller even if the network operation fails to settle after abort; late responses are discarded.
 2. The latest payload is kept in memory and served as `GET /api/stocks`.
 3. Persistence is queued separately so a slow `saveSnapshot` cannot skip the next fetch.
 4. `saveSnapshot` inserts new `(country, item_id, yata_ts)` rows (deduped on YATA’s per-country update time) and opens/closes `restocks` rows when quantity hits 0 or returns.
