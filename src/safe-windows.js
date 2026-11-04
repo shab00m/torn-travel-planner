@@ -1,3 +1,4 @@
+import { nextRestock, simulateStockPredictions } from "../public/stock-predictions.js";
 import {
   getRestocks,
   getDepletionRates,
@@ -248,20 +249,6 @@ function createContext({
     return emptyForBounds.avgEmptyFor ?? null;
   }
 
-  /** When the selected empty-for already elapsed, step up to the next historical duration after now. */
-  function openCycleRestockSec(depletedTs, selectedRestockSec, nowTs) {
-    if (depletedTs == null || nowTs == null) return selectedRestockSec;
-    if (depletedTs + selectedRestockSec > nowTs) return selectedRestockSec;
-
-    const durations = getUsableCompletedRestocks()
-      .map((r) => r.adjusted_duration)
-      .filter((d) => d != null && d > 0);
-    const next = [...new Set(durations)]
-      .sort((a, b) => a - b)
-      .find((d) => depletedTs + d > nowTs);
-    return next ?? selectedRestockSec;
-  }
-
   function getAverages() {
     const restockSec = stockoutSecFromHistory();
     const rate = rateForAverages();
@@ -278,68 +265,16 @@ function createContext({
   }
 
   function simulatePredictions(startTs, endTs, startQty, averages, nowTs = wallTs ?? startTs) {
-    const { restockSec, rate: avgRate, restockQty } = averages;
-    const events = [];
-    const segments = [];
     const open = startQty === 0 ? restocks.find((r) => r.restocked_ts == null) : null;
-
-    let t = startTs;
-    let qty = startQty;
-    let outOfStock = startQty === 0;
-    const openCycleKey = open?.depleted_ts ?? null;
-    let depletedTs = open ? effectiveDepletedTs(open) : null;
-    let firstOpenCycle = outOfStock;
-
-    while (t < endTs) {
-      if (outOfStock) {
-        const sec =
-          firstOpenCycle && depletedTs != null
-            ? openCycleRestockSec(depletedTs, restockSec, nowTs)
-            : restockSec;
-        const cycleKey = firstOpenCycle ? openCycleKey : depletedTs;
-        firstOpenCycle = false;
-        const restockTs = Math.round(
-          depletedTs ? Math.max(t, depletedTs + sec) : t + sec
-        );
-        if (restockTs > endTs) break;
-        events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: cycleKey });
-        t = restockTs;
-        qty = restockQty;
-        outOfStock = false;
-        depletedTs = null;
-        continue;
-      }
-
-      const rate = depletionRateForCycle(t, startTs, startQty, avgRate);
-      const depleteSec = (qty / rate) * 60;
-      const depleteTs = Math.round(t + depleteSec);
-      if (depleteTs >= endTs) {
-        segments.push({
-          start_ts: t,
-          end_ts: endTs,
-          start_qty: qty,
-          end_qty: qty - rate * ((endTs - t) / 60),
-          rate,
-        });
-        break;
-      }
-
-      segments.push({ start_ts: t, end_ts: depleteTs, start_qty: qty, end_qty: 0, rate });
-      events.push({ type: "deplete", ts: depleteTs });
-
-      const restockTs = Math.round(depleteTs + restockSec);
-      if (restockTs > endTs) {
-        events.push({ type: "out_of_stock", start: depleteTs, end: endTs, duration: endTs - depleteTs });
-        break;
-      }
-
-      events.push({ type: "out_of_stock", start: depleteTs, end: restockTs, duration: restockSec });
-      events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: depleteTs });
-      t = restockTs;
-      qty = restockQty;
-    }
-
-    return { events, segments };
+    return simulateStockPredictions({
+      startTs, endTs, startQty, averages, nowTs,
+      openDepletedTs: open ? effectiveDepletedTs(open) : null,
+      openCycleKey: open?.depleted_ts ?? null,
+      avgEmptySec: emptyForBounds.avgEmptyFor,
+      maxEmptySec: emptyForBounds.maxEmptyFor,
+      durations: getUsableCompletedRestocks().map((r) => r.adjusted_duration),
+      rateForCycle: depletionRateForCycle,
+    });
   }
 
   function safeWindowDepletionRate() {
@@ -401,11 +336,23 @@ function createContext({
         : fallbackRate;
 
     let { earliestDepleted, latestDepleted } = initial;
+    const nowTs = wallTs ?? dataTs;
+    const configured = emptyForBounds;
+    const next = nextRestock({
+      depletedTs: latestDepleted,
+      selectedSec: configured.avgEmptyFor ?? minEmptyFor,
+      avgEmptySec: configured.avgEmptyFor,
+      maxEmptySec: configured.maxEmptyFor,
+      nowTs, restockQty, rateAt,
+    });
+    const missedShift = next.depletedTs - latestDepleted;
+    earliestDepleted += missedShift;
+    latestDepleted += missedShift;
     const windows = [];
 
     for (let i = 0; i < 100; i++) {
-      const restockEarliest = earliestDepleted + minEmptyFor;
-      const restockLatest = latestDepleted + maxEmptyFor;
+      const restockEarliest = Math.max(nowTs + 60, earliestDepleted + minEmptyFor);
+      const restockLatest = Math.max(nowTs + 60, latestDepleted + maxEmptyFor);
       const depleteSecEarliest = (restockQty / rateAt(restockEarliest)) * 60;
       const depleteSecLatest = (restockQty / rateAt(restockLatest)) * 60;
 
@@ -557,7 +504,7 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
     emptyForBounds,
   });
 
-  const endTs = dataTs + opts.predictionHours * 3600;
+  const endTs = Math.max(dataTs, opts.wallTs) + opts.predictionHours * 3600;
   let flightSec;
   try {
     flightSec = getFlightSeconds(country, opts.travelType);

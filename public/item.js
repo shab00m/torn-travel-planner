@@ -872,20 +872,6 @@ function stockoutSecFromHistory() {
   return currentEmptyForBounds().avgEmptyFor;
 }
 
-/** When the selected empty-for already elapsed, step up to the next historical duration after now. */
-function openCycleRestockSec(depletedTs, selectedRestockSec, nowTs) {
-  if (depletedTs == null || nowTs == null) return selectedRestockSec;
-  if (depletedTs + selectedRestockSec > nowTs) return selectedRestockSec;
-
-  const durations = getUsableCompletedRestocks()
-    .map((r) => r.adjusted_duration)
-    .filter((d) => d != null && d > 0);
-  const next = [...new Set(durations)]
-    .sort((a, b) => a - b)
-    .find((d) => depletedTs + d > nowTs);
-  return next ?? selectedRestockSec;
-}
-
 function rateFromHistory() {
   const windows = getUsableRates();
   const rates = windows.map((w) => w.rate).filter((r) => r != null && r > 0);
@@ -926,70 +912,17 @@ function getAverages() {
   };
 }
 
-function simulatePredictions(startTs, endTs, startQty, averages, nowTs = startTs) {
-  const { restockSec, rate: avgRate, restockQty } = averages;
-  const events = [];
-  const segments = [];
-  const open =
-    startQty === 0 ? state.restocks.find((r) => r.restocked_ts == null) : null;
-
-  let t = startTs;
-  let qty = startQty;
-  let outOfStock = startQty === 0;
-  const openCycleKey = open?.depleted_ts ?? null;
-  let depletedTs = open ? effectiveDepletedTs(open) : null;
-  let firstOpenCycle = outOfStock;
-
-  while (t < endTs) {
-    if (outOfStock) {
-      const sec =
-        firstOpenCycle && depletedTs != null
-          ? openCycleRestockSec(depletedTs, restockSec, nowTs)
-          : restockSec;
-      const cycleKey = firstOpenCycle ? openCycleKey : depletedTs;
-      firstOpenCycle = false;
-      const restockTs = Math.round(
-        depletedTs ? Math.max(t, depletedTs + sec) : t + sec
-      );
-      if (restockTs > endTs) break;
-      events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: cycleKey });
-      t = restockTs;
-      qty = restockQty;
-      outOfStock = false;
-      depletedTs = null;
-      continue;
-    }
-
-    const rate = depletionRateForCycle(t, startTs, startQty, avgRate);
-    const depleteSec = (qty / rate) * 60;
-    const depleteTs = Math.round(t + depleteSec);
-    if (depleteTs >= endTs) {
-      segments.push({
-        start_ts: t,
-        end_ts: endTs,
-        start_qty: qty,
-        end_qty: qty - rate * ((endTs - t) / 60),
-        rate,
-      });
-      break;
-    }
-
-    segments.push({ start_ts: t, end_ts: depleteTs, start_qty: qty, end_qty: 0, rate });
-    events.push({ type: "deplete", ts: depleteTs });
-
-    const restockTs = Math.round(depleteTs + restockSec);
-    if (restockTs > endTs) {
-      events.push({ type: "out_of_stock", start: depleteTs, end: endTs, duration: endTs - depleteTs });
-      break;
-    }
-
-    events.push({ type: "out_of_stock", start: depleteTs, end: restockTs, duration: restockSec });
-    events.push({ type: "restock", ts: restockTs, qty: restockQty, depleted_ts: depleteTs });
-    t = restockTs;
-    qty = restockQty;
-  }
-
-  return { events, segments };
+function simulatePredictions(startTs, endTs, startQty, averages, nowTs = Math.floor(Date.now() / 1000)) {
+  const open = startQty === 0 ? state.restocks.find((r) => r.restocked_ts == null) : null;
+  return window.StockPredictions.simulateStockPredictions({
+    startTs, endTs, startQty, averages, nowTs,
+    openDepletedTs: open ? effectiveDepletedTs(open) : null,
+    openCycleKey: open?.depleted_ts ?? null,
+    avgEmptySec: currentEmptyForBounds().avgEmptyFor,
+    maxEmptySec: currentEmptyForBounds().maxEmptyFor,
+    durations: getUsableCompletedRestocks().map((r) => r.adjusted_duration),
+    rateForCycle: depletionRateForCycle,
+  });
 }
 
 function qtyAtPredicted(ts, startTs, startQty, segments, events) {
@@ -1082,7 +1015,7 @@ function buildTimeline(historicalPoints, predictionHours) {
   if (predictionHours > 0) {
     const averages = getAverages();
     if (averages) {
-      endTs = dataTs + predictionHours * 3600;
+      endTs = Math.max(dataTs, wallTs) + predictionHours * 3600;
       ({ events, segments } = simulatePredictions(
         dataTs,
         endTs,
@@ -1109,6 +1042,7 @@ function buildTimeline(historicalPoints, predictionHours) {
 
   return {
     actualData,
+    predictionWallTs: wallTs,
     predictedData,
     dataTs,
     wallTs,
@@ -1557,11 +1491,23 @@ function computeCompoundSafeWindows(dataTs, endTs, startQty) {
       : fallbackRate;
 
   let { earliestDepleted, latestDepleted } = initial;
+  const nowTs = Math.floor(Date.now() / 1000);
+  const configured = currentEmptyForBounds();
+  const next = window.StockPredictions.nextRestock({
+    depletedTs: latestDepleted,
+    selectedSec: configured.avgEmptyFor ?? minEmptyFor,
+    avgEmptySec: configured.avgEmptyFor,
+    maxEmptySec: configured.maxEmptyFor,
+    nowTs, restockQty, rateAt,
+  });
+  const missedShift = next.depletedTs - latestDepleted;
+  earliestDepleted += missedShift;
+  latestDepleted += missedShift;
   const windows = [];
 
   for (let i = 0; i < 100; i++) {
-    const restockEarliest = earliestDepleted + minEmptyFor;
-    const restockLatest = latestDepleted + maxEmptyFor;
+    const restockEarliest = Math.max(nowTs + 60, earliestDepleted + minEmptyFor);
+    const restockLatest = Math.max(nowTs + 60, latestDepleted + maxEmptyFor);
     const depleteSecEarliest = (restockQty / rateAt(restockEarliest)) * 60;
     const depleteSecLatest = (restockQty / rateAt(restockLatest)) * 60;
 
@@ -2988,7 +2934,7 @@ function redrawPrediction() {
 
 /**
  * Move NOW/ARRIVE chart lines without rebuilding datasets/predictions.
- * Full rebuilds stay on data refresh / user actions — not on the 1s ticker.
+ * The ticker rebuilds predictions when an unconfirmed restock needs to move forward.
  */
 function patchLiveChartTime(wallTs) {
   const timeline = state.lastTimeline;
@@ -3043,7 +2989,7 @@ function patchLiveChartTime(wallTs) {
   updateTimeMarkers(state.chart);
 }
 
-/** Cheap 1s UI tick; chart geometry at most every CHART_LIVE_PATCH_MS. */
+/** Update markers periodically; rebuild sooner when a restock needs to move forward. */
 const CHART_LIVE_PATCH_MS = 15_000;
 
 function startLiveChartTicker() {
@@ -3066,6 +3012,18 @@ function startLiveChartTicker() {
 
     const wallTs = Math.floor(Date.now() / 1000);
     if (wallTs === state.lastTimeline.wallTs) return;
+
+    const firstRestock = state.lastTimeline.events.find((e) => e.type === "restock");
+    const open = state.restocks.find((r) => r.restocked_ts == null);
+    const maxEmpty = currentEmptyForBounds().maxEmptyFor;
+    const missedDeadline = open && maxEmpty != null ? effectiveDepletedTs(open) + maxEmpty : null;
+    if ((firstRestock && firstRestock.ts < wallTs + 60) ||
+        (missedDeadline != null && wallTs > missedDeadline &&
+         state.lastTimeline.predictionWallTs <= missedDeadline)) {
+      redrawPrediction();
+      lastPatchMs = Date.now();
+      return;
+    }
 
     const now = Date.now();
     if (now - lastPatchMs < CHART_LIVE_PATCH_MS) {
@@ -3554,9 +3512,10 @@ window.addEventListener("restockamountchange", () => {
 });
 
 (async () => {
-  const [adjustMod, boundsMod] = await Promise.all([
+  const [adjustMod, boundsMod, predictionsMod] = await Promise.all([
     import("/adjust-restock-time.js"),
     import("/empty-for-bounds.js"),
+    import("/stock-predictions.js"),
   ]);
   window.AdjustRestockTime = {
     adjustRestockTime: adjustMod.adjustRestockTime,
@@ -3564,6 +3523,7 @@ window.addEventListener("restockamountchange", () => {
     rateFromEndpoints: adjustMod.rateFromEndpoints,
   };
   window.EmptyForBounds = boundsMod;
+  window.StockPredictions = predictionsMod;
   await window.authReady;
   syncInspectAdminAccess();
   await loadCountries();
