@@ -36,7 +36,7 @@ flowchart LR
 ```
 
 - **Web** serves static files and JSON APIs, polls YATA every 60s, and writes snapshots/restocks. It does **not** refresh Torn market prices in the background.
-- **Daily cron** purges snapshots older than 30 days and rebuilds hour-of-day depletion averages. It does not touch restock events.
+- **Daily cron** purges snapshots older than 30 days, compacts unchanged observations older than 24 hours, and rebuilds hour-of-day depletion averages. It does not touch restock events.
 - **Market cron** refreshes stale item-market average prices for travel items only (IDs that appear in `snapshots`), rate-limited to 50 Torn calls/min.
 
 Do not point the web service at `railway.cron.toml` or `railway.market-cron.toml`. Do not create a second Railway project.
@@ -70,6 +70,37 @@ Failed fetches still write `market_price = null` and `fetched_at = now`, so the 
 ## Postgres
 
 Timestamps are Unix seconds (`BIGINT`). `pg` parses `INT8` as JS numbers.
+
+### Daily snapshot compaction
+
+After the 30-day age purge, `compactUnchangedSnapshots()` removes redundant raw
+observations older than 24 hours. For each country/item, agreeing same-time
+source duplicates are represented by the API row (or YATA when no API row exists),
+then ordered by timestamp. A row is redundant only when both its previous and
+next observations have exactly the same quantity and cost, regardless of source.
+Thus the first and last rows of each unchanged run survive, retaining the time a
+quantity or price first changed. A return to an earlier value after an intervening
+change starts a separate run. For `2500,1234,0,0,0,0`, rows 1,2,3,6 survive.
+
+The cutoff is fixed at job start and strictly excludes the most recent 24 hours,
+including the exact boundary. Protected recent rows participate in the comparison
+but are never deleted; the first row of an old run still survives when that run
+continues into the protected window. Conflicting source observations at the same
+timestamp are left intact so removing an API observation cannot expose a
+previously ignored YATA value. If tied observations agree, only API is retained
+when the duplicate is old enough for compaction.
+
+Cleanup commits batches of at most 5,000 deletions per country/item, using the
+same advisory key as ingestion. `pg_try_advisory_xact_lock` skips busy items
+instead of waiting; the next daily run retries them. Materialized candidate
+batches and tuple-ID deletion avoid repeatedly computing window functions for
+each deleted row. `--dry-run` counts candidates without acquiring ingest locks
+or deleting rows.
+
+Persisted restock events and depletion-rate windows are not modified. Raw history
+becomes less granular: an explicit future backfill can only reconstruct cycles
+from the retained observations. Normal autovacuum makes deleted space reusable;
+existing database/index files may retain their allocated size.
 
 | Table | Role |
 | --- | --- |
@@ -204,7 +235,8 @@ Pool settings (`src/pg.js`): `statement_timeout` 60s (startup parameter, not a r
 | `npm run migrate` | Apply `migrations/*.sql` in ID order |
 | `npm run backfill` | Replay snapshots into restock open/close events |
 | `npm run backfill-depletion-rates` | Fill missing persisted depletion-rate columns (manual) |
-| `npm run cron-daily` | Snapshot purge + TOD rebuild (same as daily Railway cron) |
+| `npm run cron-daily` | Snapshot purge + compaction + TOD rebuild (same as daily Railway cron) |
+| `npm run compact-snapshots` | Compact unchanged snapshots older than 24 hours; add `-- --dry-run` to count only |
 | `npm run cron-market` | Refresh stale travel-item market prices (same as market cron) |
 | `npm run import-sqlite -- data/travel.db` | Copy an old SQLite file into Postgres (Node >= 23.4) |
 | `npm run pull-railway-sqlite` | Historical helper for pulling a remote SQLite file |

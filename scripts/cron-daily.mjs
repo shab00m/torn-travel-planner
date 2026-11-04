@@ -1,5 +1,5 @@
 /**
- * Railway daily cron entrypoint: snapshot retention purge, then TOD rebuild.
+ * Railway daily cron: snapshot retention purge, compaction, then TOD rebuild.
  * Must exit cleanly (close the DB pool) so the next cron tick is not skipped.
  *
  * Usage: node scripts/cron-daily.mjs
@@ -8,6 +8,7 @@ import "./load-local-env.mjs";
 import { initDb, closePool } from "../src/db.js";
 import { purgeOldSnapshots, SNAPSHOT_RETENTION_DAYS } from "../src/snapshot-retention.js";
 import { rebuildAllDepletionRateTod } from "../src/depletion-rate-tod.js";
+import { compactUnchangedSnapshots } from "../src/snapshot-compaction.js";
 
 async function main() {
   await initDb();
@@ -17,6 +18,10 @@ async function main() {
   console.log(
     `[cron] deleted ${purge.deleted} snapshot(s) older than ${new Date(purge.cutoffTs * 1000).toISOString()}`
   );
+
+  console.log("[cron] compacting unchanged snapshots older than 24 hours…");
+  const compaction = await compactUnchangedSnapshots();
+  console.log(`[cron] snapshot compaction: ${compaction.deleted} deleted, ${compaction.itemsProcessed} items processed, ${compaction.skippedBusy} busy items deferred`);
 
   console.log("[cron] rebuilding depletion-rate TOD averages…");
   const tod = await rebuildAllDepletionRateTod();

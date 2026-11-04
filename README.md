@@ -70,9 +70,15 @@ App and both cron services should have `DATABASE_URL=${{Postgres.DATABASE_URL}}`
 `torn-travel-planner-cron` runs `node scripts/cron-daily.mjs` daily at **04:00 UTC** (`railway.cron.toml`). It:
 
 1. Deletes `snapshots` older than 30 days (restock/depletion events in `restocks` are kept)
-2. Rebuilds `depletion_rate_tod` averages
+2. Compacts unchanged snapshots older than 24 hours, retaining the first and last rows in each consecutive quantity/cost run across sources
+3. Rebuilds `depletion_rate_tod` averages
 
 Config-as-code path is `railway.cron.toml`. Local run: `npm run cron-daily`.
+
+Run compaction independently with `npm run compact-snapshots`, or preview counts
+without deleting rows with `npm run compact-snapshots -- --dry-run`.
+Rows from the last 24 hours are protected, as are conflicting source observations
+at the same timestamp. Busy items are deferred to the next run.
 
 ### Market cron
 
@@ -88,13 +94,15 @@ Rebuild restocks only replaces cycles that still have matching snapshot history;
 | --- | --- |
 | `server.js` | Express app, API routes, static file serving |
 | `scripts/backfill-depletion-rates.mjs` | Manual backfill of missing depletion-rate windows |
-| `scripts/cron-daily.mjs` | Daily cron entrypoint (snapshot purge + TOD rebuild) |
+| `scripts/cron-daily.mjs` | Daily cron entrypoint (snapshot purge + compaction + TOD rebuild) |
+| `scripts/compact-snapshots.mjs` | Standalone snapshot compaction, including `--dry-run` |
 | `scripts/cron-market.mjs` | Market cron entrypoint (stale Torn price refresh) |
 | `railway.cron.toml` | Config-as-code for the daily cron service only |
 | `railway.market-cron.toml` | Config-as-code for the market cron service only |
 | `src/yata.js` | YATA API polling loop |
 | `src/db.js` | Postgres access, snapshot writes, history queries |
 | `src/snapshot-retention.js` | Snapshot age purge (keeps restocks) |
+| `src/snapshot-compaction.js` | Cross-source compaction of unchanged observations older than 24 hours |
 | `src/migrate.js` | SQL migration runner |
 | `migrations/` | Versioned schema SQL |
 | `src/countries.js` | Country code -> name/flag mapping |

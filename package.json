@@ -11,6 +11,7 @@
     "backfill": "node scripts/backfill-restocks.mjs",
     "backfill-depletion-rates": "node scripts/backfill-depletion-rates.mjs",
     "cron-daily": "node scripts/cron-daily.mjs",
+    "compact-snapshots": "node scripts/compact-snapshots.mjs",
     "cron-market": "node scripts/cron-market.mjs",
     "import-sqlite": "node scripts/import-sqlite-to-postgres.mjs",
     "pull-railway-sqlite": "node scripts/pull-railway-sqlite.mjs",
