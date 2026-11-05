@@ -552,7 +552,7 @@ function collectFavoriteItems() {
 		const data = state.stocks?.[country];
 		const item = data?.stocks.find((it) => it.id === itemId);
 		if (!item) continue;
-		favorites.push({ country, item, update: data.update });
+		favorites.push({ country, item, update: item.snapshot_ts ?? data.update });
 	}
 	return favorites;
 }
@@ -696,7 +696,7 @@ async function loadStocks() {
 			void refreshRestockAlarmsFromStocks(data);
 		}
 		clearPageError();
-		el.status.textContent = `Last update: ${fmtTime(data.timestamp)} — updates when YATA polls (~every minute)`;
+		el.status.textContent = `Last update: ${fmtTime(data.timestamp)} — live DB updates (YATA + API)`;
 		populateItemTypeFilter();
 		render();
 		await loadSafeWindows();
@@ -826,7 +826,7 @@ function collectStockRows(query) {
 		const data = state.stocks[code];
 		if (!data) continue;
 		for (const item of filterItems(data.stocks, code, query)) {
-			rows.push({ country: code, item, update: data.update });
+			rows.push({ country: code, item, update: item.snapshot_ts ?? data.update });
 		}
 	}
 	return rows;
@@ -1028,7 +1028,7 @@ window.addEventListener("hiddenitemschange", () => {
 
 window.addEventListener("timeformatchange", () => {
 	if (lastStockTimestamp != null) {
-		el.status.textContent = `Last update: ${fmtTime(lastStockTimestamp)} — updates when YATA polls (~every minute)`;
+		el.status.textContent = `Last update: ${fmtTime(lastStockTimestamp)} — live DB updates (YATA + API)`;
 	}
 	render();
 	renderFavoritesOnly();

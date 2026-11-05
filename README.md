@@ -6,6 +6,7 @@ A web app that displays live foreign stock data for [Torn](https://www.torn.com)
 
 - Live stock levels (quantity + cost) for all 11 travel destinations
 - Automatic polling of the YATA API every 60 seconds
+- Live item-chart and restock-alarm updates after DB commits, including API submissions, with a two-second polling fallback
 - Every poll is stored as a snapshot in PostgreSQL, deduplicated by YATA's per-country update timestamp
 - Click any item to see a graph of its stock quantity over time (1h / 6h / 24h / 7d / all)
 - Restock tracking: depletion (stock hits 0) and refill events are detected on every poll and stored in a `restocks` table. The item popup shades out-of-stock periods on the graph with the restock duration, lists the last 5 restock times, and shows an average over the last 1 / 3 / 5 / 10 / 20 samples

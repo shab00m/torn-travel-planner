@@ -894,6 +894,14 @@ export async function flagOutlierRestocks(country, itemId) {
   });
 }
 
+export async function getLatestSnapshot(country, itemId) {
+  return (await one(getPool(),
+    `SELECT s.snapshot_ts, s.quantity, s.cost, s.source, i.name
+     FROM snapshots s LEFT JOIN items i ON i.item_id = s.item_id
+     WHERE s.country = $1 AND s.item_id = $2
+     ORDER BY s.snapshot_ts DESC, s.source ASC LIMIT 1`, [country, itemId])) ?? null;
+}
+
 export async function getSnapshot(country, itemId, snapshotTs, source = "YATA") {
   return (
     (await one(

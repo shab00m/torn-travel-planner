@@ -16,10 +16,11 @@ const alarmState = {
   restockCheckAt: {},
   /** @type {Set<string>} */
   restockCheckInFlight: new Set(),
+  restockCheckPending: new Set(),
 };
 
-const RESTOCK_CHECK_INTERVAL_DUE_SEC = 15;
-const RESTOCK_CHECK_INTERVAL_ARMED_SEC = 30;
+const RESTOCK_CHECK_INTERVAL_DUE_SEC = 2;
+const RESTOCK_CHECK_INTERVAL_ARMED_SEC = 5;
 
 const ALARM_BEEP_PATTERN = [
   { t: 0, freq: 880, dur: 0.16 },
@@ -674,14 +675,14 @@ async function resolveDueRestockAlarm(alarm) {
     await ensureRestockAmountsForArmedAlarms();
     const [restockRes, stocksRes] = await Promise.all([
       fetch(`/api/restocks/${encodeURIComponent(alarm.country)}/${alarm.itemId}`),
-      fetch("/api/stocks"),
+      fetch(`/api/items/${encodeURIComponent(alarm.country)}/${alarm.itemId}/stock`),
     ]);
     if (!restockRes.ok) throw new Error("restocks failed");
     const restockData = await restockRes.json();
     const stocksData = stocksRes.ok ? await stocksRes.json() : null;
     const restocks = restockData.restocks || [];
     const rates = restockData.rates || [];
-    const quantity = stockQuantityForAlarm(stocksData, alarm.country, alarm.itemId);
+    const quantity = stocksData?.quantity;
 
     // Stock snapshot is authoritative: if we're waiting on a past/open cycle and
     // quantity is already > 0, fire even when the restocks row hasn't closed yet.
@@ -841,32 +842,24 @@ async function ensureRestockAmountsForArmedAlarms() {
 
 /** Called when a fresh /api/stocks payload arrives — fire without waiting on the ticker throttle. */
 async function refreshRestockAlarmsFromStocks(stocksPayload) {
-  if (!stocksPayload) return;
-  const armed = alarmState.alarms.some(
-    (a) => a.type === "restock" && !a.firedAt && !a.dismissedAt
-  );
-  if (!armed) return;
-  await ensureRestockAmountsForArmedAlarms();
-  const now = Math.floor(Date.now() / 1000);
-  for (const alarm of alarmState.alarms) {
-    if (alarm.firedAt || alarm.dismissedAt || alarm.type !== "restock") continue;
-    const qty = stockQuantityForAlarm(stocksPayload, alarm.country, alarm.itemId);
-    if (tryFireRestockAlarmOnStock(alarm, qty, now)) continue;
-  }
+  if (stocksPayload) await refreshRestockAlarmsOnStockUpdate();
 }
 
-async function refreshRestockAlarmsOnStockUpdate() {
-  try {
-    const res = await fetch("/api/stocks");
-    if (!res.ok) return;
-    await refreshRestockAlarmsFromStocks(await res.json());
-  } catch {
-    /* ticker will retry */
+async function refreshRestockAlarmsOnStockUpdate(items = null) {
+  const now = Math.floor(Date.now() / 1000);
+  for (const alarm of alarmState.alarms) {
+    if (alarm.type !== "restock" || alarm.firedAt || alarm.dismissedAt) continue;
+    if (Array.isArray(items) && !items.some((r) => r.country === alarm.country && Number(r.itemId) === Number(alarm.itemId))) continue;
+    scheduleRestockAlarmCheck(alarm, now, { force: true });
   }
 }
 
 function scheduleRestockAlarmCheck(alarm, now, { force = false } = {}) {
-  if (!alarm?.id || alarmState.restockCheckInFlight.has(alarm.id)) return;
+  if (!alarm?.id) return;
+  if (alarmState.restockCheckInFlight.has(alarm.id)) {
+    if (force) alarmState.restockCheckPending.add(alarm.id);
+    return;
+  }
   const due = fireAt(alarm) <= now;
   const interval = due || alarm.awaitActual ? RESTOCK_CHECK_INTERVAL_DUE_SEC : RESTOCK_CHECK_INTERVAL_ARMED_SEC;
   const last = alarmState.restockCheckAt[alarm.id] || 0;
@@ -875,6 +868,9 @@ function scheduleRestockAlarmCheck(alarm, now, { force = false } = {}) {
   alarmState.restockCheckInFlight.add(alarm.id);
   resolveDueRestockAlarm(alarm).finally(() => {
     alarmState.restockCheckInFlight.delete(alarm.id);
+    if (alarmState.restockCheckPending.delete(alarm.id)) {
+      scheduleRestockAlarmCheck(alarm, Math.floor(Date.now() / 1000), { force: true });
+    }
   });
 }
 
@@ -1660,6 +1656,10 @@ function initAlarms() {
   startTravelPollForAlarms();
 
   window.addEventListener("timeformatchange", () => renderAlarmsPanel());
+  if (typeof ensureSnapshotEventStream === "function") ensureSnapshotEventStream();
+  window.addEventListener("snapshotsupdated", (event) => {
+    void refreshRestockAlarmsOnStockUpdate(event.detail?.items ?? null);
+  });
   window.addEventListener("stocksupdated", () => {
     void refreshRestockAlarmsOnStockUpdate();
   });

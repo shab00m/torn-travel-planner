@@ -491,11 +491,6 @@ async function loadCountries() {
 
 let lastKnownStockTimestamp = null;
 
-/** YATA export cadence — matches server poll interval in src/yata.js. */
-const STOCK_UPDATE_PERIOD_SEC = 60;
-const STOCK_UPDATE_SLACK_SEC = 1;
-const STOCK_UPDATE_FAST_POLL_MS = 5000;
-
 function noteStockTimestamp(timestamp, { announce = false } = {}) {
   if (!Number.isInteger(timestamp) || timestamp <= 0) return;
   const prev = lastKnownStockTimestamp;
@@ -505,69 +500,83 @@ function noteStockTimestamp(timestamp, { announce = false } = {}) {
   }
 }
 
-/** Ms until shortly after the next expected YATA timestamp (period + slack). */
-function msUntilExpectedStockUpdate(timestamp) {
-  const nextAtMs = (timestamp + STOCK_UPDATE_PERIOD_SEC + STOCK_UPDATE_SLACK_SEC) * 1000;
-  return Math.max(0, nextAtMs - Date.now());
+let snapshotEventStream = null;
+
+/** One shared push connection per tab, also used by alarms outside item pages. */
+function ensureSnapshotEventStream() {
+  if (snapshotEventStream || typeof EventSource === "undefined") return;
+  snapshotEventStream = new EventSource("/api/snapshots/events");
+  snapshotEventStream.addEventListener("snapshots", (event) => {
+    try { window.dispatchEvent(new CustomEvent("snapshotsupdated", { detail: JSON.parse(event.data) })); }
+    catch { /* Polling catches up if an event is malformed. */ }
+  });
+  snapshotEventStream.addEventListener("ready", () => {
+    window.dispatchEvent(new CustomEvent("snapshotsupdated", { detail: { items: null } }));
+  });
 }
 
-/**
- * Watch for new YATA snapshots and run onUpdate when the server timestamp changes.
- * After a fresh timestamp, sleep until ~period+1s later; if the update is late,
- * poll every 5s until it arrives, then sleep again.
- */
+window.addEventListener("pagehide", () => { snapshotEventStream?.close(); snapshotEventStream = null; });
+window.addEventListener("pageshow", () => ensureSnapshotEventStream());
+
+/** Push after DB commit, with two-second revision polling as a fallback. */
 function startStockUpdateWatcher(onUpdate) {
-  let busy = false;
-  let timer = null;
   let stopped = false;
-
-  function schedule(delayMs) {
-    if (stopped) return;
-    if (timer != null) clearTimeout(timer);
-    timer = setTimeout(() => {
-      timer = null;
-      void check();
-    }, delayMs);
-  }
-
-  async function check() {
-    if (busy || stopped) return;
+  let busy = false;
+  let pending = false;
+  let refreshTimer = null;
+  let pollTimer = null;
+  let lastRevision = null;
+  let lastTimestamp = lastKnownStockTimestamp;
+  async function refresh() {
+    refreshTimer = null;
+    if (stopped || busy || !pending) return;
+    pending = false;
     busy = true;
-    try {
-      const data = await fetchJson("/api/stocks/status");
-      if (!data.ready || !Number.isInteger(data.timestamp)) {
-        schedule(STOCK_UPDATE_FAST_POLL_MS);
-        return;
-      }
-
-      if (lastKnownStockTimestamp === null) {
-        noteStockTimestamp(data.timestamp);
-        schedule(msUntilExpectedStockUpdate(data.timestamp));
-        return;
-      }
-
-      if (lastKnownStockTimestamp === data.timestamp) {
-        // Expected refresh not in yet — poll quickly until it appears.
-        schedule(STOCK_UPDATE_FAST_POLL_MS);
-        return;
-      }
-
-      noteStockTimestamp(data.timestamp, { announce: true });
-      await onUpdate(data.timestamp);
-      schedule(msUntilExpectedStockUpdate(data.timestamp));
-    } catch {
-      // Transient errors: retry soon.
-      schedule(STOCK_UPDATE_FAST_POLL_MS);
-    } finally {
+    let failed = false;
+    try { await onUpdate(); }
+    catch { pending = true; failed = true; }
+    finally {
       busy = false;
+      if (pending && !stopped) refreshTimer = setTimeout(refresh, failed ? 2000 : 200);
     }
   }
-
+  function requestRefresh() {
+    pending = true;
+    if (!busy && refreshTimer == null) refreshTimer = setTimeout(refresh, 100);
+  }
+  function changed(event) {
+    const detail = event.detail;
+    const item = state.item;
+    if (item && Array.isArray(detail?.items) && !detail.items.some((r) =>
+      r.country === item.country && Number(r.itemId) === Number(item.itemId))) return;
+    if (detail?.revision) lastRevision = detail.revision;
+    requestRefresh();
+  }
+  async function check() {
+    if (stopped) return;
+    try {
+      const item = state.item;
+      const query = item ? `?country=${encodeURIComponent(item.country)}&itemId=${item.itemId}` : "";
+      const data = await fetchJson(`/api/stocks/status${query}`);
+      if (data.snapshotRevision !== lastRevision || data.timestamp !== lastTimestamp || pending) {
+        lastRevision = data.snapshotRevision;
+        lastTimestamp = data.timestamp;
+        requestRefresh();
+      }
+    } catch { /* Retry on the next fallback tick. */ }
+    finally { if (!stopped) pollTimer = setTimeout(check, 2000); }
+  }
+  window.addEventListener("snapshotsupdated", changed);
+  const visible = () => { if (document.visibilityState === "visible") requestRefresh(); };
+  document.addEventListener("visibilitychange", visible);
+  ensureSnapshotEventStream();
   void check();
   return () => {
     stopped = true;
-    if (timer != null) clearTimeout(timer);
-    timer = null;
+    clearTimeout(refreshTimer);
+    clearTimeout(pollTimer);
+    window.removeEventListener("snapshotsupdated", changed);
+    document.removeEventListener("visibilitychange", visible);
   };
 }
 

@@ -43,13 +43,41 @@ Do not point the web service at `railway.cron.toml` or `railway.market-cron.toml
 
 ## Request and data flow
 
+### Live browser updates
+
+`016_snapshot_notifications.sql` installs an AFTER INSERT statement trigger that
+sends one `snapshot_updates` PostgreSQL notification per affected country/item.
+Notifications are delivered after commit, including writes made outside Express.
+One dedicated pool connection per web process listens and relays them through
+`GET /api/snapshots/events` as server-sent events. It reconnects on DB interruption,
+maintains global/per-item revision tokens, and sends periodic heartbeats.
+
+Each browser tab shares one EventSource connection. Item and price charts coalesce
+pushes for about 100 ms, filter unrelated items, and queue a follow-up if an insert
+arrives during an existing refresh. A lightweight two-second revision poll covers
+missed/disconnected streams, and returning to a visible tab refreshes immediately.
+Only changed revisions redraw the chart; the fallback does not poll full history
+every two seconds. Restock alarms bypass their throttle on matching push events;
+their normal fallback checks are every two seconds when due or five seconds while
+armed. DB-backed latest-stock reads ensure API observations reach quantities and
+alarms immediately, without waiting for YATA's separate 60-second polling loop.
+
 ### Live stocks (home page)
 
 1. `startPolling()` in `src/yata.js` fetches `https://yata.yt/api/v1/travel/export/` every 60s.
    A 15-second deadline covers both the fetch and response body. It aborts the request and releases the poller even if the network operation fails to settle after abort; late responses are discarded.
-2. The latest payload is kept in memory and served as `GET /api/stocks`.
+2. The latest YATA payload is kept internally in memory; public stock endpoints read committed DB observations from both sources.
 3. Persistence is queued separately so a slow `saveSnapshot` cannot skip the next fetch.
 4. `saveSnapshot` inserts new `(country, item_id, snapshot_ts, source)` rows (deduped per source on the observation timestamp) and opens/closes `restocks` rows when quantity hits 0 or returns.
+
+`src/current-stocks.js` builds `/api/stocks` using indexed latest-row lookups per
+known item/destination, instead of repeatedly scanning raw history. The original
+country-grouped response shape remains compatible, with per-item `source` and
+`snapshot_ts` added. Country and global timestamps are maxima of the selected DB
+observations. Shared reads expire after two seconds and invalidate on snapshot
+revision changes; an older in-flight query cannot overwrite a newer revision.
+`/api/stocks/status` also uses DB readiness/timestamps, with a direct indexed lookup
+for a scoped item. Both endpoints work with API-only data while YATA is unavailable.
 
 ### Item page
 

@@ -61,6 +61,20 @@ test("snapshot migration and ingestion against PostgreSQL", {
       assert.equal(await db.saveSnapshot(yata(90, 888)), 0);
       assert.equal((await db.getSnapshot("mex", itemId, ts + 90, "YATA")).quantity, 0);
       assert.equal((await db.getSnapshot("mex", itemId, ts + 90, "API")).quantity, 50);
+      const latest = await db.getLatestSnapshot("mex", itemId);
+      assert.equal(latest.source, "API");
+      assert.equal(latest.quantity, 50);
+      assert.equal(latest.snapshot_ts, ts + 90);
+      const { loadCurrentStocks } = await import("../src/current-stocks.js");
+      const feed = await loadCurrentStocks();
+      assert.equal(feed.stocks.mex.stocks.find((r) => r.id === itemId).quantity, 50);
+      assert.equal(feed.stocks.mex.stocks.find((r) => r.id === itemId).source, "API");
+      assert.equal(feed.timestamp, ts + 90);
+      await db.saveSnapshot(yata(95, 25));
+      const newer = await loadCurrentStocks();
+      assert.equal(newer.stocks.mex.stocks.find((r) => r.id === itemId).quantity, 25);
+      assert.equal(newer.stocks.mex.stocks.find((r) => r.id === itemId).source, "YATA");
+      await db.deleteSnapshot("mex", itemId, ts + 95, "YATA");
       const effective = await db.getHistory("mex", itemId, 0, { effective: true });
       assert.equal(effective.filter((r) => r.snapshot_ts === ts + 90).length, 1);
       assert.equal(effective.at(-1).quantity, 50);
@@ -153,6 +167,41 @@ test("snapshot migration and ingestion against PostgreSQL", {
       const { purgeOldSnapshots } = await import("../src/snapshot-retention.js");
       assert.equal((await purgeOldSnapshots()).deleted, 2);
       assert.equal((await db.getHistory("mex", itemId, 0)).length, 11);
+    });
+    await t.test("notifications arrive after commit, and rolled-back writes do not notify", async () => {
+      const listener = await pool.connect();
+      const writer = await pool.connect();
+      const received = [];
+      let delivered;
+      const arrival = new Promise((resolve) => { delivered = resolve; });
+      const onNotification = (event) => {
+        const payload = JSON.parse(event.payload);
+        if (payload.itemId === 999997) { received.push(payload); delivered(); }
+      };
+      listener.on("notification", onNotification);
+      try {
+        await listener.query("LISTEN snapshot_updates");
+        await writer.query("BEGIN");
+        await writer.query("INSERT INTO snapshots VALUES ('mex',999997,$1,1,1,'API')", [ts]);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(received.length, 0);
+        await writer.query("COMMIT");
+        let deadline;
+        try { await Promise.race([arrival, new Promise((_, reject) => {
+          deadline = setTimeout(() => reject(new Error("No commit notification")), 2000);
+        })]); } finally { clearTimeout(deadline); }
+        assert.equal(received.length, 1);
+        assert.equal(received[0].snapshot_ts, ts);
+        await writer.query("BEGIN");
+        await writer.query("INSERT INTO snapshots VALUES ('mex',999997,$1,2,1,'API')", [ts + 1]);
+        await writer.query("ROLLBACK");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        assert.equal(received.length, 1);
+      } finally {
+        listener.removeListener("notification", onNotification);
+        await listener.query("UNLISTEN snapshot_updates");
+        listener.release(); writer.release();
+      }
     });
   } finally {
     await closePool();

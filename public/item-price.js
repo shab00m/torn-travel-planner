@@ -22,7 +22,7 @@ async function drawChart() {
 
     const data = buyPriceChartDataFromPoints(history.points);
     el.itemEmpty.classList.toggle("hidden", data.length > 0);
-    el.status.textContent = `${history.points.length} snapshots in range — updates when YATA polls (~every minute)`;
+    el.status.textContent = `${history.points.length} snapshots in range — live DB updates (YATA + API)`;
     el.status.classList.remove("error");
 
     if (!data.length) {

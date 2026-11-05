@@ -7,6 +7,7 @@ import {
   initDb,
   ensureAdjustedRestocks,
   getHistory,
+  getLatestSnapshot,
   getRestocks,
   getDepletionRates,
   getSnapshot,
@@ -24,7 +25,7 @@ import {
   getAllEmptyForBounds,
   setEmptyForBounds,
 } from "./src/db.js";
-import { startPolling, getLatest } from "./src/yata.js";
+import { startPolling } from "./src/yata.js";
 import { getTravelStatus } from "./src/torn.js";
 import {
   getMarketPrice,
@@ -38,10 +39,14 @@ import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
 import { listUsers, createUser, updateUser, deleteUser, seedBootstrapAdmin } from "./src/users.js";
 import { recordPageView, listPageViews, getClientIp } from "./src/analytics.js";
 import { createInternalSnapshotsRouter } from "./src/internal-snapshots.js";
+import { createSnapshotEvents } from "./src/snapshot-events.js";
+import { createCurrentStocksReader } from "./src/current-stocks.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
+const snapshotEvents = createSnapshotEvents();
+const readCurrentStocks = createCurrentStocksReader(snapshotEvents.revision);
 
 // Railway (and other reverse proxies) set X-Forwarded-For; needed for real client IPs.
 app.set("trust proxy", 1);
@@ -49,6 +54,17 @@ app.set("trust proxy", 1);
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 app.use("/api/internal/snapshots", createInternalSnapshotsRouter());
+app.get("/api/snapshots/events", snapshotEvents.handler);
+
+app.get("/api/items/:country/:itemId/stock", async (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  try {
+    const row = await getLatestSnapshot(params.country, params.id);
+    if (!row) return res.status(404).json({ error: "No stock observations found" });
+    res.set("Cache-Control", "no-store").json({ country: params.country, itemId: params.id, ...row });
+  } catch (err) { res.status(500).json({ error: "Could not load current stock" }); }
+});
 
 // Validate a Torn API key, auto-allow new accounts, return player + role flags.
 // The key is only relayed to the Torn API, never stored server-side.
@@ -216,26 +232,36 @@ app.get("/api/countries", (_req, res) => {
   res.json(enriched);
 });
 
-// Latest stock levels for every country (from the most recent successful poll).
-app.get("/api/stocks", (_req, res) => {
-  const { payload, lastError } = getLatest();
-  if (!payload) {
-    res.status(503).json({ error: lastError || "No data fetched from YATA yet" });
-    return;
+// Latest committed observation per country/item across both ingestion sources.
+app.get("/api/stocks", async (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  try {
+    const data = await readCurrentStocks();
+    if (data.timestamp == null) return res.status(503).json({ error: "No stock observations stored yet" });
+    res.json(data);
+  } catch (err) {
+    console.error("[stocks] DB read failed:", err.message);
+    res.status(503).json({ error: "Could not load current stocks" });
   }
-  res.json({ stocks: payload.stocks, timestamp: payload.timestamp, lastError });
 });
 
-// Lightweight poll probe so clients can detect new YATA snapshots without
-// downloading the full stocks payload on every check.
-// Returns 200 even while warming up so the status watcher does not spam 503s.
-app.get("/api/stocks/status", (_req, res) => {
-  const { payload, lastError } = getLatest();
-  res.json({
-    ready: Boolean(payload),
-    timestamp: payload?.timestamp ?? null,
-    lastError,
-  });
+// DB-backed readiness/timestamp plus commit revision, independent of YATA's cache.
+app.get("/api/stocks/status", async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const { country, itemId } = req.query;
+  const scoped = country != null || itemId != null;
+  if (scoped && (typeof country !== "string" || !Object.hasOwn(COUNTRIES, country)
+    || typeof itemId !== "string" || !/^\d+$/.test(itemId) || !Number.isSafeInteger(Number(itemId)) || Number(itemId) < 1 || Number(itemId) > 2147483647)) {
+    return res.status(400).json({ error: "country and a positive integer itemId are required together" });
+  }
+  try {
+    const data = scoped ? await getLatestSnapshot(country, Number(itemId)) : await readCurrentStocks();
+    const timestamp = scoped ? data?.snapshot_ts ?? null : data.timestamp;
+    res.json({ snapshotRevision: snapshotEvents.revision(country, itemId), ready: timestamp != null, timestamp, lastError: null });
+  } catch (err) {
+    console.error("[stocks/status] DB read failed:", err.message);
+    res.status(503).json({ ready: false, timestamp: null, lastError: "Could not load stock status" });
+  }
 });
 
 // Shared validation for routes with :country/:itemId params.
@@ -678,6 +704,7 @@ app.get("/item/:country/:itemId(\\d+)/price", (_req, res) => {
 
 await initDb();
 await seedBootstrapAdmin();
+await snapshotEvents.start();
 
 /** @type {import("node:http").Server | null} */
 let server = null;
@@ -686,6 +713,7 @@ let shuttingDown = false;
 function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
+  snapshotEvents.close();
   console.log(`Received ${signal}, shutting down`);
   const done = (code) => process.exit(code);
   if (!server) {

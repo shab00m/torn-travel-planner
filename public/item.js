@@ -2474,12 +2474,12 @@ async function loadCurrentStock() {
   if (!state.item) return;
   try {
     const [data, marketPrice] = await Promise.all([
-      fetchJson("/api/stocks"),
+      fetchJson(`/api/items/${state.item.country}/${state.item.itemId}/stock`),
       fetchMarketPrice(state.item.itemId),
     ]);
-    const countryData = data.stocks[state.item.country];
-    const item = countryData?.stocks.find((i) => i.id === state.item.itemId);
-    if (!item || !countryData) {
+    const item = { ...data, id: state.item.itemId };
+    const countryData = { update: data.snapshot_ts };
+    if (!Number.isFinite(item.quantity)) {
       el.currentStock.classList.add("hidden");
       el.profitEstimate?.classList.add("hidden");
       setHeaderStockQty(null);
@@ -2491,10 +2491,9 @@ async function loadCurrentStock() {
     el.currentQty.className = `current-qty ${item.quantity === 0 ? "qty-zero" : "qty-ok"}`;
     el.currentMeta.textContent = `${fmtMoney(item.cost)} each · updated ${fmtTime(countryData.update)}`;
     setHeaderStockQty(item.quantity);
-    noteStockTimestamp(data.timestamp);
     syncCurrentStockDepletion(item.quantity, countryData.update);
     if (typeof refreshRestockAlarmsFromStocks === "function") {
-      void refreshRestockAlarmsFromStocks(data);
+      void refreshRestockAlarmsFromStocks({ stocks: { [state.item.country]: { stocks: [item] } } });
     }
     renderProfitEstimate(item, marketPrice);
   } catch (err) {
@@ -2895,7 +2894,7 @@ async function drawChart() {
   loadRestockData(restockData);
 
   el.itemEmpty.classList.toggle("hidden", history.points.length > 0);
-  el.status.textContent = `${history.points.length} snapshots in range — updates when YATA polls (~every minute)`;
+  el.status.textContent = `${history.points.length} snapshots in range — live DB updates (YATA + API)`;
   renderCycleHistory();
 
   const timeline = buildTimeline(state.chartPoints, state.predictionHours);
