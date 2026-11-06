@@ -1143,6 +1143,34 @@ function buildAnnotations(restocks, rates, timeline) {
   }
 
   if (state.predictionHours > 0) {
+    const { minEmptyFor, maxEmptyFor } = getHistoricalExtents();
+    if (minEmptyFor != null && maxEmptyFor != null) {
+      events.forEach((ev, i) => {
+        if (ev.type !== "restock") return;
+        const open = restocks.find((r) => r.restocked_ts == null && !r.ignored);
+        const depletedTs = ev.depleted_ts ?? (open ? effectiveDepletedTs(open) : dataTs);
+        const earliest = tsMs(depletedTs + minEmptyFor);
+        const latest = tsMs(depletedTs + maxEmptyFor);
+        if (latest <= earliest || latest < xMin || earliest > xMax) return;
+        annotations[`possibleRestock${i}`] = {
+          type: "box",
+          xMin: earliest,
+          xMax: latest,
+          adjustScaleRange: false,
+          drawTime: "beforeDatasetsDraw",
+          backgroundColor: "rgba(245, 185, 66, 0.18)",
+          borderWidth: 0,
+          label: {
+            display: true,
+            content: "Possible restock",
+            position: { x: "center", y: "end" },
+            color: "#f5b942",
+            font: { size: 10, weight: "600" },
+          },
+        };
+      });
+    }
+
     events.forEach((ev, i) => {
       if (ev.type !== "out_of_stock") return;
       annotations[`predOos${i}`] = {
