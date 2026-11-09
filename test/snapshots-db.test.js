@@ -79,7 +79,7 @@ test("snapshot migration and ingestion against PostgreSQL", {
       assert.equal(effective.filter((r) => r.snapshot_ts === ts + 90).length, 1);
       assert.equal(effective.at(-1).quantity, 50);
       assert.equal(effective.at(-1).source, "API");
-      assert.equal((await pool.query("SELECT * FROM restocks")).rowCount, 1,
+      assert.equal((await pool.query("SELECT * FROM restocks")).rowCount, 0,
         "a conflicting YATA observation must not manufacture a depletion event");
     });
 
@@ -102,13 +102,90 @@ test("snapshot migration and ingestion against PostgreSQL", {
     });
 
     await t.test("concurrent YATA/API writes serialize transitions for the same item", async () => {
-      await Promise.all([db.saveSnapshot(yata(300, 0)), db.saveApiSnapshots([record(330, 100)])]);
+      await Promise.all([db.saveSnapshot(yata(300, 0)), db.saveApiSnapshots([record(360, 100)])]);
       const { rows } = await pool.query("SELECT depleted_ts, restocked_ts FROM restocks ORDER BY depleted_ts DESC LIMIT 1");
-      assert.deepEqual(rows, [{ depleted_ts: ts + 300, restocked_ts: ts + 330 }]);
+      assert.deepEqual(rows, [{ depleted_ts: ts + 300, restocked_ts: ts + 360 }]);
       const history = await db.getHistory("mex", itemId, 0);
       assert.equal(history.length, 11);
       assert.equal(history.at(-1).source, "API");
       assert.ok(history.every((r) => Number.isSafeInteger(r.snapshot_ts)));
+    });
+
+    await t.test("short empty periods are discarded in live ingestion and snapshot replays", async () => {
+      const blipId = 999996;
+      const blip = (offset, quantity) => ({ ...record(offset, quantity),
+        country: "can", itemId: blipId, name: "Xanax" });
+      const rows = async () => (await pool.query(
+        "SELECT depleted_ts, restocked_ts, duration FROM restocks WHERE item_id = $1 ORDER BY depleted_ts",
+        [blipId]
+      )).rows;
+      try {
+        // Repeated 1–2 second API oscillations and the 59-second boundary.
+        for (const [offset, quantity] of [[0, 218], [10, 0], [11, 218],
+          [20, 0], [22, 218], [30, 0], [89, 218]]) {
+          await db.saveApiSnapshots([blip(offset, quantity)]);
+        }
+        assert.deepEqual(await rows(), []);
+        // Starting with zero stock exercises recovery without an open cycle.
+        await db.deleteSnapshots("can", blipId, [{ snapshot_ts: ts, source: "API" }]);
+        assert.deepEqual(await rows(), []);
+        // Keep genuine empty periods at and above the minimum, plus open ones.
+        for (const [offset, quantity] of [[100, 0], [160, 218],
+          [200, 0], [261, 218], [300, 0]]) {
+          await db.saveApiSnapshots([blip(offset, quantity)]);
+        }
+        const expected = [
+          { depleted_ts: ts + 100, restocked_ts: ts + 160, duration: 60 },
+          { depleted_ts: ts + 200, restocked_ts: ts + 261, duration: 61 },
+          { depleted_ts: ts + 300, restocked_ts: null, duration: null },
+        ];
+        assert.deepEqual(await rows(), expected);
+        // Rebuild also removes short records created before this rule existed.
+        await pool.query(`INSERT INTO restocks (country, item_id, depleted_ts, restocked_ts, duration)
+          VALUES ('can', $1, $2, $3, 2)`, [blipId, ts + 20, ts + 22]);
+        await db.backfillRestocksForItem("can", blipId);
+        assert.deepEqual(await rows(), expected);
+        await db.backfillRestocks();
+        assert.deepEqual(await rows(), expected);
+      } finally {
+        await pool.query("DELETE FROM snapshots WHERE item_id = $1", [blipId]);
+        await pool.query("DELETE FROM restocks WHERE item_id = $1", [blipId]);
+      }
+    });
+
+    await t.test("configured window excludes new and replayed cycles and can flag existing history", async () => {
+      const windowId = 999995;
+      const sample = (offset, quantity) => ({ ...record(offset, quantity), itemId: windowId });
+      const cycles = async () => (await db.getRestocks("mex", windowId))
+        .sort((a, b) => a.depleted_ts - b.depleted_ts);
+      try {
+        // Three existing cycles: min endpoint, max endpoint, and above max.
+        await db.saveApiSnapshots([[0, 100], [10, 0], [70, 100], [80, 0],
+          [200, 100], [210, 0], [390, 100]].map(([ts, qty]) => sample(ts, qty)));
+        await assert.rejects(db.flagRestocksOutsideWindow("mex", windowId), /Set both min and max/);
+        await db.setEmptyForBounds("mex", windowId, { minEmptyFor: 60, maxEmptyFor: 120 });
+        assert.ok((await cycles()).every((cycle) => !cycle.ignored), "saving bounds leaves existing flags alone");
+        // Preserve an admin's exclusion inside the window.
+        await db.setRestockIgnored("mex", windowId, ts + 10, true);
+        const flagged = await db.flagRestocksOutsideWindow("mex", windowId);
+        assert.deepEqual(flagged, { flagged: 1, depletedTs: [ts + 210] });
+        assert.deepEqual((await cycles()).map((cycle) => cycle.ignored), [true, false, true]);
+        assert.equal((await db.flagRestocksOutsideWindow("mex", windowId)).flagged, 0);
+        assert.equal((await db.flagOutlierRestocks("mex", windowId)).flagged, 0);
+        // Live completion uses the configured window without needing a baseline.
+        await db.saveApiSnapshots([sample(400, 0)]);
+        await db.saveApiSnapshots([sample(580, 100)]);
+        assert.equal((await cycles()).at(-1).ignored, true);
+        // Historical imports and rebuilds must apply the same automatic rule.
+        await db.saveApiSnapshots([sample(600, 0), sample(780, 100)]);
+        assert.equal((await cycles()).at(-1).ignored, true);
+        await db.backfillRestocksForItem("mex", windowId);
+        assert.deepEqual((await cycles()).map((cycle) => cycle.ignored), [true, false, true, true, true]);
+      } finally {
+        await pool.query("DELETE FROM snapshots WHERE item_id = $1", [windowId]);
+        await pool.query("DELETE FROM restocks WHERE item_id = $1", [windowId]);
+        await pool.query("DELETE FROM empty_for_bounds WHERE item_id = $1", [windowId]);
+      }
     });
 
     await t.test("a failed batch rolls back metadata and all observations", async () => {
@@ -121,10 +198,10 @@ test("snapshot migration and ingestion against PostgreSQL", {
     });
 
     await t.test("admin timestamp edits preserve the original source", async () => {
-      const updated = await db.updateSnapshot("mex", itemId, ts + 330, { snapshot_ts: ts + 331 }, "API");
+      const updated = await db.updateSnapshot("mex", itemId, ts + 360, { snapshot_ts: ts + 361 }, "API");
       assert.equal(updated.source, "API");
-      assert.equal(await db.getSnapshot("mex", itemId, ts + 330), null);
-      assert.equal((await db.getSnapshot("mex", itemId, ts + 331, "API")).source, "API");
+      assert.equal(await db.getSnapshot("mex", itemId, ts + 360), null);
+      assert.equal((await db.getSnapshot("mex", itemId, ts + 361, "API")).source, "API");
     });
 
     await t.test("source-specific edits and deletions cannot affect the other source", async () => {
@@ -146,7 +223,7 @@ test("snapshot migration and ingestion against PostgreSQL", {
       const otherId = 999998;
       await pool.query("INSERT INTO items (item_id, name) VALUES ($1, 'Replay test')", [otherId]);
       await pool.query(`INSERT INTO snapshots (country,item_id,snapshot_ts,quantity,cost,source)
-        SELECT 'mex',$1,$2 + n, CASE WHEN n % 100 >= 80 THEN 0 ELSE 100 - n % 100 END,300,'YATA'
+        SELECT 'mex',$1,$2 + n, CASE WHEN n % 100 >= 40 THEN 0 ELSE 100 - n % 100 END,300,'YATA'
         FROM generate_series(0,999) AS n`, [otherId, ts - 2000]);
       await db.backfillRestocksForItem("mex", otherId);
       const oldRows = (await pool.query("SELECT * FROM restocks WHERE item_id=$1 AND depleted_ts<$2 ORDER BY depleted_ts", [otherId, ts - 1300])).rows;

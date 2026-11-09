@@ -140,14 +140,24 @@ Mark a restock cycle as ignored (excluded from averages).
 
 Scan completed cycles for this item and set `ignored` on empty-for outliers (typically from snapshot gaps). Uses an iterative robust modified Z-score (median/MAD, threshold 2.5) so each item’s own cluster defines the band — extreme gaps are removed first, then clearer misses (e.g. ~44m next to a 55–65m group), without dropping near-cluster values. The normal-range baseline uses only cycles that still have Count checked; already-unchecked rows are never included. Rate averages follow automatically because ignored cycles are excluded from rate windows too. Does not re-include cycles that were already ignored.
 
-If the item has min/max empty-for bounds, cycles whose effective empty-for (`adjusted_duration` if set, otherwise `duration`) falls outside that range are ignored first. Then the median/MAD pass runs on the remaining Count-checked cycles.
+Admin only. If either min/max empty-for bound is configured, only the configured range is used: cycles whose effective empty-for (`adjusted_duration` if set, otherwise `duration`) falls outside it are ignored. Endpoints are inclusive. Median/MAD checks run only when neither bound is configured, so points inside a manual window are kept even if they differ from the historical cluster.
 
-New cycles are also checked automatically when YATA polling closes an empty period (range bounds first, then median/MAD).
+New cycles are checked automatically when live ingestion closes an empty period. Historical imports and snapshot rebuilds also apply configured bounds to rebuilt cycles.
 
 **Response:** `{ ok, flagged, depletedTs, restocks, rates }`
 
 - `flagged` — number of cycles newly ignored
 - `depletedTs` — `depleted_ts` values that were flagged
+
+---
+
+### `POST /api/restocks/:country/:itemId/flag-outside-window`
+
+Admin only. Requires both min and max empty-for to be configured; returns HTTP 400 if either is missing. Marks existing completed cycles outside the inclusive window as ignored, using adjusted duration when available and observed duration otherwise. Leaves open cycles and existing exclusions unchanged. Repeated calls only count newly excluded cycles.
+
+**Response:** `{ ok, flagged, depletedTs, restocks, rates }`
+
+The item page exposes this as **Exclude outside window**, visible only to admins and disabled until both bounds are saved.
 
 ---
 
@@ -200,14 +210,14 @@ Keys are `"country:itemId"`. Missing fields are `null`.
 
 ### `PUT /api/empty-for-bounds/:country/:itemId`
 
-Set or clear the range. The server recomputes `avgEmptyFor`. The row is deleted only when min, max, and avg are all unset.
+Set or clear the range. The server recomputes `avgEmptyFor`. Existing exclusion flags stay unchanged; use `flag-outside-window` to apply the window to existing history. The row is deleted only when min, max, and avg are all unset.
 
 **Body:** `{ "minEmptyFor": 3000, "maxEmptyFor": 4200 }` — seconds; either field may be `null`. `avgEmptyFor` in the body is ignored.
 
 **Response:** `{ country, itemId, minEmptyFor, maxEmptyFor, avgEmptyFor, flagged, depletedTs }`
 
-- `flagged` — number of cycles newly ignored for sitting outside the range
-- `depletedTs` — `depleted_ts` values that were flagged
+- `flagged` — always `0`; saving bounds does not change existing exclusions
+- `depletedTs` — always `[]`
 
 ---
 

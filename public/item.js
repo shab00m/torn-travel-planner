@@ -23,6 +23,7 @@ const el = {
   cycleHistoryNext: document.getElementById("cycle-history-next"),
   cycleHistoryPageInfo: document.getElementById("cycle-history-page-info"),
   flagOutliersBtn: document.getElementById("flag-outliers-btn"),
+  flagOutsideWindowBtn: document.getElementById("flag-outside-window-btn"),
   backfillRestocksBtn: document.getElementById("backfill-restocks-btn"),
   cycleHistoryActionStatus: document.getElementById("cycle-history-action-status"),
   rateAvgButtons: document.getElementById("rate-avg-buttons"),
@@ -679,6 +680,7 @@ async function reloadEmptyForBoundsUi() {
 
 function fillEmptyForBoundInputs() {
   setEmptyForBoundInputValues(currentEmptyForBounds());
+  syncWindowExclusionButton();
 }
 
 let lastZeroLookup = null;
@@ -2687,12 +2689,27 @@ function isAdminUser() {
   return Boolean(window.getCurrentUser?.()?.isAdmin);
 }
 
+let cycleHistoryActionsBusy = false;
+
+function syncWindowExclusionButton() {
+  const bounds = currentEmptyForBounds();
+  const button = el.flagOutsideWindowBtn;
+  if (!button) return;
+  const hasWindow = bounds.minEmptyFor != null && bounds.maxEmptyFor != null;
+  button.classList.toggle("hidden", !isAdminUser());
+  button.disabled = cycleHistoryActionsBusy || !hasWindow;
+  button.title = hasWindow
+    ? "Exclude completed cycles outside the configured min/max empty-for window"
+    : "Set both min and max empty for to use this action";
+}
+
 /** Show admin-only controls; turn them off on logout/demotion. */
 function syncInspectAdminAccess() {
   const allowed = isAdminUser();
   el.inspectControls?.classList.toggle("hidden", !allowed);
   el.flagOutliersBtn?.classList.toggle("hidden", !allowed);
   el.backfillRestocksBtn?.classList.toggle("hidden", !allowed);
+  syncWindowExclusionButton();
   if (typeof syncEmptyForRangeHandles === "function") syncEmptyForRangeHandles();
   if (!allowed) {
     if (el.cycleHistoryActionStatus) el.cycleHistoryActionStatus.textContent = "";
@@ -3175,8 +3192,33 @@ function setCycleHistoryActionStatus(text) {
 }
 
 function setCycleHistoryActionsDisabled(disabled) {
+  cycleHistoryActionsBusy = disabled;
   if (el.flagOutliersBtn) el.flagOutliersBtn.disabled = disabled;
   if (el.backfillRestocksBtn) el.backfillRestocksBtn.disabled = disabled;
+  syncWindowExclusionButton();
+}
+
+async function flagCyclesOutsideWindow() {
+  const item = state.item;
+  if (!item || !isAdminUser() || el.flagOutsideWindowBtn?.disabled) return;
+  setCycleHistoryActionsDisabled(true);
+  setCycleHistoryActionStatus("Applying empty-for window…");
+  try {
+    const data = await fetchJsonWithBody(
+      `/api/restocks/${item.country}/${item.itemId}/flag-outside-window`,
+      { method: "POST", body: {}, headers: adminApiHeaders() }
+    );
+    loadRestockData(data);
+    await reloadEmptyForBoundsUi();
+    refreshRestockViews();
+    const n = data.flagged ?? 0;
+    setCycleHistoryActionStatus(`Excluded ${n} cycle${n === 1 ? "" : "s"} outside the window`);
+  } catch (err) {
+    setCycleHistoryActionStatus("");
+    alert(err.message || "Failed to exclude cycles outside the window");
+  } finally {
+    setCycleHistoryActionsDisabled(false);
+  }
 }
 
 async function flagOutlierCycles() {
@@ -3246,6 +3288,8 @@ async function backfillItemRestocks() {
 el.flagOutliersBtn?.addEventListener("click", () => {
   flagOutlierCycles();
 });
+
+el.flagOutsideWindowBtn?.addEventListener("click", flagCyclesOutsideWindow);
 
 el.backfillRestocksBtn?.addEventListener("click", () => {
   backfillItemRestocks();

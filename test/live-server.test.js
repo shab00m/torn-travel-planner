@@ -68,7 +68,7 @@ test("API-only commits update both stock endpoints and push SSE without a succes
     const history = await (await fetch(`${base}/api/history/mex/3460`)).json();
     assert.equal(history.points.length, 2);
     const restocks = await (await fetch(`${base}/api/restocks/mex/3460`)).json();
-    assert.equal(restocks.restocks[0].restocked_ts, ts + 1);
+    assert.deepEqual(restocks.restocks, []);
     const after = await (await fetch(`${base}/api/stocks/status?country=mex&itemId=3460`)).json();
     assert.equal(after.timestamp, ts + 1);
     assert.equal(after.ready, true);

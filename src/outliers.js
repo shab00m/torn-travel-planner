@@ -1,3 +1,9 @@
+import { emptyForDurationSec, isOutsideEmptyForRange } from "../public/empty-for-bounds.js";
+
+export function hasEmptyForBounds(bounds) {
+  return bounds?.minEmptyFor != null || bounds?.maxEmptyFor != null;
+}
+
 /** Minimum non-ignored samples before outlier checks run. */
 export const MIN_OUTLIER_SAMPLES = 5;
 
@@ -66,9 +72,13 @@ export function isDurationOutlier(duration, baselineDurations) {
 /**
  * Decide whether a completed cycle should be excluded from averages.
  * Rate follows automatically — ignored cycles are dropped from rate windows too.
- * @param {{ duration?: number|null }} cycle
+ * Configured bounds take precedence over the historical cluster.
+ * @param {{ duration?: number|null, adjusted_duration?: number|null }} cycle
  * @param {{ durations: number[] }} baseline values excluding this cycle
  */
-export function isCycleOutlier(cycle, baseline) {
+export function isCycleOutlier(cycle, baseline, bounds) {
+  if (hasEmptyForBounds(bounds)) {
+    return isOutsideEmptyForRange(emptyForDurationSec(cycle), bounds.minEmptyFor, bounds.maxEmptyFor);
+  }
   return isDurationOutlier(cycle.duration, baseline.durations);
 }

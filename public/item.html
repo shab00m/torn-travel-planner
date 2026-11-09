@@ -268,7 +268,7 @@
 							<input
 								id="min-empty-for"
 								type="text"
-								inputmode="numeric"
+								inputmode="text"
 								autocomplete="off"
 								spellcheck="false"
 								placeholder="h:mm:ss"
@@ -280,7 +280,7 @@
 							<input
 								id="max-empty-for"
 								type="text"
-								inputmode="numeric"
+								inputmode="text"
 								autocomplete="off"
 								spellcheck="false"
 								placeholder="h:mm:ss"
@@ -339,9 +339,18 @@
 						type="button"
 						id="flag-outliers-btn"
 						class="cycle-history-action hidden"
-						title="Uncheck Count on cycles whose empty-for sits outside the configured min/max range, or outside this item’s usual cluster (iterative median/MAD check)"
+						title="Exclude cycles outside configured empty-for bounds; use the usual timing cluster when no bounds are set"
 					>
 						Exclude outliers
+					</button>
+					<button
+						type="button"
+						id="flag-outside-window-btn"
+						class="cycle-history-action hidden"
+						disabled
+						title="Set both min and max empty for to use this action"
+					>
+						Exclude outside window
 					</button>
 					<button
 						type="button"

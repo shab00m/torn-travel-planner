@@ -17,6 +17,7 @@ import {
   backfillRestocksForItem,
   setRestockIgnored,
   flagOutlierRestocks,
+  flagRestocksOutsideWindow,
   getRestockAmount,
   getAllRestockAmounts,
   setRestockAmount,
@@ -550,6 +551,21 @@ app.post("/api/restocks/:country/:itemId/flag-outliers", requireAdmin, async (re
       restocks,
       rates,
     });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/** Exclude existing completed cycles outside the configured empty-for window. */
+app.post("/api/restocks/:country/:itemId/flag-outside-window", requireAdmin, async (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  try {
+    const result = await flagRestocksOutsideWindow(params.country, params.id);
+    const { restocks, rates } = await loadRestockViews(params.country, params.id, {
+      includeRateTod: false,
+    });
+    res.json({ ok: true, ...result, restocks, rates });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
