@@ -37,6 +37,7 @@ import { getCachedItemTypes, ensureItemTypesPopulated } from "./src/item-types.j
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
 import { getDepletionRateTod } from "./src/depletion-rate-tod.js";
 import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
+import { createRestockRebuildJobs } from "./src/restock-rebuild-jobs.js";
 import { listUsers, createUser, updateUser, deleteUser, seedBootstrapAdmin } from "./src/users.js";
 import { recordPageView, listPageViews, getClientIp } from "./src/analytics.js";
 import { createInternalSnapshotsRouter } from "./src/internal-snapshots.js";
@@ -315,12 +316,16 @@ async function loadRestockViews(country, itemId, { includeRateTod = true } = {})
   return { restocks, rates, rateTod };
 }
 
+const restockRebuildJobs = createRestockRebuildJobs(backfillRestocksForItem);
+
 // Out-of-stock periods and in-stock depletion-rate windows for one item
 // (newest first, full history).
 app.get("/api/restocks/:country/:itemId", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
-  res.json(await loadRestockViews(params.country, params.id));
+  res.json(await loadRestockViews(params.country, params.id, {
+    includeRateTod: req.query.includeRateTod !== "false",
+  }));
 });
 
 app.get("/api/restock-amounts", async (_req, res) => {
@@ -524,14 +529,19 @@ app.patch("/api/restocks/:country/:itemId/:depletedTs", requireAdmin, async (req
     return;
   }
   try {
-    await setRestockIgnored(params.country, params.id, depletedTs, ignored);
+    const bounds = await setRestockIgnored(params.country, params.id, depletedTs, ignored);
+    if (req.body?.includeViews === false) {
+      const rates = await getDepletionRates(params.country, params.id);
+      res.json({ ok: true, depletedTs, ignored, bounds, rates });
+      return;
+    }
     // Skip rateTod — ignore toggles must stay cheap; TOD averages are unchanged by Count.
     const { restocks, rates } = await loadRestockViews(params.country, params.id, {
       includeRateTod: false,
     });
     res.json({ ok: true, restocks, rates });
   } catch (err) {
-    res.status(err.message === "Restock cycle not found" ? 404 : 400).json({ error: err.message });
+    res.status(err.message === "Restock cycle not found" ? 404 : err.code === "55P03" ? 409 : 400).json({ error: err.message });
   }
 });
 
@@ -575,11 +585,20 @@ app.post("/api/restocks/:country/:itemId/flag-outside-window", requireAdmin, asy
 app.post("/api/restocks/:country/:itemId/backfill", requireAdmin, async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
+  if (req.body?.background === true) {
+    res.status(202).json(restockRebuildJobs.start(params.country, params.id));
+    return;
+  }
+  const started = Date.now();
+  let stage = "replay";
+  console.log("[restock-rebuild] started:", JSON.stringify(params));
   try {
     const result = await backfillRestocksForItem(params.country, params.id);
+    stage = "load_views";
     const { restocks, rates } = await loadRestockViews(params.country, params.id, {
       includeRateTod: false,
     });
+    console.log("[restock-rebuild] completed:", JSON.stringify({ ...params, ...result, durationMs: Date.now() - started }));
     res.json({
       ok: true,
       opened: result.opened,
@@ -588,8 +607,26 @@ app.post("/api/restocks/:country/:itemId/backfill", requireAdmin, async (req, re
       rates,
     });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    console.error("[restock-rebuild] failed:", JSON.stringify({ ...params,
+      stage, code: err.code, message: err.message, durationMs: Date.now() - started }));
+    const timedOut = err.code === "57014" || err.code === "55P03";
+    res.status(err.code === "RESTOCK_REBUILD_BUSY" ? 409 : timedOut ? 503 : 400).json({ error: timedOut
+      ? stage === "load_views"
+        ? "Restocks were rebuilt, but loading the refreshed data timed out. Please refresh the page."
+        : "Restock rebuild exceeded the database time limit. Please try again shortly."
+      : err.message });
   }
+});
+
+app.get("/api/restocks/:country/:itemId/backfill/:jobId", requireAdmin, (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  const job = restockRebuildJobs.get(params.country, params.id, req.params.jobId);
+  if (!job) {
+    res.status(404).json({ error: "Rebuild status is no longer available; the server may have restarted. Refresh the page to check the saved history before retrying." });
+    return;
+  }
+  res.json(job);
 });
 
 function parseSnapshotTs(req, res) {

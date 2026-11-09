@@ -13,7 +13,7 @@ test("window exclusion control is admin-only and needs both saved bounds", () =>
     assert.equal(name, "hidden"); hidden = value;
   } } };
   const context = vm.createContext({
-    el: { flagOutsideWindowBtn: button }, cycleHistoryActionsBusy: false,
+    el: { flagOutsideWindowBtn: button }, cycleHistoryActionsBusy: false, pendingCycleChanges: new Map(),
     currentEmptyForBounds: () => bounds, isAdminUser: () => admin,
   });
   const sync = () => vm.runInContext(`${fn}\nsyncWindowExclusionButton();`, context);

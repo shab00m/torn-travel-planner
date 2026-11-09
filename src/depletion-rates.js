@@ -221,9 +221,9 @@ export async function getDepletionRates(country, itemId, limit) {
     ),
     one(
       pool,
-      `SELECT snapshot_ts, quantity FROM effective_snapshots
+      `SELECT snapshot_ts, quantity FROM snapshots
        WHERE country = $1 AND item_id = $2
-       ORDER BY snapshot_ts DESC
+       ORDER BY snapshot_ts DESC, source ASC
        LIMIT 1`,
       [country, itemId]
     ),

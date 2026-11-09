@@ -369,6 +369,8 @@ function syncCurrentStockDepletion(quantity, pollTs) {
 const fmtRate = (r) => (Math.abs(r) >= 10 ? r.toFixed(0) : r.toFixed(1));
 const CYCLE_HISTORY_PAGE_SIZE = 10;
 let cycleHistoryPage = 0;
+let cycleSaveQueue = Promise.resolve();
+const pendingCycleChanges = new Map();
 /** @type {number | null} depleted_ts of the cycle row highlighted from the empty-for chart */
 let cycleHistoryHighlightTs = null;
 const CHART_TOP_PADDING = 48;
@@ -1369,6 +1371,7 @@ function renderCycleHistory() {
               class="cycle-count"
               data-depleted-ts="${r.depleted_ts}"
               ${r.ignored ? "" : "checked"}
+              ${pendingCycleChanges.has(r.depleted_ts) || cycleHistoryActionsBusy ? "disabled" : ""}
               title="${
                 r.ignored
                   ? "Excluded from averages — click to include"
@@ -2697,7 +2700,7 @@ function syncWindowExclusionButton() {
   if (!button) return;
   const hasWindow = bounds.minEmptyFor != null && bounds.maxEmptyFor != null;
   button.classList.toggle("hidden", !isAdminUser());
-  button.disabled = cycleHistoryActionsBusy || !hasWindow;
+  button.disabled = cycleHistoryActionsBusy || pendingCycleChanges.size > 0 || !hasWindow;
   button.title = hasWindow
     ? "Exclude completed cycles outside the configured min/max empty-for window"
     : "Set both min and max empty for to use this action";
@@ -3112,7 +3115,12 @@ function refreshRestockAdjustments() {
 }
 
 function loadRestockData({ restocks, rates, rateTod } = {}) {
-  if (restocks) state.restocks = restocks;
+  if (restocks) {
+    state.restocks = restocks;
+    for (const row of state.restocks) {
+      if (pendingCycleChanges.has(row.depleted_ts)) row.ignored = pendingCycleChanges.get(row.depleted_ts);
+    }
+  }
   if (rates) state.rates = rates;
   if (rateTod !== undefined) state.rateTod = rateTod;
 }
@@ -3132,25 +3140,42 @@ async function setCycleIgnored(depletedTs, ignored) {
   }
   const { country, itemId } = state.item;
   const row = state.restocks.find((r) => r.depleted_ts === depletedTs);
-  if (!row) return;
+  if (!row || pendingCycleChanges.has(depletedTs)) return;
   const prevIgnored = row.ignored;
+  pendingCycleChanges.set(depletedTs, ignored);
   row.ignored = ignored;
+  syncCycleHistoryActionButtons();
   // Optimistic UI only — avoid a full chart rebuild before the server confirms.
   renderCycleHistory();
 
-  try {
-    const data = await fetchJsonWithBody(
-      `/api/restocks/${country}/${itemId}/${depletedTs}`,
-      { method: "PATCH", body: { ignored }, headers: adminApiHeaders() }
-    );
-    loadRestockData(data);
-    await reloadEmptyForBoundsUi();
-    refreshRestockViews();
-  } catch (err) {
-    row.ignored = prevIgnored;
-    refreshRestockViews();
-    throw err;
-  }
+  const save = cycleSaveQueue.then(async () => {
+    const isCurrentItem = () => state.item?.country === country && state.item?.itemId === itemId;
+    try {
+      const data = await fetchJsonWithBody(
+        `/api/restocks/${country}/${itemId}/${depletedTs}`,
+        { method: "PATCH", body: { ignored, includeViews: false }, headers: adminApiHeaders() }
+      );
+      if (isCurrentItem()) {
+        loadRestockData(data);
+        storeEmptyForBounds(country, itemId, data.bounds);
+        fillEmptyForBoundInputs();
+        clearSafeWindowsCache();
+      }
+    } catch (err) {
+      if (isCurrentItem()) {
+        const current = state.restocks.find((r) => r.depleted_ts === depletedTs);
+        if (current) current.ignored = prevIgnored;
+      }
+      throw err;
+    } finally {
+      pendingCycleChanges.delete(depletedTs);
+      syncCycleHistoryActionButtons();
+      if (isCurrentItem()) refreshRestockViews();
+    }
+  });
+  // One failed save must not prevent the remaining queued changes from saving.
+  cycleSaveQueue = save.catch(() => {});
+  return save;
 }
 
 el.cycleHistoryBody.addEventListener("change", async (e) => {
@@ -3193,6 +3218,12 @@ function setCycleHistoryActionStatus(text) {
 
 function setCycleHistoryActionsDisabled(disabled) {
   cycleHistoryActionsBusy = disabled;
+  syncCycleHistoryActionButtons();
+  renderCycleHistory();
+}
+
+function syncCycleHistoryActionButtons() {
+  const disabled = cycleHistoryActionsBusy || pendingCycleChanges.size > 0;
   if (el.flagOutliersBtn) el.flagOutliersBtn.disabled = disabled;
   if (el.backfillRestocksBtn) el.backfillRestocksBtn.disabled = disabled;
   syncWindowExclusionButton();
@@ -3269,13 +3300,24 @@ async function backfillItemRestocks() {
   try {
     const data = await fetchJsonWithBody(
       `/api/restocks/${item.country}/${item.itemId}/backfill`,
-      { method: "POST", body: {}, headers: adminApiHeaders() }
+      { method: "POST", body: { background: true }, headers: adminApiHeaders() }
     );
-    loadRestockData(data);
+    let job = data;
+    while (job.status === "queued" || job.status === "running") {
+      setCycleHistoryActionStatus(job.status === "queued" ? "Rebuild queued…" : "Rebuilding… You can leave this page; the rebuild will continue.");
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+      job = await parseFetchResponse(await fetch(
+        `/api/restocks/${item.country}/${item.itemId}/backfill/${data.jobId}`,
+        { headers: adminApiHeaders() }
+      ));
+    }
+    if (job.status === "failed") throw new Error(job.error || "Rebuild failed");
+    const views = await fetchJson(`/api/restocks/${item.country}/${item.itemId}?includeRateTod=false`);
+    loadRestockData(views);
     await reloadEmptyForBoundsUi();
     refreshRestockViews();
     setCycleHistoryActionStatus(
-      `Rebuilt: ${data.opened ?? 0} depleted, ${data.closed ?? 0} restocked`
+      `Rebuilt: ${job.result?.opened ?? 0} depleted, ${job.result?.closed ?? 0} restocked`
     );
   } catch (err) {
     setCycleHistoryActionStatus("");

@@ -134,6 +134,8 @@ Mark a restock cycle as ignored (excluded from averages).
 
 **Response:** `{ ok, restocks, rates }`
 
+The item page sends `includeViews: false` for a compact response: `{ ok, depletedTs, ignored, bounds, rates }`. It queues rapid checkbox changes and disables each pending checkbox until its save completes. The server serializes the write with snapshot ingestion and rebuilds; a lock wait longer than five seconds returns HTTP 409 with a retry message.
+
 ---
 
 ### `POST /api/restocks/:country/:itemId/flag-outliers`
@@ -169,6 +171,12 @@ Admin only. Rebuild restock cycles for this item by replaying its snapshot histo
 
 - `opened` — depletion transitions recorded
 - `closed` — restock closes recorded
+
+The item page sends `{ "background": true }` and receives HTTP 202 with `{ jobId, country, itemId, status }`. It polls the admin-only `GET /api/restocks/:country/:itemId/backfill/:jobId` for `queued`, `running`, `completed` (with `result: { opened, closed }`), or `failed` (with `error`). Completion refreshes the item data. Without `background`, the synchronous response above remains supported.
+
+Background jobs run in the existing web process, one at a time. Repeated starts for an active item return its current job. Completed jobs are retained for 30 minutes; a web process restart loses job status, and polling returns HTTP 404 with instructions to refresh the saved history before retrying.
+
+Rebuilds use the same per-item transaction lock as snapshot ingestion. A busy item fails immediately with a retry message (HTTP 409 for synchronous requests, `failed` status for background jobs). Replay skips sub-minute empty periods and computes adjusted times in bulk. Database timeouts return HTTP 503 for synchronous requests or a failed background job. Server logs include the item, error code, and duration.
 
 ---
 

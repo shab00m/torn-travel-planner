@@ -188,6 +188,24 @@ test("snapshot migration and ingestion against PostgreSQL", {
       }
     });
 
+    await t.test("rebuild refuses a busy ingestion lock without deleting existing cycles", async () => {
+      const writer = await pool.connect();
+      const before = await db.getRestocks("mex", itemId);
+      try {
+        await writer.query("BEGIN");
+        await writer.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`snapshots:mex:${itemId}`]);
+        await assert.rejects(db.backfillRestocksForItem("mex", itemId),
+          (err) => err.code === "RESTOCK_REBUILD_BUSY");
+        assert.deepEqual(await db.getRestocks("mex", itemId), before);
+      } finally {
+        await writer.query("ROLLBACK");
+        writer.release();
+      }
+      // The same rebuild succeeds once ingestion has released its lock.
+      await db.backfillRestocksForItem("mex", itemId);
+      assert.deepEqual(await db.getRestocks("mex", itemId), before);
+    });
+
     await t.test("a failed batch rolls back metadata and all observations", async () => {
       await assert.rejects(db.saveApiSnapshots([
         { ...record(400, 10), itemId: 999999, name: "Must roll back" },

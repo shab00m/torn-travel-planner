@@ -1,6 +1,7 @@
 import { getPool, query, withTransaction, closePool } from "./pg.js";
 import { runMigrations } from "./migrate.js";
 import { hasEmptyForBounds, isCycleOutlier } from "./outliers.js";
+import { buildReplayHints } from "./restock-replay.js";
 import {
   backfillAllPersistedRates,
   computeRateWindowsFromSnapshots,
@@ -151,8 +152,9 @@ async function fetchRestockAmount(db, country, itemId) {
 
 /**
  * @param {import("pg").PoolClient} client
- * @param {{ persistRates?: boolean }} [options]
- *   When persistRates is false (history replay), rate columns are filled in bulk after.
+ * @param {{ persistRates?: boolean, restockAmount?: number|null,
+ *   nextRestockTs?: number|null, observedZeroTs?: number|null }} [options]
+ *   History replay fills rates and adjusted times in bulk after transitions.
  * @returns {Promise<"depleted"|"restocked"|null>}
  */
 async function applyTransition(
@@ -163,11 +165,14 @@ async function applyTransition(
   prevTs,
   prevQuantity,
   quantity,
-  { persistRates = true } = {}
+  { persistRates = true, restockAmount: cachedAmount, nextRestockTs, observedZeroTs } = {}
 ) {
   if (prevQuantity > 0 && quantity === 0) {
+    // Replay already knows whether this zero will be followed by a real refill.
+    // Avoid estimating and inserting a cycle that would immediately be deleted.
+    if (nextRestockTs != null && nextRestockTs - ts < MIN_EMPTY_DURATION_SEC) return null;
     // Sell-back clear-out while still waiting for a real restock: keep the open cycle.
-    const restockAmount = await fetchRestockAmount(client, country, itemId);
+    const restockAmount = cachedAmount !== undefined ? cachedAmount : await fetchRestockAmount(client, country, itemId);
     if (isNegligibleRestockQty(prevQuantity, restockAmount)) {
       const openWhileEmpty = await one(
         client,
@@ -203,7 +208,7 @@ async function applyTransition(
     return null;
   }
   if (prevQuantity === 0 && quantity > 0) {
-    const restockAmount = await fetchRestockAmount(client, country, itemId);
+    const restockAmount = cachedAmount !== undefined ? cachedAmount : await fetchRestockAmount(client, country, itemId);
     if (isNegligibleRestockQty(quantity, restockAmount)) {
       return null;
     }
@@ -216,16 +221,16 @@ async function applyTransition(
     );
     let depletedTs = open?.depleted_ts;
     if (depletedTs == null) {
+      if (observedZeroTs != null && ts - observedZeroTs < MIN_EMPTY_DURATION_SEC) return null;
       const missed = await one(
         client,
-        `SELECT s.snapshot_ts FROM effective_snapshots s
-         WHERE s.country = $1 AND s.item_id = $2 AND s.snapshot_ts < $3 AND s.quantity = 0
-           AND (
-             SELECT p.quantity FROM effective_snapshots p
-             WHERE p.country = s.country AND p.item_id = s.item_id AND p.snapshot_ts < s.snapshot_ts
-             ORDER BY p.snapshot_ts DESC LIMIT 1
-           ) > 0
-         ORDER BY s.snapshot_ts DESC LIMIT 1`,
+        `SELECT snapshot_ts FROM (
+           SELECT snapshot_ts, quantity, LAG(quantity) OVER (ORDER BY snapshot_ts) AS prev_quantity
+           FROM effective_snapshots
+           WHERE country = $1 AND item_id = $2 AND snapshot_ts < $3
+         ) history
+         WHERE quantity = 0 AND prev_quantity > 0
+         ORDER BY snapshot_ts DESC LIMIT 1`,
         [country, itemId, ts]
       );
       const firstZero = missed
@@ -297,7 +302,7 @@ async function applyTransition(
         [ts, country, itemId, depletedTs, quantity]
       );
       if (res.rowCount > 0) {
-        await recomputeAdjustedRestockCycle(client, country, itemId, depletedTs);
+        if (persistRates) await recomputeAdjustedRestockCycle(client, country, itemId, depletedTs);
         return "restocked";
       }
       return null;
@@ -415,7 +420,9 @@ async function replayRestocks(client, scope = {}) {
       [scope.country, scope.itemId, minTs]
     );
 
-    for (const row of snapshots) {
+    const amount = await fetchRestockAmount(client, scope.country, scope.itemId);
+    const hints = buildReplayHints(snapshots, new Map([[`${scope.country}:${scope.itemId}`, amount]]));
+    for (const [index, row] of snapshots.entries()) {
       if (prevTs != null) {
         const result = await applyTransition(
           client,
@@ -425,7 +432,7 @@ async function replayRestocks(client, scope = {}) {
           prevTs,
           prevQuantity,
           row.quantity,
-          { persistRates: false }
+          hints[index]
         );
         if (result === "depleted") opened += 1;
         else if (result === "restocked") closed += 1;
@@ -504,8 +511,11 @@ async function replayRestocks(client, scope = {}) {
      ORDER BY country, item_id, snapshot_ts ASC`
   );
 
+  const amountRows = await many(client, `SELECT country, item_id, amount FROM restock_amounts`);
+  const amounts = new Map(amountRows.map((r) => [`${r.country}:${r.item_id}`, r.amount]));
+  const hints = buildReplayHints(snapshots, amounts);
   const minTsByItem = new Map();
-  for (const row of snapshots) {
+  for (const [index, row] of snapshots.entries()) {
     const rowKey = `${row.country}:${row.item_id}`;
     if (!minTsByItem.has(rowKey)) minTsByItem.set(rowKey, row.snapshot_ts);
     if (rowKey === key) {
@@ -517,7 +527,7 @@ async function replayRestocks(client, scope = {}) {
         prevTs,
         prevQuantity,
         row.quantity,
-        { persistRates: false }
+        hints[index]
       );
       if (result === "depleted") opened += 1;
       else if (result === "restocked") closed += 1;
@@ -569,19 +579,15 @@ async function replayRestocks(client, scope = {}) {
     if (!snapsByItem.has(itemKey)) snapsByItem.set(itemKey, []);
     snapsByItem.get(itemKey).push(row);
   }
-  const amountRows = await many(client, `SELECT country, item_id FROM restock_amounts`);
-  const itemsWithAmount = new Set(amountRows.map((r) => `${r.country}:${r.item_id}`));
   for (const [itemKey, events] of eventsByItem) {
     const [country, itemIdStr] = itemKey.split(":");
     const itemId = Number(itemIdStr);
     const itemSnaps = snapsByItem.get(itemKey) ?? [];
     const windows = computeRateWindowsFromSnapshots(events, itemSnaps);
     await persistRateWindows(client, country, itemId, windows);
-    if (itemsWithAmount.has(itemKey)) {
-      await recomputeAdjustedRestocksForItem(country, itemId, client, {
-        sinceDepletedTs: minTsByItem.get(itemKey),
-      });
-    }
+    await recomputeAdjustedRestocksForItem(country, itemId, client, {
+      sinceDepletedTs: minTsByItem.get(itemKey),
+    });
     await flagReplayedCyclesOutsideRange(client, country, itemId, minTsByItem.get(itemKey));
     await refreshAvgEmptyFor(client, country, itemId);
   }
@@ -596,7 +602,18 @@ export async function backfillRestocks() {
 
 /** Replay one country/item's snapshot history into restocks. */
 export async function backfillRestocksForItem(country, itemId) {
-  return withTransaction((client) => replayRestocks(client, { country, itemId }));
+  return withTransaction(async (client) => {
+    // Use the ingestion lock so rebuilds cannot race live or historical writes.
+    // Don't queue behind an import that may already be replaying this history.
+    const lock = await one(client, `SELECT pg_try_advisory_xact_lock(hashtextextended($1, 0)) AS acquired`,
+      [`snapshots:${country}:${itemId}`]);
+    if (!lock.acquired) {
+      const err = new Error("A snapshot update or rebuild is already in progress for this item. Please try again shortly.");
+      err.code = "RESTOCK_REBUILD_BUSY";
+      throw err;
+    }
+    return replayRestocks(client, { country, itemId });
+  });
 }
 
 /** Persist YATA observations through the same write path as internal imports. */
@@ -750,14 +767,26 @@ export async function getRestocks(country, itemId, limit) {
 
 /** Mark a completed restock cycle as ignored (excluded from averages). */
 export async function setRestockIgnored(country, itemId, depletedTs, ignored) {
-  await withTransaction(async (client) => {
+  return withTransaction(async (client) => {
+    // Serialize with ingestion/rebuilds before taking individual row locks.
+    // A busy item should give a useful error instead of a gateway timeout.
+    await client.query("SET LOCAL lock_timeout = '5s'");
+    try {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`snapshots:${country}:${itemId}`]);
+    } catch (err) {
+      if (err.code === "55P03") {
+        err.message = "A snapshot update or rebuild is in progress for this item. Please try again shortly.";
+      }
+      throw err;
+    }
     const res = await client.query(
       `UPDATE restocks SET ignored = $1
        WHERE country = $2 AND item_id = $3 AND depleted_ts = $4`,
       [ignored ? 1 : 0, country, itemId, depletedTs]
     );
     if (res.rowCount === 0) throw new Error("Restock cycle not found");
-    await refreshAvgEmptyFor(client, country, itemId);
+    return refreshAvgEmptyFor(client, country, itemId);
   });
 }
 
