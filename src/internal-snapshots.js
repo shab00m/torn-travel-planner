@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { COUNTRIES } from "./countries.js";
 import { saveApiSnapshots } from "./db.js";
 import { requireInternalKey } from "./internal-auth.js";
+import { createSnapshotBuffer } from "./snapshot-buffer.js";
 
 const MAX_BATCH_SIZE = 100;
 
@@ -57,6 +58,7 @@ export function createInternalSnapshotsRouter(save = saveApiSnapshots) {
   const router = express.Router();
   // Bounded, serial background writer: callers never wait for database work.
   const pending = [];
+  const write = createSnapshotBuffer(save);
   let running = false;
   async function drain() {
     if (running) return;
@@ -65,7 +67,7 @@ export function createInternalSnapshotsRouter(save = saveApiSnapshots) {
       while (pending.length) {
         const { records, context, started } = pending.shift();
         try {
-          const result = await save(records);
+          const result = await write(records);
           console.log("[internal-snapshots] write completed:", JSON.stringify({
             ...context, ...result, durationMs: Math.round(performance.now() - started),
           }));

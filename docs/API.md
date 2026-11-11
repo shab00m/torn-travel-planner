@@ -416,8 +416,27 @@ next batch continues. Up to 100 batches may wait behind the active write; a full
 queue returns HTTP 503. Queued/in-flight uploads may be lost if the process exits.
 There is no durable queue or automatic retry.
 
-Each batch executes one atomic `INSERT INTO snapshots ... ON CONFLICT DO NOTHING`,
-with source fixed to `API`. Existing country/item/timestamp/source identities are
+Before writing, the worker filters unchanged API runs independently per
+`(country, itemId)`, remembering state across requests. Mixed-item batches and
+multiple timestamps for one item are supported; records within each batch are
+processed in timestamp order. The first observation and any quantity/price change
+are written immediately by the worker. For unchanged repeats, only the newest
+repeat is held in memory. When a change arrives, the held preceding observation
+is written with the changed observation, preserving both ends of the run.
+Price changes count even when quantity stays the same; name changes do not.
+Late or repeated timestamps pass through conservatively and reset that item's
+filter state. Filter state advances only after a successful write.
+
+There is no timed flush: a trailing unchanged observation stays held until a
+change (or an out-of-order observation) arrives. Its timestamp is not yet in
+database-backed stock/history responses and it does not send a notification.
+Process exit loses held observations as well as queued batches. State is local
+to each web process and starts empty after restart. The existing periodic
+compaction remains useful for YATA, imports, and runs split across restarts.
+
+Each batch with retained records executes one atomic
+`INSERT INTO snapshots ... ON CONFLICT DO NOTHING`, with source fixed to `API`.
+A wholly buffered batch makes no database call. Existing country/item/timestamp/source identities are
 skipped without changing data. YATA and API observations at the same timestamp
 remain independent; API wins ties in effective-history and latest-stock reads.
 No item metadata, restock events, depletion rates, or other derived calculations

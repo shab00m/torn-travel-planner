@@ -77,6 +77,28 @@ test("invalid batches are rejected in full, including source spoofing and millis
   assert.equal(writes, 0);
 });
 
+test("separate endpoint uploads share per-country/item run buffers", async (t) => {
+  const saved = [];
+  const put = await fixture(t, async (records) => {
+    saved.push(...records);
+    return { inserted: records.length, skipped: 0 };
+  });
+  const upload = async (offset, mexQuantity, canQuantity) => {
+    const snapshots = [
+      { ...record(), snapshot_ts: record().snapshot_ts + offset, quantity: mexQuantity },
+      { ...record(), country: "can", snapshot_ts: record().snapshot_ts + offset, quantity: canQuantity },
+    ];
+    assert.equal((await put({ snapshots })).status, 202);
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  await upload(0, 100, 100);
+  await upload(1, 100, 100);
+  await upload(2, 100, 50);
+  await upload(3, 50, 50);
+  assert.deepEqual(saved.filter((r) => r.country === "mex").map((r) => r.snapshot_ts - record().snapshot_ts), [0, 2, 3]);
+  assert.deepEqual(saved.filter((r) => r.country === "can").map((r) => r.snapshot_ts - record().snapshot_ts), [0, 1, 2]);
+});
+
 test("a pending save does not delay acceptance, and a failure does not stop later uploads", async (t) => {
   let rejectSave;
   let started;

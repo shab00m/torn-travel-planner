@@ -166,6 +166,17 @@ The submitted name remains validated for compatibility; listings use the existin
 item catalogue. A full queue returns 503. Completion/errors are logged with the
 response's request ID; process exit can lose queued/in-flight uploads.
 
+`src/snapshot-buffer.js` filters API observations before that INSERT, independently
+for each country/item across queued requests. Each batch is sorted by timestamp;
+mixed-item and multi-timestamp batches use the same streaming logic. It writes
+the first observation and each quantity/cost change, holding only the newest
+unchanged repeat. The next change flushes that held run endpoint alongside the
+changed record. State advances after successful persistence; late/repeated
+timestamps flush the held endpoint, pass through, and reset the item's state.
+There is no timer flush or cross-process shared state: held timestamps are absent
+from DB reads/events until flushed, and are lost on restart. Existing periodic
+compaction still handles YATA and histories spanning restarts/imports.
+
 Committed API inserts use the same database notification/SSE path described above.
 Armed browser alarms check authoritative stock without needing restock calculations
 to finish. These are item-change notifications, not durable restock jobs.
