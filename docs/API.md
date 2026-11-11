@@ -407,52 +407,42 @@ configuration disables ingestion with HTTP 503; there is no hardcoded fallback.
 - Omit `source`: the server always records `API` and rejects attempts to specify it.
 - Duplicate `(country, itemId, snapshot_ts, source)` identities within a batch are invalid (`source` is always `API` for this endpoint).
 
-**Response (200):** `{ "ok": true, "inserted": 1, "skipped": 0, "source": "API" }`
+**Response (202):** `{ "accepted": true }`
 
-An existing country/item/timestamp/source is skipped. A YATA row and an API row
-at the same country/item/timestamp are stored independently. Repeating
-a request does not overwrite quantities, prices, or attribution. All observations
-and derived restock changes in a batch commit together. Historical observations
-rebuild the affected item's retained restock/depletion history in timestamp order.
-Concurrent YATA and API ingestion is serialized per country/item.
-For restock/rate calculations and charts, API takes precedence when both sources
-have an observation at the same instant. Raw history retains both rows.
+The server authenticates and validates the batch, queues it in memory, and returns
+immediately without waiting for PostgreSQL. Acceptance does not confirm persistence.
+The background writer processes batches serially; a failed batch is logged and the
+next batch continues. Up to 100 batches may wait behind the active write; a full
+queue returns HTTP 503. Queued/in-flight uploads may be lost if the process exits.
+There is no durable queue or automatic retry.
 
-**Errors:** 401 for a missing/incorrect key; 400 for an invalid batch (no writes);
-500 if persistence fails (the transaction rolls back); 503 if `INTERNAL_API_KEY`
-is missing or blank.
+Each batch executes one atomic `INSERT INTO snapshots ... ON CONFLICT DO NOTHING`,
+with source fixed to `API`. Existing country/item/timestamp/source identities are
+skipped without changing data. YATA and API observations at the same timestamp
+remain independent; API wins ties in effective-history and latest-stock reads.
+No item metadata, restock events, depletion rates, or other derived calculations
+are updated by this upload path. `name` remains required for payload compatibility,
+but does not update the item catalogue; catalogue-backed listings require an
+existing item entry.
 
-Authenticated requests include an `X-Request-Id` response header. Persistence
-errors also return the request ID and diagnostic details, for example:
+After a successful commit, the existing PostgreSQL `snapshot_updates` trigger
+notifies the web listener. It relays changed items through
+`GET /api/snapshots/events`; matching armed browser alarms recheck current stock
+and can confirm a restock without a rebuilt restock row. Notifications describe
+changed snapshots, not guaranteed zero-to-positive transitions. Historical derived
+calculations require an explicit backfill; YATA retains its existing tracking path.
 
-```json
-{
-  "ok": false,
-  "error": "Could not save snapshots",
-  "requestId": "matching-request-id-in-server-logs",
-  "details": {
-    "code": "57014",
-    "message": "canceling statement due to statement timeout",
-    "stage": "load_previous_snapshots",
-    "retryable": true,
-    "recordCount": 100,
-    "itemCount": 1,
-    "durationMs": 60000
-  }
-}
-```
+**Errors before acceptance:** 401 for a missing/incorrect key; 400 for an invalid
+batch (nothing queued); 503 for missing/blank server key configuration or a full queue.
 
-Stages identify connection, lock acquisition, item metadata, snapshot insertion,
-previous-observation lookup, restock replay/tracking, or commit. Replay errors
-also identify the country/item/timestamp being processed. Configured secrets and
-database URLs are redacted; headers, request credentials, SQL parameters and stack
-traces are not returned. Clients should parse JSON bodies even on non-2xx responses
-to display these diagnostics. Server logs record start, completion/failure and duration
-using the same request ID.
+Authenticated requests include an `X-Request-Id` response header. Background
+completion/failure logs include the same request ID, batch/item counts, and duration.
+Failure logs contain redacted diagnostic details; persistence errors do not change
+the already-sent 202 response. Callers do not need to parse a persistence receipt.
 
-Imports appear in database-backed history and analysis, including the admin Data
-Inspector's Source column. `/api/stocks` continues to expose the latest in-memory
-YATA response. The same 30-day snapshot retention applies to both sources.
+Imports appear in database-backed stock/history and the admin Data Inspector's
+Source column after persistence. The same 30-day snapshot retention applies to
+both sources.
 
 ---
 

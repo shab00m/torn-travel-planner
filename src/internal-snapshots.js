@@ -55,7 +55,31 @@ function validateBatch(body) {
 
 export function createInternalSnapshotsRouter(save = saveApiSnapshots) {
   const router = express.Router();
-  router.put("/", requireInternalKey, async (req, res) => {
+  // Bounded, serial background writer: callers never wait for database work.
+  const pending = [];
+  let running = false;
+  async function drain() {
+    if (running) return;
+    running = true;
+    try {
+      while (pending.length) {
+        const { records, context, started } = pending.shift();
+        try {
+          const result = await save(records);
+          console.log("[internal-snapshots] write completed:", JSON.stringify({
+            ...context, ...result, durationMs: Math.round(performance.now() - started),
+          }));
+        } catch (err) {
+          console.error("[internal-snapshots] write failed:", JSON.stringify({
+            ...errorDetails(err), ...context, durationMs: Math.round(performance.now() - started),
+          }));
+        }
+      }
+    } finally {
+      running = false;
+    }
+  }
+  router.put("/", requireInternalKey, (req, res) => {
     const requestId = randomUUID();
     const started = performance.now();
     res.set("X-Request-Id", requestId);
@@ -70,18 +94,13 @@ export function createInternalSnapshotsRouter(save = saveApiSnapshots) {
       requestId, recordCount: records.length,
       itemCount: new Set(records.map((r) => `${r.country}:${r.itemId}`)).size,
     };
-    console.log("[internal-snapshots] write started:", JSON.stringify(context));
-    try {
-      const result = await save(records);
-      console.log("[internal-snapshots] write completed:", JSON.stringify({
-        ...context, ...result, durationMs: Math.round(performance.now() - started),
-      }));
-      res.json({ ok: true, ...result, source: "API" });
-    } catch (err) {
-      const details = { ...errorDetails(err), ...context, durationMs: Math.round(performance.now() - started) };
-      console.error("[internal-snapshots] write failed:", JSON.stringify(details));
-      res.status(500).json({ ok: false, error: "Could not save snapshots", requestId, details });
+    if (pending.length >= 100) {
+      res.status(503).json({ error: "Snapshot upload queue is full" });
+      return;
     }
+    pending.push({ records, context, started });
+    res.status(202).json({ accepted: true });
+    setImmediate(() => { void drain(); });
   });
   return router;
 }

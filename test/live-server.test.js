@@ -50,16 +50,18 @@ test("API-only commits update both stock endpoints and push SSE without a succes
     assert.equal((await fetch(`${base}/api/stocks`)).status, 503);
     const initialStatus = await (await fetch(`${base}/api/stocks/status`)).json();
     assert.equal(initialStatus.ready, false);
-    const ts = Math.floor(Date.now() / 1000) - 2;
+    // Uploads only write snapshots; item metadata belongs to the catalogue.
+    await admin.query(`INSERT INTO ${schema}.items (item_id, name) VALUES (3460, 'Dahlia')`);
+    const ts = Math.floor(Date.now() / 1000) - 120;
     const response = await fetch(`${base}/api/internal/snapshots`, {
       method: "PUT", headers: { "Content-Type": "application/json", "X-Internal-Key": "live-test-key" },
       body: JSON.stringify({ snapshots: [
         { country: "mex", itemId: 3460, name: "Dahlia", snapshot_ts: ts, quantity: 0, cost: 300 },
-        { country: "mex", itemId: 3460, name: "Dahlia", snapshot_ts: ts + 1, quantity: 100, cost: 300 },
+        { country: "mex", itemId: 3460, name: "Dahlia", snapshot_ts: ts + 60, quantity: 100, cost: 300 },
       ] }),
     });
-    assert.equal(response.status, 200);
-    assert.equal((await response.json()).inserted, 2);
+    assert.equal(response.status, 202);
+    assert.deepEqual(await response.json(), { accepted: true });
     while (!frames.includes('"country":"mex","itemId":3460')) frames += decoder.decode((await reader.read()).value);
     assert.match(frames, /"country":"mex","itemId":3460/);
     const stock = await (await fetch(`${base}/api/items/mex/3460/stock`)).json();
@@ -70,16 +72,16 @@ test("API-only commits update both stock endpoints and push SSE without a succes
     const restocks = await (await fetch(`${base}/api/restocks/mex/3460`)).json();
     assert.deepEqual(restocks.restocks, []);
     const after = await (await fetch(`${base}/api/stocks/status?country=mex&itemId=3460`)).json();
-    assert.equal(after.timestamp, ts + 1);
+    assert.equal(after.timestamp, ts + 60);
     assert.equal(after.ready, true);
     const feed = await (await fetch(`${base}/api/stocks`)).json();
-    assert.equal(feed.timestamp, ts + 1);
+    assert.equal(feed.timestamp, ts + 60);
     assert.equal(feed.lastError, null);
-    assert.equal(feed.stocks.mex.update, ts + 1);
+    assert.equal(feed.stocks.mex.update, ts + 60);
     const dahlia = feed.stocks.mex.stocks.find((r) => r.id === 3460);
     assert.equal(dahlia.quantity, 100);
     assert.equal(dahlia.source, "API");
-    assert.equal(dahlia.snapshot_ts, ts + 1);
+    assert.equal(dahlia.snapshot_ts, ts + 60);
     const globalStatus = await (await fetch(`${base}/api/stocks/status`)).json();
     assert.equal(globalStatus.ready, true);
     assert.equal(globalStatus.timestamp, feed.timestamp);

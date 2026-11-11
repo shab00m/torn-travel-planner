@@ -91,3 +91,31 @@ test("restock alarm confirmation reads the DB-backed stock endpoint", async () =
   assert.ok(calls.includes("/api/items/mex/260/stock"));
   assert.ok(!calls.includes("/api/stocks"));
 });
+
+
+test("an armed alarm confirms positive stock without a derived restock row", async () => {
+  const source = readFileSync(new URL("../public/alarms.js", import.meta.url), "utf8");
+  let quantity = 0;
+  const fired = [];
+  const context = vm.createContext({
+    fireAt: (alarm) => alarm.eventTs,
+    ensureRestockAmountsForArmedAlarms: async () => {},
+    fetch: async (url) => ({ ok: true, json: async () => url.endsWith("/stock")
+      ? { quantity } : { restocks: [], rates: [] } }),
+    isNegligibleAlarmStockQty: () => false,
+    persistAlarms() {}, fireAlarm: (alarm) => { alarm.firedAt = Date.now(); fired.push(alarm); },
+  });
+  for (const name of ["async function resolveDueRestockAlarm(", "function tryFireRestockAlarmOnStock("]) {
+    const start = source.indexOf(name);
+    vm.runInContext(source.slice(start, source.indexOf("\n}", start) + 2), context);
+  }
+  const alarm = { type: "restock", country: "mex", itemId: 260,
+    depletedTs: Math.floor(Date.now() / 1000) - 120,
+    eventTs: Math.floor(Date.now() / 1000) + 120, awaitActual: true };
+  await context.resolveDueRestockAlarm(alarm);
+  assert.equal(fired.length, 0);
+  quantity = 100;
+  await context.resolveDueRestockAlarm(alarm);
+  assert.equal(fired.length, 1);
+  assert.equal(alarm.awaitActual, false);
+});

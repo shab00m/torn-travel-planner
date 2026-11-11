@@ -616,7 +616,7 @@ export async function backfillRestocksForItem(country, itemId) {
   });
 }
 
-/** Persist YATA observations through the same write path as internal imports. */
+/** Persist YATA observations and update derived restock history. */
 export async function saveSnapshot(stocks) {
   const records = [];
   for (const [country, data] of Object.entries(stocks)) {
@@ -628,9 +628,18 @@ export async function saveSnapshot(stocks) {
   return saveSnapshotRecords(records, "YATA");
 }
 
-/** Internal ingestion: callers cannot choose or spoof the stored source. */
+/** Insert-only internal ingestion. The DB trigger notifies clients after commit. */
 export async function saveApiSnapshots(records) {
-  const inserted = await saveSnapshotRecords(records, "API");
+  if (!records.length) return { inserted: 0, skipped: 0 };
+  const { rowCount: inserted } = await query(
+    `INSERT INTO snapshots (country, item_id, snapshot_ts, quantity, cost, source)
+     SELECT t.*, 'API'::text
+     FROM UNNEST($1::text[], $2::int[], $3::bigint[], $4::bigint[], $5::bigint[]) AS t
+     ON CONFLICT DO NOTHING`,
+    [records.map((r) => r.country), records.map((r) => r.itemId),
+     records.map((r) => r.snapshot_ts), records.map((r) => r.quantity),
+     records.map((r) => r.cost)]
+  );
   return { inserted, skipped: records.length - inserted };
 }
 
@@ -639,8 +648,7 @@ async function saveSnapshotRecords(records, source) {
   let stage = "connect";
   let item = null;
   return withTransaction(async (client) => {
-    // Both ingest paths take the same locks, in the same order. In particular,
-    // a historical import must not replay restocks while a live write changes them.
+    // Serialize YATA tracking with explicit maintenance rebuilds.
     const keys = [...new Set(records.map((r) => `snapshots:${r.country}:${r.itemId}`))].sort();
     stage = "acquire_snapshot_locks";
     await client.query(

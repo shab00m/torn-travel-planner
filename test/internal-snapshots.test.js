@@ -44,15 +44,15 @@ test("internal ingestion rejects missing, incorrect and query-only keys before w
   assert.equal(writes, 0);
 });
 
-test("authorized PUT passes normalized records and reports inserted/skipped counts", async (t) => {
+test("authorized PUT passes normalized records and accepts without waiting for persistence", async (t) => {
   let received;
   const put = await fixture(t, async (records) => {
     received = records;
     return { inserted: 0, skipped: 1 };
   });
   const result = await put({ snapshots: [{ ...record(), name: "  Dahlia  " }] });
-  assert.equal(result.status, 200);
-  assert.deepEqual(result.body, { ok: true, inserted: 0, skipped: 1, source: "API" });
+  assert.equal(result.status, 202);
+  assert.deepEqual(result.body, { accepted: true });
   assert.deepEqual(received, [record()]);
 });
 
@@ -77,35 +77,66 @@ test("invalid batches are rejected in full, including source spoofing and millis
   assert.equal(writes, 0);
 });
 
-test("database failures include a request ID and safe diagnostic details", async (t) => {
-  t.mock.method(console, "error", () => {});
-  const put = await fixture(t, async () => { throw new Error("database details"); });
-  const result = await put({ snapshots: [record()] });
-  assert.equal(result.status, 500);
-  assert.equal(result.body.error, "Could not save snapshots");
-  assert.equal(result.body.ok, false);
-  assert.match(result.body.requestId, /^[a-f0-9-]{36}$/);
-  assert.equal(result.body.details.message, "database details");
-  assert.equal(result.body.details.code, "INTERNAL_ERROR");
-  assert.equal(result.body.details.stage, "save_snapshots");
-  assert.equal(result.body.details.recordCount, 1);
-  assert.equal(result.body.details.retryable, false);
-});
-
-test("timeout diagnostics report the failed stage and redact configured secrets", async (t) => {
-  t.mock.method(console, "error", () => {});
-  const put = await fixture(t, async () => {
-    throw Object.assign(new Error(`statement timeout ${INTERNAL_API_KEY} postgres://user:password@db/app`), {
-      code: "57014", snapshotContext: { stage: "load_previous_snapshots" },
-    });
+test("a pending save does not delay acceptance, and a failure does not stop later uploads", async (t) => {
+  let rejectSave;
+  let started;
+  const saving = new Promise((resolve) => { started = resolve; });
+  const logs = [];
+  t.mock.method(console, "error", (...args) => logs.push(args));
+  let writes = 0;
+  let completed;
+  const done = new Promise((resolve) => { completed = resolve; });
+  const put = await fixture(t, () => {
+    writes++;
+    if (writes === 1) {
+      started();
+      return new Promise((_, reject) => { rejectSave = reject; });
+    }
+    completed();
+    return { inserted: 1, skipped: 0 };
   });
   const result = await put({ snapshots: [record()] });
-  assert.equal(result.status, 500);
-  assert.equal(result.body.details.code, "57014");
-  assert.equal(result.body.details.stage, "load_previous_snapshots");
-  assert.equal(result.body.details.retryable, true);
-  assert.ok(!JSON.stringify(result.body).includes(INTERNAL_API_KEY));
-  assert.ok(!JSON.stringify(result.body).includes("password"));
+  assert.equal(result.status, 202);
+  assert.deepEqual(result.body, { accepted: true });
+  await saving;
+  assert.equal((await put({ snapshots: [{ ...record(), snapshot_ts: record().snapshot_ts + 1 }] })).status, 202);
+  assert.equal(writes, 1);
+  rejectSave(Object.assign(new Error(`statement timeout ${INTERNAL_API_KEY} postgres://user:password@db/app`), {
+    code: "57014",
+  }));
+  await done;
+  assert.equal(writes, 2);
+  const details = JSON.parse(logs[0][1]);
+  assert.match(details.requestId, /^[a-f0-9-]{36}$/);
+  assert.equal(details.code, "57014");
+  assert.equal(details.recordCount, 1);
+  assert.equal(details.retryable, true);
+  assert.ok(!JSON.stringify(details).includes(INTERNAL_API_KEY));
+  assert.ok(!JSON.stringify(details).includes("password"));
+});
+
+test("the background queue is bounded while the writer is stalled", async (t) => {
+  t.mock.method(console, "log", () => {});
+  let release;
+  const waiting = new Promise((resolve) => { release = resolve; });
+  let writes = 0;
+  let completed;
+  const done = new Promise((resolve) => { completed = resolve; });
+  const put = await fixture(t, async () => {
+    await waiting;
+    if (++writes === 101) completed();
+    return { inserted: 1, skipped: 0 };
+  });
+  try {
+    for (let i = 0; i < 101; i++) {
+      assert.equal((await put({ snapshots: [record()] })).status, 202);
+    }
+    assert.equal((await put({ snapshots: [record()] })).status, 503);
+  } finally {
+    release();
+    await done;
+    await new Promise((resolve) => setImmediate(resolve));
+  }
 });
 
 
@@ -128,5 +159,5 @@ test("authentication uses the current environment key without a hardcoded fallba
   const put = await fixture(t);
   process.env.INTERNAL_API_KEY = "rotated-test-key";
   assert.equal((await put({ snapshots: [record()] }, INTERNAL_API_KEY)).status, 401);
-  assert.equal((await put({ snapshots: [record()] }, "rotated-test-key")).status, 200);
+  assert.equal((await put({ snapshots: [record()] }, "rotated-test-key")).status, 202);
 });

@@ -158,19 +158,25 @@ retain access to both records; stock/price charts use the same precedence.
 `PUT /api/internal/snapshots` accepts up to 100 observations using the server's
 `INTERNAL_API_KEY` environment variable via `X-Internal-Key`. Missing or blank
 configuration disables ingestion (503); no hardcoded key is used. Source is assigned by the
-server. Both ingestion paths use a shared transactional writer with ordered
-per-item advisory locks. New live observations incrementally update restocks;
-historical or multi-observation inserts replay the affected retained timeline.
-Conflicting identities within the same source are skipped without changing data.
+server. The API upload path validates/authenticates and returns 202 immediately,
+then a bounded in-memory background writer inserts each batch using one atomic,
+deduplicating SQL statement. It only writes `snapshots`: no metadata updates,
+advisory locks, predecessor lookups, restock tracking, or historical replay.
+The submitted name remains validated for compatibility; listings use the existing
+item catalogue. A full queue returns 503. Completion/errors are logged with the
+response's request ID; process exit can lose queued/in-flight uploads.
 
-The ingest predecessor lookup reads `snapshots` directly with
-`ORDER BY snapshot_ts DESC, source ASC LIMIT 1`, preserving API precedence while
-using an indexed lookup instead of repeatedly sorting the effective-history view.
-Newer observations and same-time peer sources use separate indexed existence
-checks. Historical imports replay from two cycles before the earliest inserted
-observation, retaining older cycles; explicit maintenance backfills still replay
-the full retained history. Ingest errors carry the failed stage and per-item context
-to request-ID-correlated endpoint diagnostics.
+Committed API inserts use the same database notification/SSE path described above.
+Armed browser alarms check authoritative stock without needing restock calculations
+to finish. These are item-change notifications, not durable restock jobs.
+
+YATA ingestion retains its ordered per-item advisory locks and derived-history
+updates. Its predecessor lookup reads `snapshots` directly with
+`ORDER BY snapshot_ts DESC, source ASC LIMIT 1`. It replays an affected suffix when
+an inserted observation has newer data or a same-time peer source; otherwise it
+tracks the new observation incrementally. API uploads never invoke either path.
+Explicit maintenance backfills can incorporate uploaded history into restock/rate
+calculations; there is no new automatic derived-history worker.
 
 The column rename is incompatible with old running code. Coordinate the web and
 cron rollout so old processes cannot query the database after migration, especially

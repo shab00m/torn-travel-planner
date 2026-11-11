@@ -25,6 +25,15 @@ test("snapshot migration and ingestion against PostgreSQL", {
   const yata = (offset, quantity) => ({ mex: {
     update: ts + offset, stocks: [{ id: itemId, name: "Dahlia", quantity, cost: 300 }],
   } });
+  const importAndRebuild = async (records) => {
+    const result = await db.saveApiSnapshots(records);
+    if (result.inserted) {
+      for (const { country, itemId } of new Map(records.map((r) => [`${r.country}:${r.itemId}`, r])).values()) {
+        await db.backfillRestocksForItem(country, itemId);
+      }
+    }
+    return result;
+  };
   try {
     // Reproduce an existing database, including an observation recorded before
     // the rename. Historical migrations must remain untouched and runnable.
@@ -83,11 +92,39 @@ test("snapshot migration and ingestion against PostgreSQL", {
         "a conflicting YATA observation must not manufacture a depletion event");
     });
 
-    await t.test("historical API imports rebuild depletion/refill events chronologically", async () => {
-      await db.saveApiSnapshots([record(30, 0)]);
+    await t.test("API uploads insert only snapshots even when an item maintenance lock is held", async () => {
+      const onlyId = 999994;
+      const writer = await pool.connect();
+      const before = (await pool.query("SELECT * FROM restocks ORDER BY country, item_id, depleted_ts")).rows;
+      try {
+        await writer.query("BEGIN");
+        await writer.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`snapshots:mex:${onlyId}`]);
+        await pool.query("INSERT INTO snapshots VALUES ('mex', $1, $2, 0, 300, 'YATA')", [onlyId, ts + 60]);
+        const samples = [record(0, 100), record(60, 10), record(120, 100)].map((r) => ({ ...r, itemId: onlyId }));
+        let deadline;
+        try {
+          const result = await Promise.race([
+            db.saveApiSnapshots(samples),
+            new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("API insert waited on maintenance")), 2000); }),
+          ]);
+          assert.deepEqual(result, { inserted: 3, skipped: 0 });
+        } finally { clearTimeout(deadline); }
+        assert.deepEqual(await db.saveApiSnapshots(samples), { inserted: 0, skipped: 3 });
+        assert.equal((await pool.query("SELECT * FROM snapshots WHERE item_id=$1", [onlyId])).rowCount, 4);
+        assert.equal((await pool.query("SELECT * FROM items WHERE item_id=$1", [onlyId])).rowCount, 0);
+        assert.deepEqual((await pool.query("SELECT * FROM restocks ORDER BY country, item_id, depleted_ts")).rows, before);
+      } finally {
+        await writer.query("ROLLBACK");
+        writer.release();
+        await pool.query("DELETE FROM snapshots WHERE item_id=$1", [onlyId]);
+      }
+    });
+
+    await t.test("explicit backfills after API imports rebuild depletion/refill events chronologically", async () => {
+      await importAndRebuild([record(30, 0)]);
       let { rows } = await pool.query("SELECT depleted_ts, restocked_ts, duration FROM restocks ORDER BY depleted_ts");
       assert.deepEqual(rows, [{ depleted_ts: ts + 30, restocked_ts: ts + 90, duration: 60 }]);
-      await db.saveApiSnapshots([record(240, 100), record(120, 40), record(180, 0)]);
+      await importAndRebuild([record(240, 100), record(120, 40), record(180, 0)]);
       ({ rows } = await pool.query("SELECT depleted_ts, restocked_ts FROM restocks ORDER BY depleted_ts"));
       assert.deepEqual(rows, [
         { depleted_ts: ts + 30, restocked_ts: ts + 90 },
@@ -96,13 +133,14 @@ test("snapshot migration and ingestion against PostgreSQL", {
       const rates = await db.getDepletionRates("mex", itemId);
       assert.equal(rates.find((r) => r.start_ts === ts + 90).end_ts, ts + 120);
       const before = JSON.stringify(rows);
-      assert.deepEqual(await db.saveApiSnapshots([record(180, 999)]), { inserted: 0, skipped: 1 });
+      assert.deepEqual(await importAndRebuild([record(180, 999)]), { inserted: 0, skipped: 1 });
       ({ rows } = await pool.query("SELECT depleted_ts, restocked_ts FROM restocks ORDER BY depleted_ts"));
       assert.equal(JSON.stringify(rows), before);
     });
 
-    await t.test("concurrent YATA/API writes serialize transitions for the same item", async () => {
+    await t.test("concurrent YATA/API writes retain observations for an explicit backfill", async () => {
       await Promise.all([db.saveSnapshot(yata(300, 0)), db.saveApiSnapshots([record(360, 100)])]);
+      await db.backfillRestocksForItem("mex", itemId);
       const { rows } = await pool.query("SELECT depleted_ts, restocked_ts FROM restocks ORDER BY depleted_ts DESC LIMIT 1");
       assert.deepEqual(rows, [{ depleted_ts: ts + 300, restocked_ts: ts + 360 }]);
       const history = await db.getHistory("mex", itemId, 0);
@@ -111,7 +149,7 @@ test("snapshot migration and ingestion against PostgreSQL", {
       assert.ok(history.every((r) => Number.isSafeInteger(r.snapshot_ts)));
     });
 
-    await t.test("short empty periods are discarded in live ingestion and snapshot replays", async () => {
+    await t.test("explicit backfills discard short empty periods from uploaded snapshots", async () => {
       const blipId = 999996;
       const blip = (offset, quantity) => ({ ...record(offset, quantity),
         country: "can", itemId: blipId, name: "Xanax" });
@@ -123,7 +161,7 @@ test("snapshot migration and ingestion against PostgreSQL", {
         // Repeated 1–2 second API oscillations and the 59-second boundary.
         for (const [offset, quantity] of [[0, 218], [10, 0], [11, 218],
           [20, 0], [22, 218], [30, 0], [89, 218]]) {
-          await db.saveApiSnapshots([blip(offset, quantity)]);
+          await importAndRebuild([blip(offset, quantity)]);
         }
         assert.deepEqual(await rows(), []);
         // Starting with zero stock exercises recovery without an open cycle.
@@ -132,7 +170,7 @@ test("snapshot migration and ingestion against PostgreSQL", {
         // Keep genuine empty periods at and above the minimum, plus open ones.
         for (const [offset, quantity] of [[100, 0], [160, 218],
           [200, 0], [261, 218], [300, 0]]) {
-          await db.saveApiSnapshots([blip(offset, quantity)]);
+          await importAndRebuild([blip(offset, quantity)]);
         }
         const expected = [
           { depleted_ts: ts + 100, restocked_ts: ts + 160, duration: 60 },
@@ -153,14 +191,14 @@ test("snapshot migration and ingestion against PostgreSQL", {
       }
     });
 
-    await t.test("configured window excludes new and replayed cycles and can flag existing history", async () => {
+    await t.test("configured window excludes explicitly replayed cycles and can flag existing history", async () => {
       const windowId = 999995;
       const sample = (offset, quantity) => ({ ...record(offset, quantity), itemId: windowId });
       const cycles = async () => (await db.getRestocks("mex", windowId))
         .sort((a, b) => a.depleted_ts - b.depleted_ts);
       try {
         // Three existing cycles: min endpoint, max endpoint, and above max.
-        await db.saveApiSnapshots([[0, 100], [10, 0], [70, 100], [80, 0],
+        await importAndRebuild([[0, 100], [10, 0], [70, 100], [80, 0],
           [200, 100], [210, 0], [390, 100]].map(([ts, qty]) => sample(ts, qty)));
         await assert.rejects(db.flagRestocksOutsideWindow("mex", windowId), /Set both min and max/);
         await db.setEmptyForBounds("mex", windowId, { minEmptyFor: 60, maxEmptyFor: 120 });
@@ -172,12 +210,12 @@ test("snapshot migration and ingestion against PostgreSQL", {
         assert.deepEqual((await cycles()).map((cycle) => cycle.ignored), [true, false, true]);
         assert.equal((await db.flagRestocksOutsideWindow("mex", windowId)).flagged, 0);
         assert.equal((await db.flagOutlierRestocks("mex", windowId)).flagged, 0);
-        // Live completion uses the configured window without needing a baseline.
-        await db.saveApiSnapshots([sample(400, 0)]);
-        await db.saveApiSnapshots([sample(580, 100)]);
+        // Explicit replay uses the configured window without needing a baseline.
+        await importAndRebuild([sample(400, 0)]);
+        await importAndRebuild([sample(580, 100)]);
         assert.equal((await cycles()).at(-1).ignored, true);
         // Historical imports and rebuilds must apply the same automatic rule.
-        await db.saveApiSnapshots([sample(600, 0), sample(780, 100)]);
+        await importAndRebuild([sample(600, 0), sample(780, 100)]);
         assert.equal((await cycles()).at(-1).ignored, true);
         await db.backfillRestocksForItem("mex", windowId);
         assert.deepEqual((await cycles()).map((cycle) => cycle.ignored), [true, false, true, true, true]);
@@ -206,7 +244,7 @@ test("snapshot migration and ingestion against PostgreSQL", {
       assert.deepEqual(await db.getRestocks("mex", itemId), before);
     });
 
-    await t.test("a failed batch rolls back metadata and all observations", async () => {
+    await t.test("a failed batch inserts no observations or metadata", async () => {
       await assert.rejects(db.saveApiSnapshots([
         { ...record(400, 10), itemId: 999999, name: "Must roll back" },
         { ...record(401, 10), cost: "invalid bigint" },
@@ -224,7 +262,7 @@ test("snapshot migration and ingestion against PostgreSQL", {
 
     await t.test("source-specific edits and deletions cannot affect the other source", async () => {
       await db.saveSnapshot(yata(600, 10));
-      await db.saveApiSnapshots([record(600, 20)]);
+      await importAndRebuild([record(600, 20)]);
       await db.updateSnapshot("mex", itemId, ts + 600, { quantity: 30 }, "API");
       assert.equal((await db.getSnapshot("mex", itemId, ts + 600, "YATA")).quantity, 10);
       assert.equal((await db.getSnapshot("mex", itemId, ts + 600, "API")).quantity, 30);
@@ -237,7 +275,7 @@ test("snapshot migration and ingestion against PostgreSQL", {
       assert.equal(await db.deleteSnapshots("mex", itemId, [{ snapshot_ts: ts + 600, source: "YATA" }]), 1);
     });
 
-    await t.test("100 historical observations replay a bounded suffix with the same results as full replay", async () => {
+    await t.test("100 historical API observations leave derived history unchanged until an explicit backfill", async () => {
       const otherId = 999998;
       await pool.query("INSERT INTO items (item_id, name) VALUES ($1, 'Replay test')", [otherId]);
       await pool.query(`INSERT INTO snapshots (country,item_id,snapshot_ts,quantity,cost,source)
@@ -247,12 +285,15 @@ test("snapshot migration and ingestion against PostgreSQL", {
       const oldRows = (await pool.query("SELECT * FROM restocks WHERE item_id=$1 AND depleted_ts<$2 ORDER BY depleted_ts", [otherId, ts - 1300])).rows;
       const imported = Array.from({ length: 100 }, (_, n) => ({ ...record(0, n < 50 ? 50 : 0),
         itemId: otherId, snapshot_ts: ts - 1100 + n, name: "Replay test" }));
+      const before = (await pool.query("SELECT * FROM restocks WHERE item_id=$1 ORDER BY depleted_ts", [otherId])).rows;
       assert.deepEqual(await db.saveApiSnapshots(imported), { inserted: 100, skipped: 0 });
+      assert.deepEqual((await pool.query("SELECT * FROM restocks WHERE item_id=$1 ORDER BY depleted_ts", [otherId])).rows, before);
+      await db.backfillRestocksForItem("mex", otherId);
       const partial = (await pool.query("SELECT * FROM restocks WHERE item_id=$1 ORDER BY depleted_ts", [otherId])).rows;
       assert.deepEqual((await pool.query("SELECT * FROM restocks WHERE item_id=$1 AND depleted_ts<$2 ORDER BY depleted_ts", [otherId, ts - 1300])).rows, oldRows);
       await db.backfillRestocksForItem("mex", otherId);
       assert.deepEqual((await pool.query("SELECT * FROM restocks WHERE item_id=$1 ORDER BY depleted_ts", [otherId])).rows, partial);
-      assert.deepEqual(await db.saveApiSnapshots(imported), { inserted: 0, skipped: 100 });
+      assert.deepEqual(await importAndRebuild(imported), { inserted: 0, skipped: 100 });
       await pool.query("DELETE FROM snapshots WHERE item_id=$1", [otherId]);
     });
 
