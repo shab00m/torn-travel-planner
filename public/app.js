@@ -211,8 +211,8 @@ function compareItemsBySort(aCountry, aItem, bCountry, bItem, sortState) {
 			);
 		case "totalCost":
 			return compareSortValues(
-				aItem.cost * getMaxPurchaseQty(aCountry, aItem.id, aItem.cost),
-				bItem.cost * getMaxPurchaseQty(bCountry, bItem.id, bItem.cost),
+				aItem.cost == null ? null : aItem.cost * getMaxPurchaseQty(aCountry, aItem.id, aItem.cost),
+				bItem.cost == null ? null : bItem.cost * getMaxPurchaseQty(bCountry, bItem.id, bItem.cost),
 				dir,
 			);
 		case "profit":
@@ -300,7 +300,7 @@ function getItemType(itemId) {
 function itemMatchesFilters(item, country, query) {
 	if (!state.showHidden && isHidden(country, item.id)) return false;
 	if (query && !item.name.toLowerCase().includes(query)) return false;
-	if (state.inStockOnly && item.quantity <= 0) return false;
+	if (state.inStockOnly && !(item.quantity > 0)) return false;
 	if (state.itemTypeFilters.length) {
 		const type = getItemType(item.id);
 		if (!type || !state.itemTypeFilters.includes(type)) return false;
@@ -402,6 +402,7 @@ function populateItemTypeFilter() {
 }
 
 function purchaseQtyCellsHtml(country, item) {
+	if (item.cost == null) return '<td class="col-items">—</td><td class="col-total-cost">—</td>';
 	const qty = getMaxPurchaseQty(country, item.id, item.cost);
 	const titleParts = [`${state.travelCapacity} slots`];
 	const restock = getRestockAmount(country, item.id);
@@ -414,6 +415,11 @@ function purchaseQtyCellsHtml(country, item) {
           <td class="col-total-cost" title="${escapeHtml(title)}">${fmtListMoneyHtml(item.cost * qty)}</td>`;
 }
 
+function stockQuantityCellHtml(item) {
+	if (item.quantity == null) return '<td class="type-unknown" title="Listed by Torn; awaiting a stock report">Unknown</td>';
+	return `<td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>`;
+}
+
 function favoriteRowHtml(country, item) {
 	const meta = state.countries[country];
 	const nameCell = `${meta.flag} ${escapeHtml(item.name)}`;
@@ -422,7 +428,7 @@ function favoriteRowHtml(country, item) {
         <tr class="${hidden ? "is-hidden-row" : ""}" data-country="${country}" data-item="${item.id}" data-name="${escapeHtml(item.name)}" title="View item history">
           <td class="favorite-cell">${favoriteButtonHtml(country, item.id)}</td>
           <td>${nameCell}</td>
-          <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
+          ${stockQuantityCellHtml(item)}
           <td class="col-cost">${fmtListMoneyHtml(item.cost)}</td>
           ${purchaseQtyCellsHtml(country, item)}
           ${profitHrCell(country, item)}
@@ -536,7 +542,7 @@ function stockRowHtml(country, item) {
           <td class="favorite-cell">${itemActionsHtml(country, item.id)}</td>
           <td class="col-item"><span class="item-country-flag">${meta.flag} </span>${highlight(item.name, state.search.trim())}</td>
           ${extraCols.join("")}
-          <td class="${item.quantity === 0 ? "qty-zero" : "qty-ok"}">${fmtNum(item.quantity)}</td>
+          ${stockQuantityCellHtml(item)}
           <td class="col-cost">${fmtListMoneyHtml(item.cost)}</td>
           ${purchaseQtyCellsHtml(country, item)}
           ${profitHrCell(country, item)}
@@ -690,13 +696,19 @@ async function loadStocks() {
 	try {
 		const data = await fetchJson("/api/stocks");
 		state.stocks = data.stocks;
+		state.itemTypes ??= {};
+		for (const destination of Object.values(data.stocks)) {
+			for (const item of destination.stocks) {
+				if (item.item_type) state.itemTypes[item.id] = item.item_type;
+			}
+		}
 		lastStockTimestamp = data.timestamp;
 		noteStockTimestamp(data.timestamp);
 		if (typeof refreshRestockAlarmsFromStocks === "function") {
 			void refreshRestockAlarmsFromStocks(data);
 		}
 		clearPageError();
-		el.status.textContent = `Last update: ${fmtTime(data.timestamp)} — live DB updates (YATA + API)`;
+		el.status.textContent = `Last update: ${data.timestamp == null ? "Awaiting stock reports" : fmtTime(data.timestamp)} — live DB updates (YATA + API)`;
 		populateItemTypeFilter();
 		render();
 		await loadSafeWindows();
@@ -903,7 +915,7 @@ function buildStockGroups(rows, query) {
 		groups.push({
 			key: code,
 			title: `${meta.flag} ${meta.name}`,
-			meta: `updated ${fmtTime(data.update)}`,
+			meta: data.update == null ? "Awaiting stock reports" : `updated ${fmtTime(data.update)}`,
 			updated: data.update,
 			rows: sortStockRows(groupRows),
 			fullWidth: false,

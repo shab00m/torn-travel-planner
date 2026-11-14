@@ -38,20 +38,26 @@ Flight times are derived from [Torn Travel handbook](https://www.torntravel.com/
 
 ### `GET /api/stocks`
 
-Latest committed DB observation for each country/item, including both YATA and
-API submissions. The newest `snapshot_ts` wins, with API preferred on ties.
+Known foreign shop items plus the latest committed DB observations, including
+both YATA and API submissions. The newest `snapshot_ts` wins, with API preferred on ties.
 
 **Response:** `{ stocks, timestamp, lastError }`
 
 The existing shape is preserved: `stocks[country] = { update, stocks: [...] }`.
-Each item contains `{ id, name, quantity, cost, source, snapshot_ts }`.
+Each item contains `{ id, name, item_type, quantity, cost, source, snapshot_ts }`.
+Torn catalogue discoveries appear even before the first stock report: their
+`quantity`, `source` and `snapshot_ts` are `null`. `cost` is the catalogue shop's
+buy price if provided, otherwise `null`. Unknown quantity is not sold-out stock.
+Observed prices always take precedence over catalogue prices.
 Country `update` is the newest item timestamp in that country; top-level
-`timestamp` is the newest observation timestamp across the feed.
+`timestamp` is the newest observation timestamp across the feed. Both are `null`
+when their scope has only catalogue entries; catalogue refresh time is never
+presented as a stock observation time.
 
 Works with API-only data, even if YATA has never been fetched successfully.
-Returns **503** only if no observations exist or the DB read fails. Responses
+Returns **503** only if no known travel items exist or the DB read fails. Responses
 disable browser caching. DB reads are shared for up to two seconds, invalidated
-immediately when the server receives a committed snapshot notification.
+immediately when the server receives a committed snapshot or shop-discovery notification.
 
 ---
 
@@ -62,7 +68,8 @@ Lightweight revision probe for detecting new committed snapshots without downloa
 **Response:** `{ ready, timestamp, lastError, snapshotRevision }`
 
 `ready` and `timestamp` come from committed DB observations, not the YATA cache.
-`snapshotRevision` changes on committed DB inserts, including historical API
+`snapshotRevision` also changes on catalogue discoveries, although `ready` stays
+false until stock has been observed. It changes on committed DB inserts, including historical API
 observations whose timestamp does not advance the latest timestamp. Optional
 `country` and `itemId` query parameters must be supplied together and scope both
 the revision and timestamp to one item. Invalid scopes return 400. Responses disable caching.
@@ -72,7 +79,9 @@ the revision and timestamp to one item. Invalid scopes return 400. Responses dis
 Server-sent event stream. `ready` events signal connection/reconnection and require
 a catch-up refresh. `snapshots` events contain `{ revision, items }`, with each
 item identified by `{ country, itemId, snapshot_ts }`. Events are delivered only
-after the snapshot/restock transaction commits. Heartbeats keep idle connections
+after the snapshot/restock transaction commits. Catalogue additions and price
+changes use the same event with `snapshot_ts: null` to refresh open lists without
+inventing observations. Heartbeats keep idle connections
 open; clients automatically reconnect and refresh after interruptions.
 
 ### `GET /api/items/:country/:itemId/stock`

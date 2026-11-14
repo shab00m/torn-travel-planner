@@ -1089,12 +1089,12 @@ export async function hasItemsMissingType() {
  * Upsert Torn catalogue rows into items (id, name, item_type).
  * Preserves existing rows; overwrites name and item_type from Torn.
  */
-export async function upsertItemTypes(entries) {
+export async function upsertItemTypes(entries, db = getPool()) {
   if (!entries.length) return 0;
   const ids = entries.map((e) => e.id);
   const names = entries.map((e) => e.name);
   const types = entries.map((e) => e.type);
-  await query(
+  await db.query(
     `INSERT INTO items (item_id, name, item_type)
      SELECT * FROM UNNEST($1::int[], $2::text[], $3::text[])
      ON CONFLICT (item_id) DO UPDATE SET

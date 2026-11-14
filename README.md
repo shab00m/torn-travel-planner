@@ -6,6 +6,7 @@ A web app that displays live foreign stock data for [Torn](https://www.torn.com)
 
 - Live stock levels (quantity + cost) for all 11 travel destinations
 - Automatic polling of the YATA API every 60 seconds
+- Automatic discovery of foreign shop items from Torn's catalogue on startup and about hourly; newly listed items appear with **Unknown** stock until observed
 - Live item-chart and restock-alarm updates after DB commits, including API submissions, with a two-second polling fallback
 - Every poll is stored as a snapshot in PostgreSQL, deduplicated by YATA's per-country update timestamp
 - Click any item to see a graph of its stock quantity over time (1h / 6h / 24h / 7d / all)
@@ -35,6 +36,16 @@ npm start
 Then open http://localhost:3000.
 
 `DATABASE_URL` is required. Schema is applied by `npm run migrate` (also runs on server startup).
+
+Set `TORN_API_KEY` on the web service to enable recurring catalogue discovery
+(`torn/items` access). The web app reads every item's `value.shops` list, so new
+items and new combinations at existing destinations require no manual item list
+or restart. Failed refreshes retry every five minutes and preserve discoveries.
+YATA still supplies every stock observation in its export once per minute; its
+feed can lag Torn's shop catalogue. Catalogue-only rows have unknown quantity,
+and may also have unknown price; they never create stock or restock history.
+Country names, flags and flight times remain configured in `src/countries.js`
+and `src/flight-times.js`.
 
 To enable [internal snapshot ingestion](docs/API.md#internal-snapshot-ingestion),
 set `INTERNAL_API_KEY` to a secret in `.env` or the web service's Railway variables.

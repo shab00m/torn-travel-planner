@@ -33,7 +33,7 @@ import {
   getCachedMarketPrices,
   CACHE_TTL_SEC,
 } from "./src/market.js";
-import { getCachedItemTypes, ensureItemTypesPopulated } from "./src/item-types.js";
+import { getCachedItemTypes, startItemCataloguePolling } from "./src/item-types.js";
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
 import { getDepletionRateTod } from "./src/depletion-rate-tod.js";
 import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
@@ -200,10 +200,9 @@ app.get("/api/markets", async (_req, res) => {
   res.json({ prices, fetchedAt, cacheTtlSec: CACHE_TTL_SEC });
 });
 
-// Torn item id → type from items.item_type (populated once via TORN_API_KEY).
+// Torn item id → type, refreshed alongside the foreign shop catalogue.
 app.get("/api/item-types", async (_req, res) => {
   const { types } = await getCachedItemTypes();
-  if (!Object.keys(types).length) void ensureItemTypesPopulated();
   res.json({ types });
 });
 
@@ -239,7 +238,7 @@ app.get("/api/stocks", async (_req, res) => {
   res.set("Cache-Control", "no-store");
   try {
     const data = await readCurrentStocks();
-    if (data.timestamp == null) return res.status(503).json({ error: "No stock observations stored yet" });
+    if (!Object.keys(data.stocks).length) return res.status(503).json({ error: "No travel items stored yet" });
     res.json(data);
   } catch (err) {
     console.error("[stocks] DB read failed:", err.message);
@@ -784,7 +783,7 @@ process.on("SIGINT", () => shutdown("SIGINT"));
 server = app.listen(PORT, () => {
   console.log(`Torn Travel Planner running at http://localhost:${PORT}`);
   startPolling();
-  void ensureItemTypesPopulated();
+  startItemCataloguePolling();
   void ensureAdjustedRestocks()
     .then((result) => {
       if (result.itemsUpdated > 0) {

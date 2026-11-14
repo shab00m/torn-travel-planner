@@ -207,6 +207,7 @@ function fmtListMoneyAt(n, millionAt) {
 
 /** Cost / total cost in lists: $450B, $182.43M; 10M+ compact under 1000px. */
 function fmtListMoneyHtml(n) {
+  if (n == null) return "—";
   const wide = fmtListMoneyAt(n, HUNDRED_MILLION);
   const narrow = fmtListMoneyAt(n, TEN_MILLION);
   if (wide === narrow) return wide;
@@ -961,6 +962,7 @@ function profitValueClass(value) {
  * known restock amount and/or max budget (total cost = qty × buyPrice).
  */
 function getMaxPurchaseQty(country, itemId, buyPrice) {
+  if (buyPrice == null) return null;
   let qty = state.travelCapacity;
   const restock = getRestockAmount(country, itemId);
   if (restock != null && restock < qty) qty = restock;
@@ -973,7 +975,7 @@ function getMaxPurchaseQty(country, itemId, buyPrice) {
 
 function computeProfitMetrics({ buyPrice, sellPrice, country, itemId }) {
   const flightSec = getFlightSec(country);
-  if (flightSec == null || sellPrice == null) return null;
+  if (flightSec == null || sellPrice == null || buyPrice == null) return null;
   const roundTripSec = flightSec * 2;
   if (roundTripSec <= 0) return null;
   const itemsPerTrip =

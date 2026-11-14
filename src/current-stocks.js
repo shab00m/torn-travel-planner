@@ -4,22 +4,27 @@ import { COUNTRIES } from "./countries.js";
 /** Indexed last-observation lookups; never scan all snapshot history per request. */
 export async function loadCurrentStocks() {
   const { rows } = await getPool().query(
-    `SELECT c.country, i.item_id AS id, i.name, s.snapshot_ts, s.quantity, s.cost, s.source
+    `SELECT c.country, i.item_id AS id, i.name, i.item_type, s.snapshot_ts, s.quantity,
+            COALESCE(s.cost, t.cost) AS cost, s.source
      FROM unnest($1::text[]) AS c(country)
      CROSS JOIN items i
-     CROSS JOIN LATERAL (
+     LEFT JOIN travel_items t ON t.country = c.country AND t.item_id = i.item_id
+     LEFT JOIN LATERAL (
        SELECT snapshot_ts, quantity, cost, source FROM snapshots
        WHERE country = c.country AND item_id = i.item_id
        ORDER BY snapshot_ts DESC, source ASC LIMIT 1
-     ) s
+     ) s ON true
+     WHERE s.snapshot_ts IS NOT NULL OR t.item_id IS NOT NULL
      ORDER BY c.country, i.item_id`, [Object.keys(COUNTRIES)]);
   const stocks = {};
   let timestamp = null;
   for (const { country, ...item } of rows) {
     const destination = stocks[country] ??= { update: item.snapshot_ts, stocks: [] };
-    destination.update = Math.max(destination.update, item.snapshot_ts);
+    if (item.snapshot_ts != null) {
+      destination.update = Math.max(destination.update ?? 0, item.snapshot_ts);
+      timestamp = Math.max(timestamp ?? 0, item.snapshot_ts);
+    }
     destination.stocks.push(item);
-    timestamp = Math.max(timestamp ?? 0, item.snapshot_ts);
   }
   return { stocks, timestamp, lastError: null };
 }

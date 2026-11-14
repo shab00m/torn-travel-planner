@@ -1,6 +1,9 @@
-import { getAllItemTypeRows, hasItemsMissingType, upsertItemTypes } from "./db.js";
+import { getAllItemTypeRows } from "./db.js";
+import { saveTravelCatalogue } from "./travel-catalogue.js";
 
 const TORN_V2_ITEMS_URL = "https://api.torn.com/v2/torn/items";
+const REFRESH_INTERVAL_MS = 60 * 60_000;
+const RETRY_INTERVAL_MS = 5 * 60_000;
 
 /** Official TornItemCategory values (excluding All). */
 export const TORN_ITEM_CATEGORIES = [
@@ -36,6 +39,7 @@ export const TORN_ITEM_CATEGORIES = [
 
 let memoryCache = null; // { types: Record<number, string> } | null
 let populatePromise = null;
+let nextRefreshAt = 0;
 
 function resolveServerApiKey() {
   const envKey = process.env.TORN_API_KEY;
@@ -64,7 +68,8 @@ function entriesFromItems(items, fallbackType = null) {
       (fallbackType && String(fallbackType)) ||
       "";
     if (!Number.isInteger(id) || id <= 0 || !name || !type) continue;
-    entries.push({ id, name, type });
+    entries.push({ id, name, type,
+      shops: Array.isArray(item.value?.shops) ? item.value.shops : [] });
   }
   return entries;
 }
@@ -110,17 +115,15 @@ export async function getCachedItemTypes() {
 }
 
 /**
- * One-time (or catch-up) populate of items.item_type from Torn.
- * Uses TORN_API_KEY only — never a user key. Skips when every item already has a type.
+ * Refresh names, types and foreign shop locations, even when all known items
+ * already have types. Uses TORN_API_KEY only — never a visitor's key.
  */
 export async function ensureItemTypesPopulated() {
   if (populatePromise) return populatePromise;
   populatePromise = (async () => {
-    const missing = await hasItemsMissingType();
     const cached = await getCachedItemTypes();
-    if (!missing && Object.keys(cached.types).length > 0) {
-      return cached;
-    }
+    if (Date.now() < nextRefreshAt) return cached;
+    nextRefreshAt = Date.now() + RETRY_INTERVAL_MS;
 
     const apiKey = resolveServerApiKey();
     if (!apiKey) {
@@ -136,11 +139,12 @@ export async function ensureItemTypesPopulated() {
         console.error("[item-types] Torn returned no items with types");
         return cached;
       }
-      const count = await upsertItemTypes(entries);
+      const count = await saveTravelCatalogue(entries);
       memoryCache = null;
       const types = await loadTypesFromDb();
       memoryCache = { types };
-      console.log(`[item-types] populated item_type on ${count} items from Torn`);
+      nextRefreshAt = Date.now() + REFRESH_INTERVAL_MS;
+      console.log(`[item-types] refreshed ${count} Torn items and their foreign shops`);
       return { types };
     } catch (err) {
       console.error(`[item-types] populate failed: ${err.message}`);
@@ -150,4 +154,14 @@ export async function ensureItemTypesPopulated() {
     populatePromise = null;
   });
   return populatePromise;
+}
+
+export function startItemCataloguePolling() {
+  const refresh = () => {
+    void ensureItemTypesPopulated().catch((err) => {
+      console.error(`[item-types] refresh failed: ${err.message}`);
+    });
+  };
+  refresh();
+  return setInterval(refresh, RETRY_INTERVAL_MS).unref();
 }

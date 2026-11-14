@@ -83,6 +83,23 @@ for a scoped item. Both endpoints work with API-only data while YATA is unavaila
 
 The item page loads history, restocks, depletion rates, market price, travel status, and safe windows from `/api/*`. Chart math and restock-time adjustment helpers in `public/` are imported by the server where the same formula must stay a single source of truth (`public/adjust-restock-time.js`, `public/empty-for-bounds.js`).
 
+### Foreign item discovery
+
+The web service refreshes Torn's complete `torn/items?cat=All` catalogue at startup
+and about hourly using its server `TORN_API_KEY`. A five-minute timer retries
+failed refreshes; a single in-flight refresh is shared. Refreshing continues even
+when all existing item types are populated. `value.shops` identifies foreign
+country/item combinations, including additions absent from YATA. The country
+metadata/flight list remains configured; there is no per-country item allowlist.
+
+`src/travel-catalogue.js` atomically saves names/types and shop listings in
+`travel_items`. Partial responses do not remove previous discoveries. The stock
+feed includes these listings alongside observations; catalogue-only rows have
+null quantity, source and snapshot timestamp, and nullable shop price. They do
+not enter snapshots, restocks, predictions or stock-confirmation alarms. Real
+observations take precedence as soon as they arrive. Catalogue additions and
+price changes notify browsers through the existing commit event stream.
+
 ### Market prices
 
 | Path | Who calls Torn | Key used |
@@ -91,7 +108,7 @@ The item page loads history, restocks, depletion rates, market price, travel sta
 | `POST /api/market` | Web, on cache miss | Visitor’s API key only |
 | `npm run cron-market` | Market cron | Server `TORN_API_KEY` |
 
-`items` may contain the full Torn catalogue (populated once for `item_type`). Market refresh **must not** iterate that table — only distinct `snapshots.item_id` values. Unused catalogue IDs (e.g. Torn error 6 “Incorrect ID”) are not travel goods.
+`items` contains the periodically refreshed Torn catalogue. Market refresh **must not** iterate that table — only distinct `snapshots.item_id` values. Unused catalogue IDs (e.g. Torn error 6 “Incorrect ID”) are not travel goods.
 
 Failed fetches still write `market_price = null` and `fetched_at = now`, so the row is treated as fresh for `MARKET_CACHE_TTL_SEC` (default 300s).
 
@@ -133,6 +150,7 @@ existing database/index files may retain their allocated size.
 | Table | Role |
 | --- | --- |
 | `items` | Catalogue (`item_id`, `name`, `item_type`) |
+| `travel_items` | Discovered foreign shop country/item pairs and nullable catalogue price; not stock observations |
 | `snapshots` | YATA/API stock observations; PK `(country, item_id, snapshot_ts, source)` |
 | `effective_snapshots` (view) | One observation per country/item/timestamp, preferring `API` over `YATA` for derived calculations |
 | `restocks` | Depletion/refill cycles; PK `(country, item_id, depleted_ts)` |
@@ -264,7 +282,7 @@ Scripts that need DB/API config import `scripts/load-local-env.mjs` first. It lo
 | --- | --- | --- |
 | `DATABASE_URL` | Web, both crons, all DB scripts | Local Docker: `postgres://travel:travel@localhost:5432/travel_planner`. From a laptop against Railway, use `DATABASE_PUBLIC_URL` (internal `*.railway.internal` hosts do not resolve off-platform). |
 | `DATABASE_SSL` | Optional | `true` forces SSL. Also auto-enabled for `proxy.rlwy.net` / `railway.app` / `sslmode=require`. |
-| `TORN_API_KEY` | Market cron; item-type populate | Server key. Not used per browser client for market refresh. |
+| `TORN_API_KEY` | Market cron; web catalogue refresh | Server key; web needs `torn/items` access. Not used per browser client for market refresh. |
 | `INTERNAL_API_KEY` | Web, when internal ingestion is enabled | Shared secret sent as `X-Internal-Key`. Missing/blank disables ingestion; never exposed to browsers. |
 | `PORT` | Web | Default `3000` locally; Railway injects this. |
 | `MARKET_CACHE_TTL_SEC` | Market | Default `300`. |
