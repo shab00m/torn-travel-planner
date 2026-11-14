@@ -32,6 +32,7 @@ const source = readFileSync(new URL("../src/item-types.js", import.meta.url), "u
 function harness() {
   let now = 1_000_000;
   const saved = [];
+  const savedOptions = [];
   const intervals = [];
   let items = [ketamine];
   let fail = false;
@@ -41,7 +42,7 @@ function harness() {
     Date: { now: () => now }, AbortSignal,
     console: { log() {}, error() {} },
     getAllItemTypeRows: async () => [{ item_id: 198, item_type: "Drug" }],
-    saveTravelCatalogue: async (entries) => { saved.push(entries); return entries.length; },
+    saveTravelCatalogue: async (entries, options) => { saved.push(entries); savedOptions.push(options); return entries.length; },
     fetch: async () => {
       calls++;
       if (fail) throw new Error("Unavailable");
@@ -50,7 +51,7 @@ function harness() {
     setInterval(fn, ms) { intervals.push({ fn, ms }); return { unref() {} }; },
   });
   vm.runInContext(source, context);
-  return { context, saved, intervals, calls: () => calls,
+  return { context, saved, savedOptions, intervals, calls: () => calls,
     advance: (ms) => { now += ms; }, items: (value) => { items = value; },
     fail: (value) => { fail = value; } };
 }
@@ -96,4 +97,28 @@ test("startup installs recurring catalogue refreshes", async () => {
   h.intervals[0].fn();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(h.calls(), 2);
+});
+
+test("daily reconciliation fetches current shops even after the hourly refresh", async () => {
+  const h = harness();
+  await h.context.ensureItemTypesPopulated();
+  await h.context.reconcileTravelCatalogueFromTorn();
+  assert.equal(h.calls(), 2);
+  assert.equal(h.savedOptions[0], undefined);
+  assert.equal(h.savedOptions[1].reconcile, true);
+});
+
+test("daily reconciliation rejects failed, empty and malformed catalogues before any writes", async () => {
+  const h = harness();
+  for (const items of [[], null, {}, [ketamine, ketamine],
+    [{ ...ketamine, value: {} }], [{ ...ketamine, type: null }],
+    [{ ...ketamine, value: { shops: [null] } }]]) {
+    h.items(items);
+    await assert.rejects(h.context.reconcileTravelCatalogueFromTorn());
+  }
+  h.fail(true);
+  await assert.rejects(h.context.reconcileTravelCatalogueFromTorn());
+  h.context.process.env.TORN_API_KEY = "";
+  await assert.rejects(h.context.reconcileTravelCatalogueFromTorn(), /TORN_API_KEY/);
+  assert.equal(h.saved.length, 0);
 });

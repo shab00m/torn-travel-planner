@@ -83,7 +83,7 @@ for a scoped item. Both endpoints work with API-only data while YATA is unavaila
 
 The item page loads history, restocks, depletion rates, market price, travel status, and safe windows from `/api/*`. Chart math and restock-time adjustment helpers in `public/` are imported by the server where the same formula must stay a single source of truth (`public/adjust-restock-time.js`, `public/empty-for-bounds.js`).
 
-### Foreign item discovery
+### Foreign item discovery and deprecation
 
 The web service refreshes Torn's complete `torn/items?cat=All` catalogue at startup
 and about hourly using its server `TORN_API_KEY`. A five-minute timer retries
@@ -99,6 +99,23 @@ null quantity, source and snapshot timestamp, and nullable shop price. They do
 not enter snapshots, restocks, predictions or stock-confirmation alarms. Real
 observations take precedence as soon as they arrive. Catalogue additions and
 price changes notify browsers through the existing commit event stream.
+
+The daily cron performs a fresh `cat=All` request and reconciles shop locations
+before snapshot retention. It requires explicit valid shop arrays and never uses
+category fallback responses to infer removals. Only item IDs present in the
+response are reconciled; omitted IDs are left unchanged. Observed country/item
+pairs in snapshots and restocks are included, so legacy YATA-only listings can
+be marked deprecated. Missing, malformed or failed responses stop that day's run
+before cleanup. `npm run sync-travel-catalogue` performs reconciliation alone.
+
+`travel_items.catalogue_deprecated` records the automatic result;
+`deprecated_override` is a nullable persistent admin override. Effective state
+is `COALESCE(deprecated_override, catalogue_deprecated)`. Daily sync restores
+automatically deprecated combinations that return to Torn's shop list, and
+neither web discovery nor snapshot ingestion overrides admin choices. The
+public stock feed excludes deprecated combinations; history routes retain them.
+Both retention and compaction skip effectively deprecated combinations.
+Migration 018 retains previously observed pairs before old snapshots expire.
 
 ### Market prices
 
@@ -282,7 +299,7 @@ Scripts that need DB/API config import `scripts/load-local-env.mjs` first. It lo
 | --- | --- | --- |
 | `DATABASE_URL` | Web, both crons, all DB scripts | Local Docker: `postgres://travel:travel@localhost:5432/travel_planner`. From a laptop against Railway, use `DATABASE_PUBLIC_URL` (internal `*.railway.internal` hosts do not resolve off-platform). |
 | `DATABASE_SSL` | Optional | `true` forces SSL. Also auto-enabled for `proxy.rlwy.net` / `railway.app` / `sslmode=require`. |
-| `TORN_API_KEY` | Market cron; web catalogue refresh | Server key; web needs `torn/items` access. Not used per browser client for market refresh. |
+| `TORN_API_KEY` | Market cron; web/daily catalogue refresh | Server key; web and daily cron need `torn/items` access. Not used per browser client for market refresh. |
 | `INTERNAL_API_KEY` | Web, when internal ingestion is enabled | Shared secret sent as `X-Internal-Key`. Missing/blank disables ingestion; never exposed to browsers. |
 | `PORT` | Web | Default `3000` locally; Railway injects this. |
 | `MARKET_CACHE_TTL_SEC` | Market | Default `300`. |
@@ -298,7 +315,8 @@ Pool settings (`src/pg.js`): `statement_timeout` 60s (startup parameter, not a r
 | `npm run migrate` | Apply `migrations/*.sql` in ID order |
 | `npm run backfill` | Replay snapshots into restock open/close events |
 | `npm run backfill-depletion-rates` | Fill missing persisted depletion-rate columns (manual) |
-| `npm run cron-daily` | Snapshot purge + compaction + TOD rebuild (same as daily Railway cron) |
+| `npm run cron-daily` | Reconcile catalogue, then active snapshot purge + compaction + TOD rebuild |
+| `npm run sync-travel-catalogue` | Reconcile current shop listings and deprecated flags without cleanup |
 | `npm run compact-snapshots` | Compact unchanged snapshots older than 24 hours; add `-- --dry-run` to count only |
 | `npm run cron-market` | Refresh stale travel-item market prices (same as market cron) |
 | `npm run import-sqlite -- data/travel.db` | Copy an old SQLite file into Postgres (Node >= 23.4) |

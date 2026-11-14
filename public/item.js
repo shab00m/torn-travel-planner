@@ -3648,6 +3648,7 @@ window.addEventListener("restockamountchange", () => {
   }
   setupItemPage(item);
   await Promise.all([
+    refreshItemDeprecation(),
     loadRestockAmountForItem(item.country, item.itemId).then(() => {
       el.restockAmount.value = getRestockAmount(item.country, item.itemId) ?? "";
       refreshRestockAdjustments();

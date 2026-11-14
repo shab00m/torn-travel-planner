@@ -14,7 +14,10 @@ const candidatesSql = `
            MIN(cost) OVER instant AS min_cost,
            MAX(cost) OVER instant AS max_cost
     FROM snapshots
-    WHERE country = $1 AND item_id = $2
+    WHERE country = $1 AND item_id = $2 AND NOT EXISTS (
+      SELECT 1 FROM travel_items t WHERE t.country = $1 AND t.item_id = $2
+        AND COALESCE(t.deprecated_override, t.catalogue_deprecated)
+    )
     WINDOW instant AS (PARTITION BY snapshot_ts)
   ), sequenced AS MATERIALIZED (
     SELECT row_id, snapshot_ts, source, quantity, cost, min_quantity, max_quantity, min_cost, max_cost,
@@ -50,8 +53,11 @@ export async function compactUnchangedSnapshots({
   const cutoffTs = nowSec - SNAPSHOT_COMPACTION_AGE_HOURS * 3600;
   const pool = getPool();
   const { rows: items } = await pool.query(
-    `SELECT DISTINCT country, item_id FROM snapshots
-     WHERE snapshot_ts < $1 ORDER BY country, item_id`, [cutoffTs]);
+    `SELECT DISTINCT s.country, s.item_id FROM snapshots s
+     WHERE snapshot_ts < $1 AND NOT EXISTS (
+       SELECT 1 FROM travel_items t WHERE t.country = s.country AND t.item_id = s.item_id
+         AND COALESCE(t.deprecated_override, t.catalogue_deprecated)
+     ) ORDER BY s.country, s.item_id`, [cutoffTs]);
   const result = { deleted: 0, eligible: 0, itemsProcessed: 0, skippedBusy: 0, cutoffTs, dryRun };
   for (const { country, item_id: itemId } of items) {
     const params = [country, itemId, cutoffTs];

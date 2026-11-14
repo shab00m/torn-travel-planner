@@ -34,6 +34,7 @@ import {
   CACHE_TTL_SEC,
 } from "./src/market.js";
 import { getCachedItemTypes, startItemCataloguePolling } from "./src/item-types.js";
+import { getItemDeprecation, setItemDeprecation } from "./src/item-deprecation.js";
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
 import { getDepletionRateTod } from "./src/depletion-rate-tod.js";
 import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
@@ -238,7 +239,6 @@ app.get("/api/stocks", async (_req, res) => {
   res.set("Cache-Control", "no-store");
   try {
     const data = await readCurrentStocks();
-    if (!Object.keys(data.stocks).length) return res.status(503).json({ error: "No travel items stored yet" });
     res.json(data);
   } catch (err) {
     console.error("[stocks] DB read failed:", err.message);
@@ -280,6 +280,36 @@ function parseItemParams(req, res) {
   }
   return { country, id };
 }
+
+app.get("/api/items/:country/:itemId/deprecation", requireAdmin, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  try {
+    const data = await getItemDeprecation(params.country, params.id);
+    if (!data) return res.status(404).json({ error: "Unknown country/item combination" });
+    res.json(data);
+  } catch (err) {
+    res.status(503).json({ error: "Could not load item deprecation" });
+  }
+});
+
+app.put("/api/items/:country/:itemId/deprecation", requireAdmin, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  const deprecated = req.body?.deprecated;
+  if (deprecated !== null && typeof deprecated !== "boolean") {
+    return res.status(400).json({ error: "deprecated must be a boolean or null for automatic tracking" });
+  }
+  try {
+    const data = await setItemDeprecation(params.country, params.id, deprecated);
+    if (!data) return res.status(404).json({ error: "Unknown country/item combination" });
+    res.json(data);
+  } catch (err) {
+    res.status(503).json({ error: "Could not save item deprecation" });
+  }
+});
 
 // Snapshot history for one item in one country.
 // Query params: hours (default 24, 0 = everything)

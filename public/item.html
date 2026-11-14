@@ -46,6 +46,12 @@
 		</header>
 
 		<main class="item-page">
+			<div id="item-deprecation-controls" class="control-group hidden">
+				<label><input id="item-deprecated" type="checkbox" disabled /> Deprecated in this country</label>
+				<span>Hide from the item list and search. Historical data stays available.</span>
+				<button id="item-deprecation-auto" type="button" disabled>Use Torn catalogue</button>
+				<span id="item-deprecation-status" role="status"></span>
+			</div>
 			<div class="control-groups">
 				<div id="current-stock" class="control-group current-stock hidden">
 					<span class="control-group-title">Current Stock</span>
@@ -399,6 +405,7 @@
 
 		<script src="/shared.js"></script>
 		<script src="/item-settings.js"></script>
+		<script src="/item-deprecation.js"></script>
 		<script src="/alarms.js"></script>
 		<script src="/api-tos.js"></script>
 		<script src="/auth.js"></script>

@@ -55,7 +55,9 @@ when their scope has only catalogue entries; catalogue refresh time is never
 presented as a stock observation time.
 
 Works with API-only data, even if YATA has never been fetched successfully.
-Returns **503** only if no known travel items exist or the DB read fails. Responses
+Deprecated combinations are excluded, including from list searches and favorites.
+An empty active list returns **200** with `stocks: {}` and `timestamp: null`.
+Returns **503** if the DB read fails. Responses
 disable browser caching. DB reads are shared for up to two seconds, invalidated
 immediately when the server receives a committed snapshot or shop-discovery notification.
 
@@ -91,6 +93,23 @@ The latest timestamp wins, with API preferred over YATA for a tie. Returns 404 i
 no observation exists. This endpoint disables caching and supplies current item
 stock and restock-alarm confirmation. `/api/stocks` uses the same latest-observation
 rule for the full country/item feed.
+
+### `GET /api/items/:country/:itemId/deprecation`
+
+Admin only (`X-Api-Key`). Returns `{ deprecated, catalogueDeprecated, override }`.
+`deprecated` is the effective flag for this country/item; `override` is `null`
+for automatic daily Torn tracking or a boolean for a persistent admin choice.
+Unknown combinations return 404. Reads disable caching. Anonymous requests
+return 401 and non-admin accounts return 403.
+
+### `PUT /api/items/:country/:itemId/deprecation`
+
+Admin only. Body: `{ "deprecated": true }`, `{ "deprecated": false }`, or
+`{ "deprecated": null }` to clear the override and use the Torn catalogue result.
+Returns the same state as GET. Invalid/missing values return 400; unknown
+combinations return 404. Flags apply to a single country/item, not the item
+globally. Updates notify open lists after commit. They never delete or rewrite
+snapshots, restocks or rate history; direct item/history URLs remain usable.
 
 ---
 

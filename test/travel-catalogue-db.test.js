@@ -70,6 +70,57 @@ test("catalogue discoveries appear without fabricating stock and later accept ei
     assert.equal(future.quantity, 0);
     assert.equal(future.cost, 125);
     assert.equal(updated.timestamp, ts + 1);
+
+    const { getItemDeprecation, setItemDeprecation } = await import("../src/item-deprecation.js");
+    const { purgeOldSnapshots } = await import("../src/snapshot-retention.js");
+    const { compactUnchangedSnapshots } = await import("../src/snapshot-compaction.js");
+    const old = ts - 45 * 86400;
+    await db.saveApiSnapshots([0, 60, 120].map((offset) => ({
+      country: "swi", itemId: 198, name: "Ketamine", snapshot_ts: old + offset, quantity: 0, cost: 1000,
+    })));
+    await pool.query("INSERT INTO restocks (country,item_id,depleted_ts) VALUES ('swi',198,$1)", [old]);
+    const historyBefore = await db.getHistory("swi", 198, 0);
+    const restocksBefore = await db.getRestocks("swi", 198);
+    const result = await saveTravelCatalogue([entry], { reconcile: true });
+    assert.equal(result.deprecated, 1);
+    assert.deepEqual(await getItemDeprecation("swi", 198), {
+      deprecated: true, catalogueDeprecated: true, override: null,
+    });
+    assert.ok(!(await loadCurrentStocks()).stocks.swi);
+    assert.equal((await loadCurrentStocks()).stocks.sou.stocks[0].id, 198);
+    assert.equal((await loadCurrentStocks()).stocks.can.stocks[0].id, 999999,
+      "an absent catalogue item must not be treated as proof of removal");
+    assert.deepEqual(await db.getHistory("swi", 198, 0), historyBefore);
+    assert.deepEqual(await db.getRestocks("swi", 198), restocksBefore);
+
+    // An old YATA listing cannot undo Torn's authoritative removal.
+    await db.saveSnapshot({ swi: { update: ts + 2, stocks: [{ id: 198, name: "Ketamine", quantity: 0, cost: 1000 }] } });
+    await saveTravelCatalogue([{ ...entry, shops: [{ country: "Switzerland", buy_price: 1000 }] }]);
+    assert.equal((await getItemDeprecation("swi", 198)).deprecated, true);
+
+    // Preserve old observations during both daily retention and compaction.
+    await db.saveApiSnapshots([{ country: "can", itemId: 999999, name: "Future item", snapshot_ts: old, quantity: 1, cost: 123 }]);
+    const preserved = await db.getHistory("swi", 198, 0);
+    assert.equal((await purgeOldSnapshots()).deleted, 1);
+    await compactUnchangedSnapshots();
+    assert.deepEqual(await db.getHistory("swi", 198, 0), preserved);
+    assert.deepEqual(await db.getRestocks("swi", 198), restocksBefore);
+
+    await setItemDeprecation("swi", 198, false);
+    await saveTravelCatalogue([entry], { reconcile: true });
+    assert.equal((await getItemDeprecation("swi", 198)).deprecated, false, "admin restore persists");
+    assert.ok((await loadCurrentStocks()).stocks.swi);
+    await setItemDeprecation("swi", 198, null);
+    assert.equal((await getItemDeprecation("swi", 198)).deprecated, true);
+    const returned = { ...entry, shops: [...entry.shops, { country: "Switzerland", buy_price: 1000 }] };
+    assert.equal((await saveTravelCatalogue([returned], { reconcile: true })).reactivated, 1);
+    assert.equal((await getItemDeprecation("swi", 198)).deprecated, false);
+    await setItemDeprecation("swi", 198, true);
+    await saveTravelCatalogue([returned], { reconcile: true });
+    assert.equal((await getItemDeprecation("swi", 198)).deprecated, true, "admin deprecation persists");
+    assert.equal((await getItemDeprecation("sou", 198)).deprecated, false, "flags are country-specific");
+    assert.equal(await setItemDeprecation("uae", 123456, true), null);
+    await assert.rejects(saveTravelCatalogue([], { reconcile: true }), /incomplete/);
   } finally {
     listener?.release();
     await closePool();

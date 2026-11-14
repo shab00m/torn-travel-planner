@@ -14,7 +14,8 @@ export async function loadCurrentStocks() {
        WHERE country = c.country AND item_id = i.item_id
        ORDER BY snapshot_ts DESC, source ASC LIMIT 1
      ) s ON true
-     WHERE s.snapshot_ts IS NOT NULL OR t.item_id IS NOT NULL
+     WHERE (s.snapshot_ts IS NOT NULL OR t.item_id IS NOT NULL)
+       AND NOT COALESCE(t.deprecated_override, t.catalogue_deprecated, FALSE)
      ORDER BY c.country, i.item_id`, [Object.keys(COUNTRIES)]);
   const stocks = {};
   let timestamp = null;

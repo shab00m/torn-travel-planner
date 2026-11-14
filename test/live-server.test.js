@@ -19,7 +19,11 @@ test("API-only commits update both stock endpoints and push SSE without a succes
   await once(portProbe, "listening");
   const port = portProbe.address().port;
   await new Promise((resolve) => portProbe.close(resolve));
-  const mockFetch = `const real=globalThis.fetch;globalThis.fetch=(u,o)=>String(u).includes('yata.yt')?Promise.reject(new Error('YATA unavailable in this test')):real(u,o);`;
+    const mockFetch = `const real=globalThis.fetch;globalThis.fetch=(u,o)=>{
+      if(String(u).includes('yata.yt')) return Promise.reject(new Error('YATA unavailable in this test'));
+      if(String(u).startsWith('https://api.torn.com/user/')) return Promise.resolve({ok:true,json:async()=>({player_id:new URL(u).searchParams.get('key')==='admin-test-key'?4166571:123456,name:'Test player',level:50})});
+      return real(u,o);
+    };`;
   const child = spawn(process.execPath, ["--import", `data:text/javascript;base64,${Buffer.from(mockFetch).toString("base64")}`, "server.js"], {
     cwd: new URL("..", import.meta.url),
     env: { ...process.env, DATABASE_URL: url.toString(), DATABASE_SSL: "false", PORT: String(port), INTERNAL_API_KEY: "live-test-key", TORN_API_KEY: "" },
@@ -47,7 +51,7 @@ test("API-only commits update both stock endpoints and push SSE without a succes
     const before = await (await fetch(`${base}/api/stocks/status?country=mex&itemId=3460`)).json();
     assert.equal(before.ready, false);
     assert.equal(before.timestamp, null);
-    assert.equal((await fetch(`${base}/api/stocks`)).status, 503);
+    assert.equal((await fetch(`${base}/api/stocks`)).status, 200);
     const initialStatus = await (await fetch(`${base}/api/stocks/status`)).json();
     assert.equal(initialStatus.ready, false);
     // Uploads only write snapshots; item metadata belongs to the catalogue.
@@ -86,6 +90,28 @@ test("API-only commits update both stock endpoints and push SSE without a succes
     assert.equal(globalStatus.ready, true);
     assert.equal(globalStatus.timestamp, feed.timestamp);
     assert.notEqual(after.snapshotRevision, before.snapshotRevision);
+
+    const deprecationUrl = `${base}/api/items/mex/3460/deprecation`;
+    const headers = { "Content-Type": "application/json", "X-Api-Key": "admin-test-key" };
+    for (const method of ["GET", "PUT"]) {
+      const body = method === "PUT" ? JSON.stringify({ deprecated: true }) : undefined;
+      assert.equal((await fetch(deprecationUrl, { method, body, headers: { "Content-Type": "application/json" } })).status, 401);
+      assert.equal((await fetch(deprecationUrl, { method, body, headers: { ...headers, "X-Api-Key": "regular-test-key" } })).status, 403);
+    }
+    assert.deepEqual(await (await fetch(deprecationUrl, { headers })).json(), {
+      deprecated: false, catalogueDeprecated: false, override: null,
+    });
+    assert.equal((await fetch(deprecationUrl, { method: "PUT", headers, body: JSON.stringify({ deprecated: "true" }) })).status, 400);
+    assert.equal((await fetch(`${base}/api/items/mex/999999/deprecation`, { method: "PUT", headers, body: JSON.stringify({ deprecated: true }) })).status, 404);
+    const updated = await fetch(deprecationUrl, { method: "PUT", headers, body: JSON.stringify({ deprecated: true }) });
+    assert.equal(updated.status, 200);
+    assert.equal((await updated.json()).deprecated, true);
+    // Wait for the committed metadata notification before testing cached feeds.
+    while (!frames.includes('"snapshot_ts":null')) frames += decoder.decode((await reader.read()).value);
+    assert.deepEqual((await (await fetch(`${base}/api/stocks`)).json()).stocks, {});
+    assert.deepEqual((await (await fetch(`${base}/api/history/mex/3460`)).json()).points, history.points);
+    assert.equal((await fetch(`${base}/api/items/mex/3460/stock`)).status, 200);
+    assert.equal((await (await fetch(deprecationUrl, { method: "PUT", headers, body: JSON.stringify({ deprecated: null }) })).json()).deprecated, false);
   } finally {
     controller.abort();
     await reader?.cancel().catch(() => {});

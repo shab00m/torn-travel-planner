@@ -165,3 +165,22 @@ export function startItemCataloguePolling() {
   refresh();
   return setInterval(refresh, RETRY_INTERVAL_MS).unref();
 }
+
+/** Daily authoritative shop sync. Never infer removals from category fallbacks. */
+export async function reconcileTravelCatalogueFromTorn() {
+  const apiKey = resolveServerApiKey();
+  if (!apiKey) throw new Error("TORN_API_KEY is required for daily catalogue reconciliation");
+  const data = await fetchTornJson(`${TORN_V2_ITEMS_URL}?cat=All&key=${encodeURIComponent(apiKey)}&timestamp=${Date.now()}&comment=travel-planner`);
+  if (!Array.isArray(data.items) || !data.items.length || data._metadata?.links?.next) {
+    throw new Error("Cannot reconcile an empty or paginated Torn catalogue");
+  }
+  const entries = entriesFromItems(data.items);
+  if (entries.length !== data.items.length || new Set(entries.map((item) => item.id)).size !== entries.length
+    || data.items.some((item) => !Array.isArray(item.value?.shops)
+      || item.value.shops.some((shop) => typeof shop?.country !== "string" || !shop.country.trim()))) {
+    throw new Error("Cannot reconcile Torn catalogue with missing or invalid shop data");
+  }
+  const result = await saveTravelCatalogue(entries, { reconcile: true });
+  memoryCache = null;
+  return result;
+}

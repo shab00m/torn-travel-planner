@@ -47,6 +47,16 @@ and may also have unknown price; they never create stock or restock history.
 Country names, flags and flight times remain configured in `src/countries.js`
 and `src/flight-times.js`.
 
+The daily cron also needs `TORN_API_KEY` with `torn/items` access. It reconciles
+each item's current foreign shops, marking removed country/item combinations
+deprecated and restoring them if listed again. Deprecated entries disappear
+from the main list/search; direct item/history URLs remain available. Their
+remaining snapshots are excluded from retention and compaction. Admins can
+override the flag on the item details page or choose **Use Torn catalogue** to
+return to automatic tracking. Run `npm run sync-travel-catalogue` for an immediate
+sync without running cleanup. Missing/invalid shop data aborts reconciliation;
+an item omitted from a response is left unchanged.
+
 To enable [internal snapshot ingestion](docs/API.md#internal-snapshot-ingestion),
 set `INTERNAL_API_KEY` to a secret in `.env` or the web service's Railway variables.
 Clients send it in `X-Internal-Key`. Without it, ingestion returns 503.
@@ -75,15 +85,20 @@ Production project (do not create a second one):
 | Market cron | torn-travel-planner-market-cron (`3315805b-fe01-4379-84c1-a939d0987685`) |
 | Database | Postgres (`8cbfa40a-04c3-4c31-9308-612200e19bf1`) |
 
-App and both cron services should have `DATABASE_URL=${{Postgres.DATABASE_URL}}`. The market cron also needs `TORN_API_KEY`.
+App and both cron services should have `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
+The web app and both crons need `TORN_API_KEY` (web/daily: `torn/items`; market: `market/itemmarket`).
 
 ### Daily cron
 
 `torn-travel-planner-cron` runs `node scripts/cron-daily.mjs` daily at **04:00 UTC** (`railway.cron.toml`). It:
 
-1. Deletes `snapshots` older than 30 days (restock/depletion events in `restocks` are kept)
-2. Compacts unchanged snapshots older than 24 hours, retaining the first and last rows in each consecutive quantity/cost run across sources
-3. Rebuilds `depletion_rate_tod` averages
+1. Reconciles the current Torn shop catalogue and deprecated flags, preserving admin overrides
+2. Deletes active items' `snapshots` older than 30 days (deprecated snapshots and all restock/depletion events are kept)
+3. Compacts active items' unchanged snapshots older than 24 hours, retaining the first and last rows in each consecutive quantity/cost run across sources
+4. Rebuilds `depletion_rate_tod` averages
+
+Reconciliation runs before cleanup; a failed catalogue fetch stops that daily run
+so a newly removed item's history cannot be purged before its flag is updated.
 
 Config-as-code path is `railway.cron.toml`. Local run: `npm run cron-daily`.
 

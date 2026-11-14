@@ -9,9 +9,15 @@ import { initDb, closePool } from "../src/db.js";
 import { purgeOldSnapshots, SNAPSHOT_RETENTION_DAYS } from "../src/snapshot-retention.js";
 import { rebuildAllDepletionRateTod } from "../src/depletion-rate-tod.js";
 import { compactUnchangedSnapshots } from "../src/snapshot-compaction.js";
+import { reconcileTravelCatalogueFromTorn } from "../src/item-types.js";
 
 async function main() {
   await initDb();
+
+  // Reconcile before retention so newly removed items keep their remaining history.
+  console.log("[cron] reconciling Torn foreign shops…");
+  const catalogue = await reconcileTravelCatalogueFromTorn();
+  console.log(`[cron] catalogue: ${catalogue.items} items, ${catalogue.deprecated} deprecated, ${catalogue.reactivated} reactivated`);
 
   console.log(`[cron] purging snapshots older than ${SNAPSHOT_RETENTION_DAYS} days…`);
   const purge = await purgeOldSnapshots();
