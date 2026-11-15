@@ -2454,10 +2454,27 @@ function updateChartMarkers(chart) {
   updateRestockMarkers(chart);
 }
 
-function refreshChart(timeline) {
+function refreshChart(timeline, { resetView = false } = {}) {
+  const previous = state.lastTimeline;
+  // Decide against the old bounds and scale, before either can change. Saved
+  // follow-live is only an initial preference, never an override of a later pan.
+  const followingLive = previous
+    ? state.chartOffsetSec >= getMaxChartOffsetSec(previous, state.chartScale) - 0.5
+    : itemViewportRestore.followLive;
+  const previousMin = previous ? previous.xMin + state.chartOffsetSec * 1000 : null;
+  state.chartScale = resetView ? 1 : clampChartScale(state.chartScale, timeline);
+  if (resetView || followingLive) {
+    state.chartOffsetSec = getMaxChartOffsetSec(timeline, state.chartScale);
+  } else {
+    // Offset is relative to the first snapshot, which moves as history expires
+    // or is compacted. Keep the selected time anchored across those changes.
+    const offset = previousMin == null
+      ? state.chartOffsetSec
+      : (previousMin - timeline.xMin) / 1000;
+    state.chartOffsetSec = clampChartOffsetSec(offset, timeline);
+  }
+  itemViewportRestore.followLive = false;
   state.lastTimeline = timeline;
-  state.chartScale = clampChartScale(state.chartScale, timeline);
-  state.chartOffsetSec = clampChartOffsetSec(state.chartOffsetSec, timeline);
   state.predictedEvents = timeline.events ?? [];
   const dataTs = timeline.dataTs;
   const endTs = Math.round(timeline.xMax / 1000);
@@ -2946,26 +2963,8 @@ async function drawChart() {
   renderCycleHistory();
 
   const timeline = buildTimeline(state.chartPoints, state.predictionHours);
-  if (resetChartView) {
-    state.chartScale = 1;
-    state.chartOffsetSec = getMaxChartOffsetSec(timeline, 1);
-    resetChartView = false;
-    itemViewportRestore.followLive = false;
-  } else {
-    state.chartScale = clampChartScale(state.chartScale, timeline);
-    const wasFollowingLive =
-      itemViewportRestore.followLive ||
-      (state.lastTimeline &&
-        state.chartOffsetSec >= getMaxChartOffsetSec(state.lastTimeline, state.chartScale) - 0.5);
-    if (wasFollowingLive) {
-      state.chartOffsetSec = getMaxChartOffsetSec(timeline, state.chartScale);
-      itemViewportRestore.followLive = true;
-    } else {
-      state.chartOffsetSec = clampChartOffsetSec(state.chartOffsetSec, timeline);
-      itemViewportRestore.followLive = false;
-    }
-  }
-  refreshChart(timeline);
+  refreshChart(timeline, { resetView: resetChartView });
+  resetChartView = false;
   if (typeof syncActiveItemChartView === "function") syncActiveItemChartView();
   for (const ts of snapshotInspector.selected) {
     if (!snapshotByTs(ts)) snapshotInspector.selected.delete(ts);
@@ -2987,12 +2986,12 @@ function patchLiveChartTime(wallTs) {
   const timeline = state.lastTimeline;
   if (!state.chart || !timeline) return;
 
+  const followingLive =
+    state.chartOffsetSec >= getMaxChartOffsetSec(timeline) - 0.5;
   const prevWallMs = tsMs(timeline.wallTs);
   timeline.wallTs = wallTs;
   if (tsMs(wallTs) > timeline.xMax) timeline.xMax = tsMs(wallTs);
 
-  const followingLive =
-    state.chartOffsetSec >= getMaxChartOffsetSec(timeline) - 0.5;
   if (followingLive) {
     state.chartOffsetSec = getMaxChartOffsetSec(timeline);
     const { visMin, visMax } = getVisibleChartRange(
@@ -3002,6 +3001,7 @@ function patchLiveChartTime(wallTs) {
     );
     state.chart.options.scales.x.min = visMin;
     state.chart.options.scales.x.max = visMax;
+    syncOffsetInput(timeline);
   }
 
   const anns = state.chart.options.plugins?.annotation?.annotations;
