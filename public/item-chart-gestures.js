@@ -290,6 +290,7 @@ function initStockChartGestures() {
       };
     },
     applyView: (ctx, view) => applyChartView(ctx.timeline, view, { live: true }),
+    onPointerDown: cancelChartNowAnimation,
     mouseDragView: (timeline, pan, deltaX, deltaY, currentX, _currentY, chart) =>
       dragChartView(timeline, pan, deltaX, deltaY, currentX, chart),
     panAxisFor: (ctx) => chartViewportPanAxisX(ctx.chart),

@@ -12,7 +12,16 @@ function timeline(start = origin, end = origin + 48 * hour) {
 
 function harness() {
   let nextTimeline = timeline();
+  let now = origin + 36 * hour;
+  let frameId = 0;
+  let saves = 0;
+  const frames = new Map();
   const context = vm.createContext({
+    Date: class extends Date { static now() { return now; } },
+    performance: { now: () => 0 }, chartNowAnimation: null,
+    requestAnimationFrame(fn) { frames.set(++frameId, fn); return frameId; },
+    cancelAnimationFrame(id) { frames.delete(id); },
+    endActiveChartDrags() {}, saveCurrentItemSettings() { saves++; },
     CHART_VIEWPORT_HOURS: 24, CHART_MIN_VIEWPORT_SEC: 900,
     resetChartView: true,
     itemViewportRestore: { followLive: false },
@@ -34,7 +43,8 @@ function harness() {
   });
   const names = ["getTimelineSpanSec", "getBaseChartViewportSpanSec", "getMinChartScale",
     "getMaxChartScale", "clampChartScale", "getChartViewportSpanSec", "getMaxChartOffsetSec",
-    "clampChartOffsetSec", "getVisibleChartRange", "chartTimeUnitForSpan", "applyChartView",
+    "getChartOffsetBounds", "clampChartOffsetSec", "getVisibleChartRange", "chartTimeUnitForSpan", "applyChartView",
+    "cancelChartNowAnimation", "returnChartToNow", "syncChartReturnNow",
     "refreshChart", "drawChart", "redrawPrediction", "patchLiveChartTime"];
   for (const name of names) {
     const start = source.indexOf(`${name === "drawChart" ? "async " : ""}function ${name}(`);
@@ -47,6 +57,12 @@ function harness() {
       plugins: { annotation: { annotations: {} } } };
   };
   return { context, next(value) { nextTimeline = value; },
+    now(value) { now = value; }, saves: () => saves,
+    frame(time) {
+      const pending = [...frames.values()];
+      frames.clear();
+      pending.forEach((fn) => fn(time));
+    },
     range() { const x = context.state.chart.options.scales.x; return [x.min, x.max]; } };
 }
 
@@ -116,4 +132,77 @@ test("saved follow-live preference is restored once and does not override a late
   const selected = h.range();
   await c.drawChart();
   assert.deepEqual(h.range(), selected);
+});
+
+test("NOW shortcut points toward the hidden marker and hides when NOW is visible", async () => {
+  const h = harness();
+  const c = h.context;
+  await c.drawChart();
+  const button = c.el.chartReturnNow = { dataset: {}, style: {} };
+  const chart = c.state.chart;
+  chart.chartArea = { left: 50, right: 750, top: 40, bottom: 340 };
+  chart.canvas = { offsetLeft: 0, offsetTop: 32 };
+  c.applyChartView(c.state.lastTimeline, { offsetSec: 0, scale: 4 });
+  c.syncChartReturnNow(chart);
+  assert.equal(button.hidden, false);
+  assert.equal(button.textContent, "NOW →");
+  assert.equal(button.style.left, "742px");
+  c.applyChartView(c.state.lastTimeline, { offsetSec: 40 * 3600 });
+  c.syncChartReturnNow(chart);
+  assert.equal(button.textContent, "← NOW");
+  assert.equal(button.style.left, "58px");
+  c.applyChartView(c.state.lastTimeline, { offsetSec: 33 * 3600 });
+  c.syncChartReturnNow(chart);
+  assert.equal(button.hidden, true);
+});
+
+for (const offsetSec of [0, 40 * 3600]) {
+  test(`return to NOW animates from offset ${offsetSec}, centers, and retains zoom`, async () => {
+    const h = harness();
+    const c = h.context;
+    await c.drawChart();
+    c.applyChartView(c.state.lastTimeline, { offsetSec, scale: 4 });
+    const start = h.range()[0];
+    const target = origin + 33 * hour;
+    c.returnChartToNow();
+    h.frame(200);
+    assert.ok(h.range()[0] > Math.min(start, target));
+    assert.ok(h.range()[0] < Math.max(start, target));
+    h.frame(400);
+    assert.deepEqual(h.range(), [target, origin + 39 * hour]);
+    assert.equal(c.state.chartScale, 4);
+    assert.equal(h.saves(), 1);
+    c.redrawPrediction();
+    assert.deepEqual(h.range(), [target, origin + 39 * hour]);
+  });
+}
+
+test("NOW centers without predictions and stays centered after a data refresh", async () => {
+  const h = harness();
+  const c = h.context;
+  const now = origin + 48 * hour;
+  h.now(now);
+  await c.drawChart();
+  c.applyChartView(c.state.lastTimeline, { offsetSec: 0 });
+  c.window.matchMedia = () => ({ matches: true });
+  c.returnChartToNow();
+  assert.deepEqual(h.range(), [now - 12 * hour, now + 12 * hour]);
+  h.next(timeline(origin + hour, now + 15_000));
+  await c.drawChart();
+  assert.deepEqual(h.range(), [now - 12 * hour, now + 12 * hour]);
+  assert.equal(h.saves(), 1);
+});
+
+test("manual navigation cancels return-to-NOW without a later snap back", async () => {
+  const h = harness();
+  const c = h.context;
+  await c.drawChart();
+  c.applyChartView(c.state.lastTimeline, { offsetSec: 0, scale: 4 });
+  c.returnChartToNow();
+  h.frame(100);
+  c.applyChartView(c.state.lastTimeline, { offsetSec: 3600 });
+  const selected = h.range();
+  h.frame(400);
+  assert.deepEqual(h.range(), selected);
+  assert.equal(h.saves(), 0);
 });

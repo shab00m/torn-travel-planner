@@ -56,7 +56,7 @@ function normalizeItemSettings(raw, fallback = {}) {
     safeWindowUseRateSelection: src.safeWindowUseRateSelection !== false,
     flightTimeVariance: src.flightTimeVariance !== false,
     chartType: ITEM_CHART_TYPES.includes(src.chartType) ? src.chartType : "stock",
-    chartOffsetSec: optionalFiniteNumber(src.chartOffsetSec, { min: 0 }),
+    chartOffsetSec: optionalFiniteNumber(src.chartOffsetSec),
     chartScale: optionalFiniteNumber(src.chartScale, { min: Number.MIN_VALUE }),
     chartFollowLive: src.chartFollowLive === true,
     emptyForOffsetSec: optionalFiniteNumber(src.emptyForOffsetSec, { min: 0 }),
@@ -74,7 +74,7 @@ function itemSettingsFor(country, itemId) {
 function isStockChartFollowingLive() {
   const timeline = state.lastTimeline;
   if (!timeline || typeof getMaxChartOffsetSec !== "function") return true;
-  return state.chartOffsetSec >= getMaxChartOffsetSec(timeline, state.chartScale) - 0.5;
+  return Math.abs(state.chartOffsetSec - getMaxChartOffsetSec(timeline, state.chartScale)) <= 0.5;
 }
 
 function collectLiveChartFields() {

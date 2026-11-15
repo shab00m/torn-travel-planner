@@ -9,6 +9,7 @@ const el = {
   itemEmpty: document.getElementById("item-empty"),
   rangeButtons: document.getElementById("range-buttons"),
   chartCanvas: document.getElementById("history-chart"),
+  chartReturnNow: document.getElementById("chart-return-now"),
   timeMarkers: document.getElementById("time-markers"),
   eventMarkers: document.getElementById("event-markers"),
   restockMarkers: document.getElementById("restock-markers"),
@@ -77,6 +78,8 @@ const snapshotInspector = {
 const chartPan = {
   active: null,
 };
+
+let chartNowAnimation = null;
 
 const profitSell = {
   marketPrice: null,
@@ -420,9 +423,20 @@ function getMaxChartOffsetSec(timeline, scale = state.chartScale) {
   return Math.max(0, getTimelineSpanSec(timeline) - getChartViewportSpanSec(timeline, scale));
 }
 
+function getChartOffsetBounds(timeline, scale = state.chartScale) {
+  const max = getMaxChartOffsetSec(timeline, scale);
+  // Stock charts need room to center NOW even without a future prediction.
+  // Duration charts have no wall clock and retain their original bounds.
+  if (timeline.wallTs == null) return { min: 0, max };
+  const centered = (tsMs(timeline.wallTs) - timeline.xMin) / 1000
+    - getChartViewportSpanSec(timeline, scale) / 2;
+  return { min: Math.min(0, centered), max: Math.max(max, centered) };
+}
+
 function clampChartOffsetSec(offsetSec, timeline, scale = state.chartScale) {
   if (!timeline?.xMax) return 0;
-  return Math.max(0, Math.min(offsetSec, getMaxChartOffsetSec(timeline, scale)));
+  const { min, max } = getChartOffsetBounds(timeline, scale);
+  return Math.max(min, Math.min(offsetSec, max));
 }
 
 function getVisibleChartRange(
@@ -439,7 +453,8 @@ function getVisibleChartRange(
 
 function canAdjustChartView(timeline, scale = state.chartScale) {
   if (!timeline?.xMax) return false;
-  const canPan = getMaxChartOffsetSec(timeline, scale) > 0;
+  const { min, max } = getChartOffsetBounds(timeline, scale);
+  const canPan = max > min;
   const canScale = getMaxChartScale(timeline) > getMinChartScale(timeline) * 1.001;
   return canPan || canScale;
 }
@@ -514,10 +529,11 @@ function chartTimeUnitForSpan(spanMs) {
 
 function syncOffsetInput(timeline = state.lastTimeline) {
   if (!el.chartOffset) return;
-  const maxOffset = timeline ? getMaxChartOffsetSec(timeline) : 0;
+  const { min, max } = timeline ? getChartOffsetBounds(timeline) : { min: 0, max: 0 };
   el.chartOffset.value = String(Math.round(state.chartOffsetSec));
-  el.chartOffset.disabled = maxOffset <= 0;
-  el.chartOffset.max = String(Math.round(maxOffset));
+  el.chartOffset.disabled = max <= min;
+  el.chartOffset.min = String(Math.round(min));
+  el.chartOffset.max = String(Math.round(max));
 }
 
 function syncScaleInput(timeline = state.lastTimeline) {
@@ -561,8 +577,9 @@ function endActiveChartDrags() {
 function applyChartView(
   timeline,
   { offsetSec = state.chartOffsetSec, scale = state.chartScale } = {},
-  { live = false } = {}
+  { live = false, animating = false } = {}
 ) {
+  if (!animating) cancelChartNowAnimation();
   const { visMin, visMax, offsetSec: clampedOffset, scale: clampedScale } = getVisibleChartRange(
     timeline,
     offsetSec,
@@ -595,6 +612,62 @@ function applyChartView(
   if (live) repositionChartMarkers(state.chart);
   else updateChartMarkers(state.chart);
   return { visMin, visMax };
+}
+
+function cancelChartNowAnimation() {
+  if (!chartNowAnimation) return;
+  cancelAnimationFrame(chartNowAnimation.frame);
+  chartNowAnimation = null;
+}
+
+function returnChartToNow() {
+  cancelChartNowAnimation();
+  endActiveChartDrags();
+  const timeline = state.lastTimeline;
+  if (!state.chart || !timeline?.xMax) return;
+  const nowMs = Math.floor(Date.now() / 1000) * 1000;
+  timeline.wallTs = nowMs / 1000;
+  const { visMin, visMax } = getVisibleChartRange(timeline);
+  const targetMin = nowMs - (visMax - visMin) / 2;
+  const animation = { frame: null, start: performance.now(), scale: state.chartScale };
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  chartNowAnimation = animation;
+  const step = (time) => {
+    if (chartNowAnimation !== animation) return;
+    const current = state.lastTimeline;
+    if (!state.chart || !current || state.chartScale !== animation.scale) {
+      cancelChartNowAnimation();
+      return;
+    }
+    const progress = reducedMotion ? 1 : Math.min(1, (time - animation.start) / 400);
+    const eased = 1 - (1 - progress) ** 3;
+    const offsetSec = (visMin + (targetMin - visMin) * eased - current.xMin) / 1000;
+    applyChartView(current, { offsetSec }, { live: progress < 1, animating: true });
+    if (progress < 1) {
+      updateTimeMarkers(state.chart);
+      animation.frame = requestAnimationFrame(step);
+    } else {
+      chartNowAnimation = null;
+      saveCurrentItemSettings();
+    }
+  };
+  if (reducedMotion) step(animation.start);
+  else animation.frame = requestAnimationFrame(step);
+}
+
+function syncChartReturnNow(chart) {
+  const button = el.chartReturnNow;
+  if (!button) return;
+  const axis = chart?.options?.scales?.x;
+  const area = chart?.chartArea;
+  const now = Math.floor(Date.now() / 1000) * 1000;
+  const direction = axis && now < axis.min ? "left" : axis && now > axis.max ? "right" : null;
+  button.hidden = !area || !direction;
+  if (button.hidden) return;
+  button.dataset.direction = direction;
+  button.textContent = direction === "left" ? "← NOW" : "NOW →";
+  button.style.left = `${chart.canvas.offsetLeft + (direction === "left" ? area.left + 8 : area.right - 8)}px`;
+  button.style.top = `${chart.canvas.offsetTop + (area.top + area.bottom) / 2}px`;
 }
 
 function syncSampleExtremaButtons(container, n, timing) {
@@ -2123,7 +2196,10 @@ function chartOptions(timeline) {
     responsive: true,
     maintainAspectRatio: false,
     onResize(chart) {
-      updateChartMarkers(chart);
+      // Chart.js invokes onResize before recalculating the plot area.
+      requestAnimationFrame(() => {
+        if (state.chart === chart) updateChartMarkers(chart);
+      });
     },
     layout: {
       padding: { top: CHART_TOP_PADDING },
@@ -2177,6 +2253,8 @@ function chartOptions(timeline) {
 }
 
 function destroyChart() {
+  cancelChartNowAnimation();
+  if (el.chartReturnNow) el.chartReturnNow.hidden = true;
   if (state.chart) {
     state.chart.destroy();
     state.chart = null;
@@ -2246,6 +2324,7 @@ function repositionSafeWindowOverlay(el, chart) {
 
 /** Move existing overlay markers with the viewport; does not create or rebuild nodes. */
 function repositionChartMarkers(chart) {
+  syncChartReturnNow(chart);
   if (!chart?.chartArea) return;
   for (const container of [el.timeMarkers, el.eventMarkers, el.restockMarkers]) {
     container?.querySelectorAll("[data-ts]").forEach((node) => {
@@ -2281,6 +2360,7 @@ function appendVerticalChartMarker(container, chart, { ts, lineClass, labelClass
 }
 
 function updateTimeMarkers(chart) {
+  syncChartReturnNow(chart);
   if (!el.timeMarkers) return;
   el.timeMarkers.replaceChildren();
   if (!chart?.chartArea) return;
@@ -2459,7 +2539,7 @@ function refreshChart(timeline, { resetView = false } = {}) {
   // Decide against the old bounds and scale, before either can change. Saved
   // follow-live is only an initial preference, never an override of a later pan.
   const followingLive = previous
-    ? state.chartOffsetSec >= getMaxChartOffsetSec(previous, state.chartScale) - 0.5
+    ? Math.abs(state.chartOffsetSec - getMaxChartOffsetSec(previous, state.chartScale)) <= 0.5
     : itemViewportRestore.followLive;
   const previousMin = previous ? previous.xMin + state.chartOffsetSec * 1000 : null;
   state.chartScale = resetView ? 1 : clampChartScale(state.chartScale, timeline);
@@ -2830,12 +2910,13 @@ async function deleteSnapshotRows(snapshotTsList) {
 let resetChartView = true;
 
 function initChartViewControls() {
+  el.chartReturnNow?.addEventListener("click", returnChartToNow);
   el.chartOffset?.addEventListener("change", () => {
     const timeline = state.lastTimeline;
     if (!timeline) return;
     const raw = el.chartOffset.value.trim();
     const offsetSec = raw === "" ? 0 : Number.parseInt(raw, 10);
-    if (!Number.isInteger(offsetSec) || offsetSec < 0) {
+    if (!Number.isInteger(offsetSec)) {
       syncOffsetInput(timeline);
       return;
     }
@@ -2987,7 +3068,7 @@ function patchLiveChartTime(wallTs) {
   if (!state.chart || !timeline) return;
 
   const followingLive =
-    state.chartOffsetSec >= getMaxChartOffsetSec(timeline) - 0.5;
+    Math.abs(state.chartOffsetSec - getMaxChartOffsetSec(timeline)) <= 0.5;
   const prevWallMs = tsMs(timeline.wallTs);
   timeline.wallTs = wallTs;
   if (tsMs(wallTs) > timeline.xMax) timeline.xMax = tsMs(wallTs);

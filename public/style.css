@@ -1661,6 +1661,28 @@ body.page-item {
 	cursor: grabbing;
 }
 
+.chart-return-now {
+	position: absolute;
+	z-index: 11;
+	transform: translateY(-50%);
+	min-height: 44px;
+	padding: 8px 12px;
+	border: 1px solid #ffea00;
+	border-radius: 8px;
+	background: rgba(23, 28, 38, 0.96);
+	color: #ffea00;
+	font-weight: 700;
+	white-space: nowrap;
+	width: max-content;
+	cursor: pointer;
+	box-shadow: 0 2px 10px #0006;
+}
+.chart-return-now[hidden] { display: none; }
+.chart-return-now:hover { background: #343625; }
+.chart-return-now:focus-visible { outline: 2px solid #ffea00; outline-offset: 3px; }
+.chart-return-now[data-direction="left"] { transform: translateY(-50%); }
+.chart-return-now[data-direction="right"] { transform: translate(-100%, -50%); }
+
 .chart-markers {
 	position: absolute;
 	inset: 0;
