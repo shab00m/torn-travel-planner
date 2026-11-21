@@ -3,6 +3,7 @@ import {
   getRestocks,
   getDepletionRates,
   getHistory,
+  getTravelCatalogueCost,
   getRestockAmount as getStoredRestockAmount,
   getEmptyForBounds as getStoredEmptyForBounds,
 } from "./db.js";
@@ -418,10 +419,6 @@ function safeWindowHint(reason, { restockAmount, startQty, restocks }) {
   return null;
 }
 
-function safeWindowResponse(fields, restockAmount) {
-  return { ...fields, restockAmount: restockAmount ?? null };
-}
-
 export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
   const opts = {
     restockAmount: null,
@@ -469,18 +466,16 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
       : rateTod.hours;
 
   const current = resolveCurrentStock(chartPoints);
+  const buyPrice = current?.cost ?? (await getTravelCatalogueCost(country, itemId));
+  const itemDetails = { country, itemId, buyPrice, restockAmount: restockAmount ?? null };
   if (!current) {
-    return safeWindowResponse(
-      {
-        country,
-        itemId,
-        available: false,
-        safeWindow: null,
-        reason: "no_stock_data",
-        hint: safeWindowHint("no_stock_data", { restockAmount, startQty: null, restocks }),
-      },
-      restockAmount
-    );
+    return {
+      ...itemDetails,
+      available: false,
+      safeWindow: null,
+      reason: "no_stock_data",
+      hint: safeWindowHint("no_stock_data", { restockAmount, startQty: null, restocks }),
+    };
   }
 
   const dataTs = current.dataTs;
@@ -509,10 +504,7 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
   try {
     flightSec = getFlightSeconds(country, opts.travelType);
   } catch {
-    return safeWindowResponse(
-      { country, itemId, available: false, safeWindow: null, nextWindow: null, reason: "unknown_travel_type" },
-      restockAmount
-    );
+    return { ...itemDetails, available: false, safeWindow: null, nextWindow: null, reason: "unknown_travel_type" };
   }
 
   // Regular predictions use the same selected timing and rate as the item page.
@@ -556,13 +548,10 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
     const { minEmptyFor, maxEmptyFor } = ctx.getHistoricalExtents();
     const reason = minEmptyFor == null || maxEmptyFor == null
       ? "insufficient_history" : "no_upcoming_restock";
-    return safeWindowResponse(
-      {
-        country, itemId, nextWindow, available: false, safeWindow: null, reason,
-        hint: safeWindowHint(reason, { restockAmount, startQty, restocks }),
-      },
-      restockAmount
-    );
+    return {
+      ...itemDetails, nextWindow, available: false, safeWindow: null, reason,
+      hint: safeWindowHint(reason, { restockAmount, startQty, restocks }),
+    };
   }
 
   for (const bounds of safeWindows) {
@@ -574,30 +563,23 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
       : bounds.safeEnd - flightSec;
 
     if (leaveLatest > opts.wallTs) {
-      return safeWindowResponse(
-        {
-          country,
-          itemId,
-          available: true,
-          nextWindow,
-          safeWindow: {
-            safeStart: bounds.safeStart,
-            safeEnd: bounds.safeEnd,
-            leaveEarliest,
-            leaveLatest,
-            depletedTs: bounds.depletedTs,
-          },
-          reason: null,
+      return {
+        ...itemDetails,
+        available: true,
+        nextWindow,
+        safeWindow: {
+          safeStart: bounds.safeStart,
+          safeEnd: bounds.safeEnd,
+          leaveEarliest,
+          leaveLatest,
+          depletedTs: bounds.depletedTs,
         },
-        restockAmount
-      );
+        reason: null,
+      };
     }
   }
 
-  return safeWindowResponse(
-    { country, itemId, nextWindow, available: false, safeWindow: null, reason: "missed" },
-    restockAmount
-  );
+  return { ...itemDetails, nextWindow, available: false, safeWindow: null, reason: "missed" };
 }
 
 export async function computeSafeWindowsBatch(items, opts = {}) {

@@ -269,7 +269,7 @@ Set or clear the restock amount.
 
 ## Safe windows
 
-Safe-window endpoints use **database snapshots only** (not live YATA). They read the stored restock amount automatically when `restockAmount` is omitted.
+Window predictions use stored database snapshots. The endpoints read the stored restock amount automatically when `restockAmount` is omitted.
 
 A **safe window** is the range from the latest possible restock time to the earliest possible depletion time. Window #1 uses the known (or currently projected) depletion. Later windows **compound** historical min/max empty-for across cycles (latest path uses max empty-for; earliest path uses min empty-for + depletion). Depletion uses a single rate: the selected historical rate when `safeWindowUseRateSelection` is true (UI: **Use for safe window**), otherwise the fastest historical rate. Each subsequent window shrinks and often disappears by #2 or #3 once the envelope collapses (`safeStart >= safeEnd`).
 
@@ -277,16 +277,18 @@ To match the web UI, pass the same options the app sends (see [Safe window optio
 
 ### `GET /api/next-window/:country/:itemId`
 
-Return the first predicted restock window that ends after your flight would land if you left at request time. Read `nextWindow.start` for the predicted restock time. To arrive by the start, leave by `nextWindow.leaveEarliest`. If no such window is predicted, `nextWindow` may be null or absent. The response also includes the safe-window prediction when available.
+Return the first predicted restock window that ends after your flight would land if you left at request time. Read `nextWindow.start` for the predicted restock time. To arrive by the start, leave by `nextWindow.leaveEarliest`. If no such window is predicted, `nextWindow` may be null or absent. The `safeWindow` object contains its own status and timing fields.
 
-`nextWindow.leaveInSeconds` is the number of seconds from request time until `nextWindow.leaveEarliest`. It is `0` when `leaveEarliest` is at or before request time.
+In both windows, `leaveInSeconds` is the number of seconds from request time until the window's `leaveEarliest`. It is `0` when `leaveEarliest` is at or before request time.
+
+`buyPrice` is the foreign shop price per item in Torn dollars. It uses the latest stock observation, falls back to the stored shop catalogue price, and is `null` if neither has a price. The price can be available even when there is no predicted window.
 
 **Query parameters:** all [safe window options](#safe-window-options) are supported as query params.
 
 **Example:**
 
 ```
-GET /api/next-window/uni/206?stockoutTiming=min&travelType=Standard
+GET /api/next-window/uni/206?stockoutTiming=min&travelType=Standard&flightTimeVariance=false
 ```
 
 **Response:**
@@ -295,7 +297,7 @@ GET /api/next-window/uni/206?stockoutTiming=min&travelType=Standard
 {
   "country": "uni",
   "itemId": 206,
-  "available": true,
+  "buyPrice": 200,
   "restockAmount": 2500,
   "nextWindow": {
     "start": 1783990100,
@@ -305,28 +307,29 @@ GET /api/next-window/uni/206?stockoutTiming=min&travelType=Standard
     "leaveInSeconds": 120
   },
   "safeWindow": {
-    "safeStart": 1783990140,
-    "safeEnd": 1783990180,
+    "available": true,
+    "reason": null,
+    "start": 1783990140,
+    "end": 1783990180,
     "leaveEarliest": 1783981080,
     "leaveLatest": 1783981120,
+    "leaveInSeconds": 160,
     "depletedTs": 1783982316
-  },
-  "reason": null,
-  "hint": null
+  }
 }
 ```
 
-When `available` is `false`, `safeWindow` is `null` and `reason` explains why:
+When `safeWindow.available` is `false`, its timing fields are `null` and `safeWindow.reason` explains why.
 
-| `reason` | Meaning |
+| `safeWindow.reason` | Meaning |
 |----------|---------|
 | `no_stock_data` | No snapshots in the database for this item |
 | `insufficient_history` | Not enough restock/rate history to compute |
 | `no_upcoming_restock` | No valid safe window in the prediction horizon |
-| `missed` | A safe window exists but the leave-by time has already passed |
+| `missed` | The leave-by time has passed for every predicted safe window |
 | `unknown_travel_type` | Invalid `travelType` |
 
-`hint` may contain a human-readable suggestion when `reason` is set.
+The top-level `hint` may contain a suggestion when `safeWindow.reason` is set.
 
 All timestamps are Unix seconds.
 
@@ -363,7 +366,7 @@ Batch safe-window lookup (used by the favorites list).
 ```json
 {
   "windows": {
-    "uni:206": { "country": "uni", "itemId": 206, "available": true, "safeWindow": { ... }, "reason": null, "restockAmount": 2500 }
+    "uni:206": { "country": "uni", "itemId": 206, "buyPrice": 200, "available": true, "safeWindow": { ... }, "reason": null, "restockAmount": 2500 }
   }
 }
 ```

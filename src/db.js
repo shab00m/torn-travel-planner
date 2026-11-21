@@ -976,6 +976,12 @@ export async function getLatestSnapshot(country, itemId) {
      ORDER BY s.snapshot_ts DESC, s.source ASC LIMIT 1`, [country, itemId])) ?? null;
 }
 
+export async function getTravelCatalogueCost(country, itemId) {
+  const row = await one(getPool(),
+    `SELECT cost FROM travel_items WHERE country = $1 AND item_id = $2`, [country, itemId]);
+  return row?.cost ?? null;
+}
+
 export async function getSnapshot(country, itemId, snapshotTs, source = "YATA") {
   return (
     (await one(

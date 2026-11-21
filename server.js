@@ -488,8 +488,23 @@ app.get("/api/next-window/:country/:itemId", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   try {
-    const opts = parseSafeWindowOptions(req.query);
-    res.json(await computeNextSafeWindow(params.country, params.id, opts));
+    const wallTs = Math.floor(Date.now() / 1000);
+    const opts = { ...parseSafeWindowOptions(req.query), wallTs };
+    const { available, reason, safeWindow, ...result } = await computeNextSafeWindow(params.country, params.id, opts);
+    const leaveEarliest = safeWindow?.leaveEarliest ?? null;
+    res.json({
+      ...result,
+      safeWindow: {
+        available,
+        reason,
+        start: safeWindow?.safeStart ?? null,
+        end: safeWindow?.safeEnd ?? null,
+        leaveEarliest,
+        leaveLatest: safeWindow?.leaveLatest ?? null,
+        leaveInSeconds: leaveEarliest == null ? null : Math.max(0, leaveEarliest - wallTs),
+        depletedTs: safeWindow?.depletedTs ?? null,
+      },
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
