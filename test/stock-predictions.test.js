@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { nextRestock, simulateStockPredictions } from "../public/stock-predictions.js";
+import { applyConfiguredEmptyForExtents } from "../public/empty-for-bounds.js";
+import { adjustRestockTime, rateFromEndpoints } from "../public/adjust-restock-time.js";
+import { hoursFromRateWindows, rateFromTodHours } from "../src/depletion-rate-tod.js";
 
 const defaults = {
   startTs: 1000, endTs: 10000, startQty: 0, nowTs: 2000,
@@ -62,6 +65,51 @@ test("observed positive stock may deplete in the past, but its next restock stay
 
 test("ordinary future cycles retain their selected timing and depletion rate", () => {
   assert.deepEqual(restocks(simulate({ nowTs: 1000 })).slice(0, 2).map((e) => e.ts), [1500, 2700]);
+});
+
+test("next window uses the selected depletion rate and history limits", async () => {
+  const day = 86400;
+  const wallTs = 10 * day + 3600;
+  const recent = wallTs - day + 600;
+  const adjusted = wallTs - 2 * day + 600;
+  const ignored = recent + 600;
+  const old = wallTs - 4 * day + 600;
+  const rates = [
+    { start_ts: ignored, end_ts: ignored + 60, start_qty: 600, end_qty: 0, rate: 600 },
+    { start_ts: recent, end_ts: recent + 300, start_qty: 600, end_qty: 0, rate: 120 },
+    { start_ts: adjusted, end_ts: adjusted + 180, start_qty: 300, end_qty: 0, rate: 100 },
+    { start_ts: old, end_ts: old + 120, start_qty: 600, end_qty: 0, rate: 300 },
+  ];
+  const source = readFileSync(new URL("../src/safe-windows.js", import.meta.url), "utf8");
+  const context = {
+    nextRestock, simulateStockPredictions, applyConfiguredEmptyForExtents,
+    adjustRestockTimeCore: adjustRestockTime, rateFromEndpoints, hoursFromRateWindows, rateFromTodHours,
+    getFlightSeconds: () => 100,
+    getStoredRestockAmount: async () => 600,
+    getStoredEmptyForBounds: async () => ({ minEmptyFor: 600, maxEmptyFor: 1200, avgEmptyFor: 900 }),
+    getRestocks: async () => [
+      { depleted_ts: wallTs, restocked_ts: null },
+      { restocked_ts: ignored, ignored: true },
+      { restocked_ts: adjusted, adjusted_restocked_ts: adjusted - 420 },
+    ],
+    getDepletionRates: async () => rates,
+    getHistory: async () => [{ snapshot_ts: wallTs, quantity: 0, cost: 21000 }],
+  };
+  const compute = vm.runInNewContext(
+    source.slice(source.indexOf("const FLIGHT_TIME_VARIANCE"))
+      .replaceAll("export async function", "async function") + "\ncomputeNextSafeWindow;",
+    context
+  );
+  for (const [options, inStockSeconds] of [
+    [{ avgRateSamples: 1 }, 300],
+    [{ avgRateSamples: 2 }, 400],
+    [{ historicalRatePrediction: true, historicalRateMaxAgeDays: 3 }, 450],
+    [{ historicalRatePrediction: true, historicalRateMaxAgeDays: 3, rangeHours: 24 }, 300],
+  ]) {
+    const { nextWindow } = await compute("haw", 1485, { wallTs, stockoutTiming: "min", ...options });
+    assert.equal(nextWindow.start, wallTs + 600);
+    assert.equal(nextWindow.end - nextWindow.start, inStockSeconds);
+  }
 });
 
 test("no open stockout or forecast outside the horizon cannot create a past restock", () => {

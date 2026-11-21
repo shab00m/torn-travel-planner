@@ -383,26 +383,25 @@ Used as query params on `GET /api/next-window/...` or as JSON body fields on `PO
 |-----------|------|---------|-------------|
 | `restockAmount` | integer | DB value | Full quantity when the item restocks. Overrides the stored value for this request. |
 | `predictionHours` | number | `24` | How far ahead (hours) to predict restock/stockout events. |
+| `rangeHours` | number | `0` | History Time Range in hours for `GET /api/next-window`. Limits the snapshots and rate history used for the forecast. `0` uses all history. |
 | `travelType` | string | `"Standard"` | `"Standard"`, `"Airstrip"`, `"Private"`, or `"Business"`. Affects one-way flight time used for leave-by times. |
 | `flightTimeVariance` | boolean | `true` | If `true`, apply ±3% flight-time variance (fast for earliest leave, slow for latest). |
 | `safeWindowUseRateSelection` | boolean | `true` | If `true`, use the selected historical depletion rate for safe-window bounds. If `false`, use the fastest (`max`) historical rate (shorter, pessimistic window). Matches the item page checkbox **“Use for safe window”**. |
-| `historicalRatePrediction` | boolean | `false` | If `true`, use Torn City Time hour-of-day average depletion rates instead of `rateTiming` avg/min/max. Matches **“Historical depletion rate prediction”**. |
-| `historicalRateMaxAgeDays` | integer | _(none)_ | When historical rate prediction is on, only use rate-window history newer than this many days. Omit for all history. Matches **“Max age”**. |
+| `historicalRatePrediction` | boolean | `false` | If `true`, use Torn City Time hour-of-day averages from adjusted, non-ignored depletion windows. Falls back to `rateTiming` when hourly rates are unavailable. Matches **“Historical depletion rate prediction”**. |
+| `historicalRateMaxAgeDays` | integer | _(none)_ | Limits historical hourly rates to the last N days. If `rangeHours` is set, both limits apply. Matches **“Max age”**. |
 | `stockoutTiming` | string | `"avg"` | How to pick empty-for duration from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the stored `avgEmptyFor`. When `"min"` or `"max"`, uses the item’s configured min/max empty-for if set, otherwise the shortest/longest historical cycle. Matches the stockout timing buttons on the item page. |
 | `rateTiming` | string | `"avg"` | How to pick depletion rate from history: `"avg"`, `"min"`, or `"max"`. When `"avg"`, uses the most recent `avgRateSamples` in-stock windows. Matches **“Rate avg”** on the item page. |
 | `avgSamples` | integer | `5` | Unused for stockout timing (kept for older clients). Stored `avgEmptyFor` is used instead. |
 | `avgRateSamples` | integer | `3` | Number of recent in-stock windows to average when `rateTiming` is `"avg"`. |
 
-**Matching the web UI**
+**Depletion rate examples**
 
-The item detail page and favorites list pass options from browser state. A bare GET with no params uses server defaults, which often differ from logged-in / configured UI settings. Minimum params to match a typical configured item page:
+Use `historicalRatePrediction=false&rateTiming=avg&avgRateSamples=5` to average the last five eligible in-stock windows. Use `historicalRatePrediction=true&historicalRateMaxAgeDays=3` for hourly rates over the last three days. `stockoutTiming` selects the empty-for duration independently in both modes.
+
+To reproduce the item page, pass its travel and forecast settings. For example, Hawaii Shark Fin with Airstrip, MIN empty-for, three-day historical depletion rates, and a 24-hour History Time Range uses the following request.
 
 ```
-?predictionHours=24
-&safeWindowUseRateSelection=true
-&travelType=<your travel type>
-&rateTiming=avg
-&stockoutTiming=avg
+GET /api/next-window/haw/1485?travelType=Airstrip&stockoutTiming=min&historicalRatePrediction=true&historicalRateMaxAgeDays=3&rangeHours=24
 ```
 
 `restockAmount` is loaded from the database automatically if set on the item page.

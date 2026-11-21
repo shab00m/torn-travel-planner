@@ -74,7 +74,9 @@ function createContext({
   rateTiming,
   safeWindowUseRateSelection,
   historicalRatePrediction,
-  rateTodHours,
+  maxAgeDays,
+  storedRateTodHours,
+  historySinceTs,
   currentQty,
   currentPollTs,
   wallTs,
@@ -163,7 +165,9 @@ function createContext({
   }
 
   function getUsableCompletedRestocks() {
-    return getAdjustedCompletedRestocks().filter((r) => !r.ignored);
+    return getAdjustedCompletedRestocks().filter((r) =>
+      !r.ignored && isInHistoryRange(r.adjusted_restocked_ts ?? r.restocked_ts)
+    );
   }
 
   function getAdjustedRates() {
@@ -172,8 +176,23 @@ function createContext({
 
   function getUsableRates() {
     // Filter on raw start_ts before adjustment — adjusted timestamps no longer match restocks.
-    return rates.filter((w) => !isRateWindowIgnored(w.start_ts)).map(adjustedRateWindow);
+    return rates.filter((w) => !isRateWindowIgnored(w.start_ts))
+      .map(adjustedRateWindow)
+      .filter((w) => isInHistoryRange(w.start_ts));
   }
+
+  function isInHistoryRange(ts) {
+    return historySinceTs === 0 || (ts != null && ts >= historySinceTs);
+  }
+
+  const liveRateTodHours = historicalRatePrediction
+    ? hoursFromRateWindows(
+        getUsableRates(),
+        maxAgeDays == null ? 0 : wallTs - maxAgeDays * 86400,
+        maxAgeDays == null ? Infinity : wallTs
+      )
+    : null;
+  const rateTodHours = liveRateTodHours?.some((rate) => rate > 0) ? liveRateTodHours : storedRateTodHours;
 
   function getHistoricalExtents() {
     const completed = getUsableCompletedRestocks();
@@ -444,6 +463,9 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
     Number.isInteger(opts.historicalRateMaxAgeDays) && opts.historicalRateMaxAgeDays > 0
       ? opts.historicalRateMaxAgeDays
       : null;
+  const historySinceTs = opts.rangeHours > 0
+    ? Math.max(0, opts.wallTs - Math.round(opts.rangeHours * 3600))
+    : 0;
 
   const [restocks, rates, chartPoints, rateTod] = await Promise.all([
     getRestocks(country, itemId),
@@ -454,37 +476,30 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
       : Promise.resolve({ hours: null, updatedAt: null }),
   ]);
 
-  const sinceTs =
-    historicalRatePrediction && maxAgeDays != null
-      ? opts.wallTs - maxAgeDays * 86400
-      : 0;
-  const todFromDb = rateTod.hours?.some((r) => r != null && r > 0);
-  const rateTodHours = !historicalRatePrediction
-    ? null
-    : maxAgeDays != null || !todFromDb
-      ? hoursFromRateWindows(rates, sinceTs)
-      : rateTod.hours;
-
   const current = resolveCurrentStock(chartPoints);
   const buyPrice = current?.cost ?? (await getTravelCatalogueCost(country, itemId));
   const itemDetails = { country, itemId, buyPrice, restockAmount: restockAmount ?? null };
-  if (!current) {
+  if (!current || current.dataTs < historySinceTs) {
     return {
       ...itemDetails,
       available: false,
       safeWindow: null,
       reason: "no_stock_data",
-      hint: safeWindowHint("no_stock_data", { restockAmount, startQty: null, restocks }),
+      hint: current ? "No snapshot data in the requested history range."
+        : safeWindowHint("no_stock_data", { restockAmount, startQty: null, restocks }),
     };
   }
 
   const dataTs = current.dataTs;
   const startQty = current.quantity;
+  const predictionPoints = historySinceTs > 0
+    ? chartPoints.filter((point) => point.snapshot_ts >= historySinceTs)
+    : chartPoints;
 
   const ctx = createContext({
     restocks,
     rates,
-    chartPoints,
+    chartPoints: predictionPoints,
     restockAmount,
     avgSamples: opts.avgSamples,
     avgRateSamples: opts.avgRateSamples,
@@ -492,7 +507,9 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
     rateTiming: opts.rateTiming,
     safeWindowUseRateSelection: opts.safeWindowUseRateSelection,
     historicalRatePrediction,
-    rateTodHours,
+    maxAgeDays,
+    storedRateTodHours: rateTod.hours,
+    historySinceTs,
     currentQty: startQty,
     currentPollTs: dataTs,
     wallTs: opts.wallTs,
@@ -513,7 +530,7 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
   if (averages) {
     const { events, segments } = ctx.simulatePredictions(dataTs, endTs, startQty, averages);
     const upcoming = events.filter((e) => e.type === "restock" && e.ts >= dataTs);
-    const lastZeroLookup = buildLastZeroLookup(chartPoints);
+    const lastZeroLookup = buildLastZeroLookup(predictionPoints);
     for (const event of upcoming) {
       let start = event.ts;
       if (restockAmount && averages.rate) {

@@ -490,6 +490,14 @@ app.get("/api/next-window/:country/:itemId", async (req, res) => {
   try {
     const wallTs = Math.floor(Date.now() / 1000);
     const opts = { ...parseSafeWindowOptions(req.query), wallTs };
+    if (req.query.rangeHours != null) {
+      const { rangeHours } = req.query;
+      const hours = typeof rangeHours === "string" && rangeHours.trim() ? Number(rangeHours) : NaN;
+      if (!Number.isFinite(hours) || hours < 0) {
+        throw new Error("rangeHours must be a non-negative number");
+      }
+      opts.rangeHours = hours;
+    }
     const { available, reason, safeWindow, ...result } = await computeNextSafeWindow(params.country, params.id, opts);
     const leaveEarliest = safeWindow?.leaveEarliest ?? null;
     res.json({
