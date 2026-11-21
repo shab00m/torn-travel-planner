@@ -539,7 +539,13 @@ export async function computeNextSafeWindow(country, itemId, userOpts = {}) {
       const leaveEarliest = start - flightSec;
       const leaveLatest = end - flightSec;
       if (leaveLatest > opts.wallTs) {
-        nextWindow = { start, end, leaveEarliest, leaveLatest };
+        nextWindow = {
+          start,
+          end,
+          leaveEarliest,
+          leaveLatest,
+          leaveInSeconds: Math.max(0, leaveEarliest - opts.wallTs),
+        };
         break;
       }
     }

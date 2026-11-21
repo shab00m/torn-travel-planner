@@ -279,6 +279,8 @@ To match the web UI, pass the same options the app sends (see [Safe window optio
 
 Return the first predicted restock window that ends after your flight would land if you left at request time. Read `nextWindow.start` for the predicted restock time. To arrive by the start, leave by `nextWindow.leaveEarliest`. If no such window is predicted, `nextWindow` may be null or absent. The response also includes the safe-window prediction when available.
 
+`nextWindow.leaveInSeconds` is the number of seconds from request time until `nextWindow.leaveEarliest`. It is `0` when `leaveEarliest` is at or before request time.
+
 **Query parameters:** all [safe window options](#safe-window-options) are supported as query params.
 
 **Example:**
@@ -299,7 +301,8 @@ GET /api/next-window/uni/206?stockoutTiming=min&travelType=Standard
     "start": 1783990100,
     "end": 1783990200,
     "leaveEarliest": 1783981040,
-    "leaveLatest": 1783981140
+    "leaveLatest": 1783981140,
+    "leaveInSeconds": 120
   },
   "safeWindow": {
     "safeStart": 1783990140,
@@ -365,7 +368,7 @@ Batch safe-window lookup (used by the favorites list).
 }
 ```
 
-Keys are `"country:itemId"`.
+Keys are `"country:itemId"`. Each result also includes `nextWindow.leaveInSeconds` when a next window is predicted.
 
 ---
 
