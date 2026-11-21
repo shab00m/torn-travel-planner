@@ -275,16 +275,16 @@ A **safe window** is the range from the latest possible restock time to the earl
 
 To match the web UI, pass the same options the app sends (see [Safe window options](#safe-window-options) below). UI preferences live in browser `localStorage` (`plannerPrefs`); the server does not read them unless you pass them in the request.
 
-### `GET /api/safe-window/:country/:itemId`
+### `GET /api/next-window/:country/:itemId`
 
-Compute the next leave window where you can still arrive during a safe stock period.
+Return the first predicted restock window that ends after your flight would land if you left at request time. Read `nextWindow.start` for the predicted restock time. To arrive by the start, leave by `nextWindow.leaveEarliest`. If no such window is predicted, `nextWindow` may be null or absent. The response also includes the safe-window prediction when available.
 
 **Query parameters:** all [safe window options](#safe-window-options) are supported as query params.
 
 **Example:**
 
 ```
-GET /api/safe-window/uni/206?predictionHours=24&safeWindowUseRateSelection=true&travelType=Standard
+GET /api/next-window/uni/206?stockoutTiming=min&travelType=Standard
 ```
 
 **Response:**
@@ -295,6 +295,12 @@ GET /api/safe-window/uni/206?predictionHours=24&safeWindowUseRateSelection=true&
   "itemId": 206,
   "available": true,
   "restockAmount": 2500,
+  "nextWindow": {
+    "start": 1783990100,
+    "end": 1783990200,
+    "leaveEarliest": 1783981040,
+    "leaveLatest": 1783981140
+  },
   "safeWindow": {
     "safeStart": 1783990140,
     "safeEnd": 1783990180,
@@ -365,7 +371,7 @@ Keys are `"country:itemId"`.
 
 ### Safe window options
 
-Used as query params on `GET /api/safe-window/...` or as JSON body fields on `POST /api/safe-windows`.
+Used as query params on `GET /api/next-window/...` or as JSON body fields on `POST /api/safe-windows`.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|

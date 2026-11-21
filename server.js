@@ -484,7 +484,7 @@ function parseSafeWindowOptions(query = {}, body = {}) {
   return opts;
 }
 
-app.get("/api/safe-window/:country/:itemId", async (req, res) => {
+app.get("/api/next-window/:country/:itemId", async (req, res) => {
   const params = parseItemParams(req, res);
   if (!params) return;
   try {
