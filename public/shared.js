@@ -41,8 +41,13 @@ const state = {
   activeTravel: null, // { flyingToCountry, arriveTs } when logged in and in flight
   marketPrices: null, // { [itemId]: number | null } from /api/markets
   marketPricesFetchedAt: null, // { [itemId]: unix ts }
-  marketPricesStatus: null, // null | "empty" | "ready" | "error"
   marketCacheTtlSec: 300,
+  traderPrices: null,
+  traderPricesFetchedAt: null,
+  traderPricesMinRating: null,
+  traderCacheTtlSec: 300,
+  sellPriceSource: "tornw3b",
+  traderMinRating: 30,
   // Item page: compound safe-window array. Favorites: { "mex:123": { available, safeWindow, reason } }.
   safeWindows: {},
   safeWindowsStatus: null, // null | "loading" | "ready" | "error"
@@ -83,6 +88,8 @@ function parseStringListPref(value, legacyValue) {
 }
 
 const PREFS_KEY = "plannerPrefs";
+const SELL_PRICES_KEY = "sellPrices";
+const SELL_PRICE_SOURCES = ["tornw3b", "market", "manual"];
 const TRAVEL_TYPES = ["Standard", "Airstrip", "Private", "Business"];
 const BASE_TRAVEL_CAPACITY = { Standard: 5, Airstrip: 15, Private: 15, Business: 15 };
 const SAMPLE_OPTIONS = [1, 3, 5, 10, 20];
@@ -107,7 +114,7 @@ const FLIGHT_TIME_VARIANCE = 0.03;
 
 function loadPrefs() {
   try {
-    return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}");
+    return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") ?? {};
   } catch {
     return {};
   }
@@ -129,8 +136,27 @@ function applyTravelSettings(prefs) {
     Number.isInteger(cap) && cap > 0 ? cap : BASE_TRAVEL_CAPACITY[state.travelType];
 }
 
+function parseTraderRating(value) {
+  const rating = parseOptionalNumber(value);
+  return Number.isSafeInteger(rating) && rating >= 0 ? rating : null;
+}
+
+function applyStoredSellPriceSettings(prefs) {
+  if (SELL_PRICE_SOURCES.includes(prefs.sellPriceSource)) {
+    state.sellPriceSource = prefs.sellPriceSource;
+  } else {
+    const hasManualPrices = Object.values(loadManualSellPrices()).some(isManualSellPrice);
+    const existingUser = localStorage.getItem(PREFS_KEY) != null ||
+      localStorage.getItem("tornApiKey") != null || localStorage.getItem("favoriteItems") != null;
+    state.sellPriceSource = hasManualPrices ? "manual" : existingUser ? "market" : "tornw3b";
+    savePrefs({ sellPriceSource: state.sellPriceSource });
+  }
+  state.traderMinRating = parseTraderRating(prefs.traderMinRating) ?? 30;
+}
+
 function applyStoredPrefs() {
   const prefs = loadPrefs();
+  applyStoredSellPriceSettings(prefs);
   applyTravelSettings(prefs);
   state.rangeHours = pickOption(prefs.rangeHours, RANGE_HOURS_OPTIONS, 24);
   state.predictionHours = pickOption(prefs.predictionHours, PREDICTION_HOURS_OPTIONS, 6);
@@ -404,6 +430,18 @@ function siteSettingsPanelHtml() {
             <input id="workday-hours" type="number" min="0" max="24" step="any" />
             <span>hours</span>
           </label>
+          <label class="settings-field">
+            <span>Sell price</span>
+            <select id="sell-price-source">
+              <option value="tornw3b">TornW3B</option>
+              <option value="market">Item Market (after 5% tax)</option>
+              <option value="manual">Manual price</option>
+            </select>
+          </label>
+          <label id="trader-rating-field" class="settings-field" title="Trader upvotes minus downvotes. The Sell tab requires a positive rating.">
+            <span>Minimum trader rating</span>
+            <input id="trader-min-rating" type="number" min="0" step="1" required />
+          </label>
         </div>
       </div>
       <div class="time-format-setting settings-group">
@@ -461,6 +499,33 @@ function injectSiteSettings() {
     state.workdayHours = hours;
     savePrefs({ workdayHours: hours });
     window.dispatchEvent(new CustomEvent("workdayhourschange"));
+  });
+
+  const sellPriceSource = panel.querySelector("#sell-price-source");
+  const traderMinRating = panel.querySelector("#trader-min-rating");
+  const traderRatingField = panel.querySelector("#trader-rating-field");
+  const syncSellPriceSettings = () => {
+    sellPriceSource.value = state.sellPriceSource;
+    traderMinRating.value = String(state.traderMinRating);
+    traderRatingField.classList.toggle("hidden", state.sellPriceSource !== "tornw3b");
+  };
+
+  syncSellPriceSettings();
+  window.addEventListener("sellpriceschange", syncSellPriceSettings);
+  sellPriceSource.addEventListener("change", () => {
+    const source = sellPriceSource.value;
+    if (!SELL_PRICE_SOURCES.includes(source) || source === state.sellPriceSource) return;
+    state.sellPriceSource = source;
+    savePrefs({ sellPriceSource: source });
+    window.dispatchEvent(new CustomEvent("sellpriceschange"));
+  });
+  traderMinRating.addEventListener("change", () => {
+    const rating = parseTraderRating(traderMinRating.value);
+    traderMinRating.value = String(rating ?? state.traderMinRating);
+    if (rating == null || rating === state.traderMinRating) return;
+    state.traderMinRating = rating;
+    savePrefs({ traderMinRating: rating });
+    window.dispatchEvent(new CustomEvent("sellpriceschange"));
   });
 
   toggle.addEventListener("click", () => {
@@ -800,21 +865,44 @@ async function setEmptyForBounds(country, itemId, bounds) {
   return data;
 }
 
-const SELL_PRICES_KEY = "sellPrices";
+function loadManualSellPrices() {
+  try {
+    const prices = JSON.parse(localStorage.getItem(SELL_PRICES_KEY) || "{}");
+    return prices && typeof prices === "object" && !Array.isArray(prices) ? prices : {};
+  } catch {
+    return {};
+  }
+}
+
+function isManualSellPrice(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
 
 function getSellPrice(country, itemId) {
-  const all = JSON.parse(localStorage.getItem(SELL_PRICES_KEY) || "{}");
-  const v = all[`${country}:${itemId}`];
-  return typeof v === "number" && v >= 0 ? v : null;
+  const price = loadManualSellPrices()[`${country}:${itemId}`];
+  return isManualSellPrice(price) ? price : null;
 }
 
 function setSellPrice(country, itemId, price) {
-  const all = JSON.parse(localStorage.getItem(SELL_PRICES_KEY) || "{}");
+  const all = loadManualSellPrices();
   const key = `${country}:${itemId}`;
   if (price == null) delete all[key];
   else all[key] = price;
   localStorage.setItem(SELL_PRICES_KEY, JSON.stringify(all));
+  window.dispatchEvent(new CustomEvent("sellpriceschange"));
 }
+
+window.addEventListener("storage", (event) => {
+  if (event.key === SELL_PRICES_KEY) {
+    window.dispatchEvent(new CustomEvent("sellpriceschange"));
+  } else if (event.key === PREFS_KEY) {
+    const { sellPriceSource, traderMinRating } = state;
+    applyStoredSellPriceSettings(loadPrefs());
+    if (state.sellPriceSource !== sellPriceSource || state.traderMinRating !== traderMinRating) {
+      window.dispatchEvent(new CustomEvent("sellpriceschange"));
+    }
+  }
+});
 
 const FAVORITES_KEY = "favoriteItems";
 const HIDDEN_ITEMS_KEY = "hiddenItems";
@@ -1025,10 +1113,17 @@ function computeProfitMetrics({ buyPrice, sellPrice, country, itemId }) {
   };
 }
 
-function getItemSellPrice(country, itemId, marketPrice) {
-  const stored = getSellPrice(country, itemId);
-  if (stored != null) return stored;
-  return marketPrice ?? null;
+function getItemSellPrice(country, itemId, marketPrice = state.marketPrices?.[itemId]) {
+  switch (state.sellPriceSource) {
+    case "manual":
+      return getSellPrice(country, itemId);
+    case "market":
+      return marketPrice == null ? null : marketPrice - Math.ceil(marketPrice / 20);
+    case "tornw3b":
+      return state.traderPricesMinRating === state.traderMinRating
+        ? state.traderPrices?.[itemId] ?? null
+        : null;
+  }
 }
 
 function getWorkdayProfit(trips, profitPerItem) {
@@ -1044,8 +1139,7 @@ function workdayTripItem(country, itemId, source) {
 }
 
 function getItemProfitPerHour(country, item) {
-  const marketPrice = state.marketPrices?.[item.id] ?? null;
-  const sellPrice = getItemSellPrice(country, item.id, marketPrice);
+  const sellPrice = getItemSellPrice(country, item.id);
   if (sellPrice == null) return null;
   return (
     computeProfitMetrics({

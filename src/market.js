@@ -7,6 +7,7 @@ import {
 
 const TORN_V2_MARKET_URL = "https://api.torn.com/v2/market";
 const STALE_QUERY_BATCH = 50;
+const REFRESH_COOLDOWN_SEC = 30;
 
 const CACHE_TTL_SEC = Number.parseInt(process.env.MARKET_CACHE_TTL_SEC ?? "300", 10);
 const CALLS_PER_MINUTE = Number.parseInt(process.env.MARKET_CALLS_PER_MINUTE ?? "50", 10);
@@ -79,15 +80,18 @@ async function storeMarketPrice(itemId, marketPrice, fetchedAt = Math.floor(Date
   await upsertMarketPrice(itemId, marketPrice, fetchedAt);
 }
 
-async function fetchAndStoreMarketPrice(itemId, apiKey) {
+async function fetchAndStoreMarketPrice(itemId, apiKey, { keepCachedOnError = false } = {}) {
   const fetchedAt = Math.floor(Date.now() / 1000);
   try {
     const data = await fetchItemMarket(apiKey, itemId);
     const marketPrice = averageMarketPrice(data);
+    if (marketPrice == null && keepCachedOnError) {
+      throw new Error("Item market average price unavailable");
+    }
     await storeMarketPrice(itemId, marketPrice, fetchedAt);
     return marketPrice;
   } catch (err) {
-    await storeMarketPrice(itemId, null, fetchedAt);
+    if (!keepCachedOnError) await storeMarketPrice(itemId, null, fetchedAt);
     throw err;
   }
 }
@@ -143,9 +147,12 @@ export async function refreshStaleMarketPrices() {
 }
 
 /** Item page: DB cache first; live Torn fetch only with the visitor's API key. */
-export async function getMarketPrice(itemId, userApiKey) {
+export async function getMarketPrice(itemId, userApiKey, { refresh = false } = {}) {
   const cached = await readCachedMarketPrice(itemId);
-  if (cached?.fresh && cached.marketPrice != null) {
+  const useCached = cached && (refresh
+    ? Math.floor(Date.now() / 1000) - cached.fetchedAt < REFRESH_COOLDOWN_SEC
+    : cached.fresh);
+  if (useCached && cached.marketPrice != null) {
     return cached.marketPrice;
   }
 
@@ -155,12 +162,12 @@ export async function getMarketPrice(itemId, userApiKey) {
     throw new Error("API key required for market prices");
   }
 
-  if (cached?.fresh && cached.marketPrice == null) {
+  if (useCached && cached.marketPrice == null) {
     throw new Error("Item market average price unavailable");
   }
 
   await rateLimiter.acquire();
-  const marketPrice = await fetchAndStoreMarketPrice(itemId, apiKey);
+  const marketPrice = await fetchAndStoreMarketPrice(itemId, apiKey, { keepCachedOnError: refresh });
   if (marketPrice == null) {
     throw new Error("Item market average price unavailable");
   }

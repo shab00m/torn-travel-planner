@@ -1155,7 +1155,8 @@ export async function upsertMarketPrice(itemId, marketPrice, fetchedAt) {
     `INSERT INTO market_prices (item_id, market_price, fetched_at) VALUES ($1, $2, $3)
      ON CONFLICT (item_id) DO UPDATE SET
        market_price = EXCLUDED.market_price,
-       fetched_at = EXCLUDED.fetched_at`,
+       fetched_at = EXCLUDED.fetched_at
+     WHERE market_prices.fetched_at <= EXCLUDED.fetched_at`,
     [itemId, marketPrice, fetchedAt]
   );
 }

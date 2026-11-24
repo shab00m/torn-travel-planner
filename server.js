@@ -33,6 +33,7 @@ import {
   getCachedMarketPrices,
   CACHE_TTL_SEC,
 } from "./src/market.js";
+import { getTraderPrice, getCachedTraderPrices, parseTraderMinRating } from "./src/trader-prices.js";
 import { getCachedItemTypes, startItemCataloguePolling } from "./src/item-types.js";
 import { getItemDeprecation, setItemDeprecation } from "./src/item-deprecation.js";
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
@@ -188,7 +189,7 @@ app.post("/api/market", async (req, res) => {
   }
   const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey : undefined;
   try {
-    const marketPrice = await getMarketPrice(itemId, apiKey);
+    const marketPrice = await getMarketPrice(itemId, apiKey, { refresh: req.body?.refresh === true });
     res.json({ itemId, marketPrice });
   } catch (err) {
     res.status(err.message === "API key required for market prices" ? 401 : 502).json({
@@ -201,6 +202,39 @@ app.get("/api/markets", async (_req, res) => {
   const { prices, fetchedAt } = await getCachedMarketPrices();
   res.json({ prices, fetchedAt, cacheTtlSec: CACHE_TTL_SEC });
 });
+
+app.get("/api/trader-prices", async (req, res) => {
+  const minRating = parseTraderMinRating(req.query.minRating);
+  if (minRating == null) return res.status(400).json({ error: "minRating must be a non-negative integer" });
+  try {
+    res.set("Cache-Control", "no-store").json(await getCachedTraderPrices(minRating));
+  } catch {
+    res.status(503).json({ error: "Could not load cached TornW3B prices" });
+  }
+});
+
+async function itemTraderPrice(req, res) {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  if (!/^\d+$/.test(req.params.itemId) || params.id < 1 || params.id > 2147483647) {
+    return res.status(400).json({ error: "itemId must be a positive integer" });
+  }
+  const minRating = parseTraderMinRating(req.query.minRating);
+  if (minRating == null) return res.status(400).json({ error: "minRating must be a non-negative integer" });
+  const refresh = req.method === "POST";
+  try {
+    if (refresh && !(await getLatestSnapshot(params.country, params.id))) {
+      return res.status(404).json({ error: "No stock observations found" });
+    }
+    res.set("Cache-Control", "no-store").json(await getTraderPrice(params.id, minRating, { refresh }));
+  } catch {
+    res.status(refresh ? 502 : 503).json({ error: refresh ? "Could not refresh the TornW3B price" : "Could not load the TornW3B price" });
+  }
+}
+
+app.route("/api/items/:country/:itemId/trader-price")
+  .get(itemTraderPrice)
+  .post(itemTraderPrice);
 
 // Torn item id → type, refreshed alongside the foreign shop catalogue.
 app.get("/api/item-types", async (_req, res) => {

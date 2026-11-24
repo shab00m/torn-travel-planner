@@ -47,7 +47,8 @@ const el = {
   profitBuy: document.getElementById("profit-buy"),
   profitMarket: document.getElementById("profit-market"),
   profitSell: document.getElementById("profit-sell"),
-  profitSellReset: document.getElementById("profit-sell-reset"),
+  profitSellRefresh: document.getElementById("profit-sell-refresh"),
+  profitPriceStatus: document.getElementById("profit-price-status"),
   profitPerItem: document.getElementById("profit-per-item"),
   profitTotalCost: document.getElementById("profit-total-cost"),
   profitTotal: document.getElementById("profit-total"),
@@ -87,30 +88,16 @@ const chartPan = {
 let chartNowAnimation = null;
 
 const profitSell = {
-  marketPrice: null,
   item: null,
+  marketIssue: "",
+  traderIssue: "",
+  traderIssueRating: null,
+  marketRequest: null,
+  traderRequest: null,
+  refreshing: false,
 };
 let itemWorkday = null;
 let recalculatingWorkday = false;
-
-function setProfitSellEnabled(enabled) {
-  if (el.profitSell) el.profitSell.disabled = !enabled;
-  if (el.profitSellReset) el.profitSellReset.disabled = !enabled;
-}
-
-function parseSellPriceInput() {
-  if (!el.profitSell || el.profitSell.disabled) return null;
-  const raw = el.profitSell.value.trim();
-  if (raw === "") return null;
-  const price = Number.parseInt(raw, 10);
-  return Number.isInteger(price) && price >= 0 ? price : null;
-}
-
-function syncSellPriceInput(marketPrice) {
-  if (!el.profitSell || marketPrice == null || !state.item) return;
-  const stored = getSellPrice(state.item.country, state.item.itemId);
-  el.profitSell.value = String(stored ?? marketPrice);
-}
 
 function syncWorkdayAdminControls() {
   const allowed = isAdminUser();
@@ -179,18 +166,24 @@ async function recalculateItemWorkday() {
 function updateProfitCalcs() {
   syncItemWorkdayEstimate();
   const item = profitSell.item;
-  if (!item || profitSell.marketPrice == null) return;
+  if (!item) return;
 
-  const sellPrice = parseSellPriceInput();
-  if (sellPrice == null) return;
-
+  const { country, itemId } = state.item;
   const metrics = computeProfitMetrics({
     buyPrice: item.cost,
-    sellPrice,
-    country: state.item.country,
-    itemId: item.itemId,
+    sellPrice: getItemSellPrice(country, itemId),
+    country,
+    itemId,
   });
-  if (!metrics) return;
+  if (!metrics) {
+    for (const node of [
+      el.profitPerItem, el.profitTotalCost, el.profitTotal, el.profitPerHour, el.profitPerItemHour, el.profitPerDay,
+    ]) {
+      setProfitStat(node, "—");
+    }
+    el.profitNote?.classList.add("hidden");
+    return;
+  }
 
   setProfitStat(el.profitPerItem, fmtSignedMoney(metrics.profitPerItem), profitValueClass(metrics.profitPerItem));
   setProfitStat(el.profitTotalCost, fmtMoney(metrics.totalCost));
@@ -240,23 +233,28 @@ function updateProfitCalcs() {
 
 function initProfitSellControls() {
   el.profitSell?.addEventListener("change", () => {
-    if (!state.item) return;
-    const price = parseSellPriceInput();
-    if (price == null) {
-      syncSellPriceInput(profitSell.marketPrice);
-      updateProfitCalcs();
+    if (!state.item || state.sellPriceSource !== "manual") return;
+    const { country, itemId } = state.item;
+    const price = el.profitSell.value === "" ? null : el.profitSell.valueAsNumber;
+    if (!el.profitSell.validity.valid || (price != null && !isManualSellPrice(price))) {
+      el.profitSell.value = getSellPrice(country, itemId) ?? "";
       return;
     }
-    setSellPrice(state.item.country, state.item.itemId, price);
-    el.profitSell.value = String(price);
-    updateProfitCalcs();
+    el.profitSell.value = price ?? "";
+    setSellPrice(country, itemId, price);
   });
 
-  el.profitSellReset?.addEventListener("click", () => {
-    if (!state.item || profitSell.marketPrice == null) return;
-    setSellPrice(state.item.country, state.item.itemId, null);
-    syncSellPriceInput(profitSell.marketPrice);
-    updateProfitCalcs();
+  el.profitSellRefresh?.addEventListener("click", async () => {
+    if (!state.item || profitSell.refreshing || state.sellPriceSource === "manual") return;
+    const refresh = state.sellPriceSource === "tornw3b" ? loadItemTraderPrice : loadItemMarketPrice;
+    profitSell.refreshing = true;
+    renderProfitPrices();
+    try {
+      await refresh(true);
+    } finally {
+      profitSell.refreshing = false;
+      renderProfitPrices();
+    }
   });
 }
 
@@ -2058,68 +2056,117 @@ function setProfitStat(node, text, valueClass = null) {
   if (valueClass) node.classList.add(valueClass);
 }
 
-async function fetchMarketPrice(itemId) {
+async function fetchMarketPrice(itemId, refresh) {
   const apiKey = typeof getStoredApiKey === "function" ? getStoredApiKey() : null;
-  const body = { itemId };
+  const body = { itemId, refresh };
   if (apiKey) body.apiKey = apiKey;
+  const data = await fetchJsonWithBody("/api/market", { method: "POST", body });
+  return data.marketPrice;
+}
+
+async function loadItemMarketPrice(refresh = false) {
+  if (!state.item || (!refresh && profitSell.marketRequest)) return;
+  const { itemId } = state.item;
+  const request = fetchMarketPrice(itemId, refresh);
+  profitSell.marketRequest = request;
   try {
-    const data = await fetchJsonWithBody("/api/market", { method: "POST", body });
-    return data.marketPrice ?? { error: "Average market price unavailable" };
+    const price = await request;
+    if (profitSell.marketRequest !== request) return;
+    state.marketPrices = { [itemId]: price };
+    profitSell.marketIssue = "";
   } catch (err) {
-    if (err.message === "API key required for market prices") return "no-key";
-    return { error: err.message };
+    if (profitSell.marketRequest !== request) return;
+    profitSell.marketIssue = err.message === "API key required for market prices"
+      ? "Log in to fetch an Item Market price."
+      : err.message;
+  } finally {
+    if (profitSell.marketRequest === request) {
+      profitSell.marketRequest = null;
+      renderProfitPrices();
+    }
   }
 }
 
-function renderProfitEstimate(item, marketPrice) {
-  if (!el.profitEstimate) return;
-
-  const resetValues = () => {
-    for (const node of [
-      el.profitBuy, el.profitMarket, el.profitPerItem, el.profitTotalCost,
-      el.profitTotal, el.profitPerHour, el.profitPerItemHour, el.profitPerDay,
-    ]) {
-      setProfitStat(node, "—");
+async function loadItemTraderPrice(refresh = false) {
+  if (!state.item || state.sellPriceSource !== "tornw3b") return;
+  const { country, itemId } = state.item;
+  const { traderMinRating } = state;
+  if (!refresh && profitSell.traderRequest?.rating === traderMinRating) return;
+  const url = `/api/items/${country}/${itemId}/trader-price?minRating=${traderMinRating}`;
+  const request = { rating: traderMinRating };
+  profitSell.traderRequest = request;
+  profitSell.traderIssue = "";
+  renderProfitPrices();
+  try {
+    const data = refresh ? await fetchJsonWithBody(url, { method: "POST" }) : await fetchJson(url);
+    if (profitSell.traderRequest !== request) return;
+    state.traderPrices = { [itemId]: data.traderPrice };
+    state.traderPricesFetchedAt = { [itemId]: data.fetchedAt };
+    state.traderPricesMinRating = traderMinRating;
+  } catch (err) {
+    if (profitSell.traderRequest !== request) return;
+    profitSell.traderIssue = err.message;
+    profitSell.traderIssueRating = traderMinRating;
+  } finally {
+    if (profitSell.traderRequest === request) {
+      profitSell.traderRequest = null;
+      renderProfitPrices();
     }
-  };
-
-  const showNote = (text) => {
-    if (!el.profitNote) return;
-    el.profitNote.textContent = text;
-    el.profitNote.classList.toggle("hidden", !text);
-  };
-
-  el.profitEstimate.classList.remove("hidden");
-  resetValues();
-  showNote("");
-  profitSell.item = item;
-  profitSell.marketPrice = null;
-  setProfitSellEnabled(false);
-  if (el.profitSell) el.profitSell.value = "";
-  syncItemWorkdayEstimate();
-
-  if (marketPrice === "no-key") {
-    showNote("Log in for market prices (Torn API key with market access).");
-    return;
   }
+}
 
-  if (typeof marketPrice === "object" && marketPrice?.error) {
-    showNote(marketPrice.error);
-    return;
+function loadItemPrices() {
+  return Promise.all([loadItemMarketPrice(), loadItemTraderPrice()]);
+}
+
+function renderProfitPrices() {
+  if (!profitSell.item || !el.profitEstimate) return;
+  const { country, itemId } = state.item;
+  const { sellPriceSource: source, traderMinRating: rating } = state;
+  const manual = source === "manual";
+  const marketPrice = state.marketPrices?.[itemId];
+  const sellPrice = getItemSellPrice(country, itemId);
+  const traderFetchedAt = state.traderPricesMinRating === rating ? state.traderPricesFetchedAt?.[itemId] : null;
+
+  setProfitStat(el.profitMarket, marketPrice == null ? "—" : fmtMoney(marketPrice));
+  el.profitMarket.title = marketPrice == null ? profitSell.marketIssue : "";
+  el.profitSell.readOnly = !manual;
+  if (!manual || el.profitSell !== document.activeElement) el.profitSell.value = sellPrice ?? "";
+  const button = el.profitSellRefresh;
+  button.hidden = manual;
+  button.disabled = manual || profitSell.refreshing;
+  button.textContent = source === "tornw3b" ? "↻ TornW3B" : "↻ Market";
+  button.title = source === "tornw3b" ? "Refresh the TornW3B sell price" : "Refresh the Item Market sell price";
+  button.setAttribute("aria-label", button.title);
+
+  let status = "";
+  if (manual && sellPrice == null) {
+    status = "Enter a manual sell price for this item.";
+  } else if (source === "market") {
+    status = profitSell.marketIssue || (sellPrice == null ? "Loading Item Market price…" : "Sell price after the 5% Item Market tax.");
+  } else if (source === "tornw3b") {
+    if (profitSell.traderIssue && profitSell.traderIssueRating === rating) {
+      status = profitSell.traderIssue;
+    } else if (sellPrice == null) {
+      if (profitSell.traderRequest?.rating === rating) status = "Loading TornW3B price…";
+      else if (traderFetchedAt == null) status = "TornW3B price awaiting refresh.";
+      else status = `No TornW3B offers at rating ${rating} or higher.`;
+    }
   }
-
-  if (marketPrice == null) {
-    showNote("Market price unavailable.");
-    return;
-  }
-
-  profitSell.marketPrice = marketPrice;
-
-  setProfitStat(el.profitBuy, fmtMoney(item.cost));
-  setProfitStat(el.profitMarket, fmtMoney(marketPrice));
-  setProfitSellEnabled(true);
-  syncSellPriceInput(marketPrice);
+  el.profitPriceStatus.textContent = status;
+  el.profitPriceStatus.hidden = !status;
+  el.profitSell.title = source === "tornw3b" && traderFetchedAt != null
+    ? `TornW3B price checked at ${fmtTime(traderFetchedAt)}`
+    : "";
   updateProfitCalcs();
+}
+
+function renderProfitEstimate(item) {
+  if (!el.profitEstimate) return;
+  profitSell.item = item;
+  el.profitEstimate.classList.remove("hidden");
+  setProfitStat(el.profitBuy, item.cost == null ? "—" : fmtMoney(item.cost));
+  renderProfitPrices();
 }
 
 function isFlyingToItem() {
@@ -2706,10 +2753,7 @@ function setHeaderStockQty(quantity) {
 async function loadCurrentStock() {
   if (!state.item) return;
   try {
-    const [data, marketPrice] = await Promise.all([
-      fetchJson(`/api/items/${state.item.country}/${state.item.itemId}/stock`),
-      fetchMarketPrice(state.item.itemId),
-    ]);
+    const data = await fetchJson(`/api/items/${state.item.country}/${state.item.itemId}/stock`);
     const item = { ...data, id: state.item.itemId };
     const countryData = { update: data.snapshot_ts };
     if (!Number.isFinite(item.quantity)) {
@@ -2730,7 +2774,7 @@ async function loadCurrentStock() {
     if (typeof refreshRestockAlarmsFromStocks === "function") {
       void refreshRestockAlarmsFromStocks({ stocks: { [state.item.country]: { stocks: [item] } } });
     }
-    renderProfitEstimate(item, marketPrice);
+    renderProfitEstimate(item);
   } catch (err) {
     profitSell.item = null;
     itemWorkday = null;
@@ -3802,6 +3846,11 @@ window.addEventListener("travelsettingschange", () => {
 window.addEventListener("restockamountchange", updateProfitCalcs);
 
 window.addEventListener("workdayhourschange", updateProfitCalcs);
+window.addEventListener("sellpriceschange", () => {
+  renderProfitPrices();
+  if (state.sellPriceSource === "tornw3b") void loadItemTraderPrice();
+  if (state.sellPriceSource === "market") void loadItemMarketPrice();
+});
 window.addEventListener("snapshotsupdated", (event) => {
   if (!recalculatingWorkday && event.detail?.items?.some((item) => item.workday_trips &&
       item.country === state.item?.country && item.itemId === state.item.itemId)) {
@@ -3845,8 +3894,10 @@ window.addEventListener("snapshotsupdated", (event) => {
     }),
     drawChart(),
     loadCurrentStock(),
+    loadItemPrices(),
     refreshTravelStatus(),
   ]);
+  setInterval(loadItemPrices, 60_000);
   startLiveChartTicker();
   startStockUpdateWatcher(async () => {
     await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);

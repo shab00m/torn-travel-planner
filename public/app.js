@@ -54,19 +54,22 @@ function highlight(name, query) {
 	);
 }
 
-function marketPriceTitle(country, item) {
-	const parts = [];
-	const fetchedAt = state.marketPricesFetchedAt?.[item.id];
-	if (fetchedAt != null) {
-		parts.push(`Market price from ${fmtTime(fetchedAt)}`);
-		const ageSec = Math.floor(Date.now() / 1000) - fetchedAt;
-		if (ageSec > state.marketCacheTtlSec) {
-			parts.push("(refreshing…)");
-		}
-	} else if (getSellPrice(country, item.id) == null) {
-		parts.push("Market price not cached yet");
+function sellPriceTitle(country, item) {
+	const price = getItemSellPrice(country, item.id);
+	if (state.sellPriceSource === "manual") {
+		return price == null ? "Enter a manual sell price on the item page" : "Manual sell price";
 	}
-	return parts.join(" · ");
+	const trader = state.sellPriceSource === "tornw3b";
+	const source = trader ? "TornW3B trader price" : "Item Market price after 5% tax";
+	const traderReady = state.traderPricesMinRating === state.traderMinRating;
+	const fetchedAt = trader
+		? (traderReady ? state.traderPricesFetchedAt?.[item.id] : null)
+		: state.marketPricesFetchedAt?.[item.id];
+	if (fetchedAt == null) return `${source} awaiting refresh`;
+	if (price == null) return trader ? `No TornW3B offer at rating ${state.traderMinRating} or higher` : "Item Market price unavailable";
+	const ttl = trader ? state.traderCacheTtlSec : state.marketCacheTtlSec;
+	const stale = Math.floor(Date.now() / 1000) - fetchedAt > ttl;
+	return `${source} from ${fmtTime(fetchedAt)}${stale ? " · awaiting refresh" : ""}`;
 }
 
 const FAVORITES_TABLE_COLGROUP = `<colgroup>
@@ -593,14 +596,10 @@ function profitHrCell(country, item) {
 	const profitPerHour = getItemProfitPerHour(country, item);
 	if (profitPerHour != null) {
 		const cls = profitValueClass(profitPerHour);
-		const title = marketPriceTitle(country, item);
+		const title = sellPriceTitle(country, item);
 		return `<td class="profit-hr ${cls}"${title ? ` title="${escapeHtml(title)}"` : ""}>${fmtListMoneyHtml(Math.round(profitPerHour))}/hr</td>`;
 	}
-	const title =
-		getSellPrice(country, item.id) == null &&
-		state.marketPricesStatus === "empty"
-			? "Market prices not cached yet — wait for the next cron refresh or log in on an item page"
-			: marketPriceTitle(country, item);
+	const title = sellPriceTitle(country, item);
 	return `<td class="profit-hr profit-unavailable"${title ? ` title="${escapeHtml(title)}"` : ""}>—</td>`;
 }
 
@@ -739,22 +738,31 @@ function refreshWorkdaySettings() {
 	void loadWorkdayTrips();
 }
 
-async function loadMarketPrices() {
+let sellPricesRequestId = 0;
+
+async function loadSellPrices() {
+	const requestId = ++sellPricesRequestId;
+	const { sellPriceSource, traderMinRating } = state;
+	if (sellPriceSource === "manual") return;
+	const traders = sellPriceSource === "tornw3b";
 	try {
-		const data = await fetchJson("/api/markets");
-		state.marketPrices = data.prices ?? {};
-		state.marketPricesFetchedAt = data.fetchedAt ?? {};
-		state.marketCacheTtlSec = Number(data.cacheTtlSec) || 300;
-		state.marketPricesStatus = Object.keys(state.marketPrices).length
-			? "ready"
-			: "empty";
-	} catch (err) {
-		state.marketPrices = null;
-		state.marketPricesFetchedAt = null;
-		state.marketPricesStatus = "error";
-		state.marketPricesError = err.message;
+		const url = traders ? `/api/trader-prices?minRating=${traderMinRating}` : "/api/markets";
+		const data = await fetchJson(url);
+		if (requestId !== sellPricesRequestId) return;
+		if (traders) {
+			state.traderPrices = data.prices ?? {};
+			state.traderPricesFetchedAt = data.fetchedAt ?? {};
+			state.traderCacheTtlSec = Number(data.cacheTtlSec) || 300;
+			state.traderPricesMinRating = traderMinRating;
+		} else {
+			state.marketPrices = data.prices ?? {};
+			state.marketPricesFetchedAt = data.fetchedAt ?? {};
+			state.marketCacheTtlSec = Number(data.cacheTtlSec) || 300;
+		}
+		render();
+	} catch {
+		// Keep cached prices while the price service is temporarily unavailable.
 	}
-	if (state.stocks) render();
 }
 
 async function loadItemTypes() {
@@ -1138,6 +1146,10 @@ window.addEventListener("travelsettingschange", () => {
 });
 
 window.addEventListener("workdayhourschange", refreshWorkdaySettings);
+window.addEventListener("sellpriceschange", () => {
+	render();
+	void loadSellPrices();
+});
 workdayColumnMedia.addEventListener("change", () => void loadWorkdayTrips());
 window.addEventListener("snapshotsupdated", (event) => {
 	if (event.detail?.items?.some((item) => item.workday_trips)) {
@@ -1269,7 +1281,7 @@ window.addEventListener("alarmschange", () => {
 	el.maxBudget.value = state.maxBudget ?? "";
 	el.inStockOnly.checked = state.inStockOnly;
 	el.showHidden.checked = state.showHidden;
-	await Promise.all([loadMarketPrices(), loadItemTypes(), loadStocks()]);
+	await Promise.all([loadSellPrices(), loadItemTypes(), loadStocks()]);
 	startStockUpdateWatcher(loadStocks);
-	setInterval(loadMarketPrices, 60_000);
+	setInterval(loadSellPrices, 60_000);
 })();

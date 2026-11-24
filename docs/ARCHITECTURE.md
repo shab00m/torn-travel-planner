@@ -122,12 +122,14 @@ Migration 018 retains previously observed pairs before old snapshots expire.
 | Path | Who calls Torn | Key used |
 | --- | --- | --- |
 | `GET /api/markets` | Nobody | Reads `market_prices` cache only |
-| `POST /api/market` | Web, on cache miss | Visitor’s API key only |
+| `POST /api/market` | Web, on cache miss or explicit refresh | Visitor’s API key only |
 | `npm run cron-market` | Market cron | Server `TORN_API_KEY` |
 
 `items` contains the periodically refreshed Torn catalogue. Market refresh **must not** iterate that table — only distinct `snapshots.item_id` values. Unused catalogue IDs (e.g. Torn error 6 “Incorrect ID”) are not travel goods.
 
-Failed fetches still write `market_price = null` and `fetched_at = now`, so the row is treated as fresh for `MARKET_CACHE_TTL_SEC` (default 300s).
+Failed scheduled or cache-miss fetches write `market_price = null` and `fetched_at = now`, so the row is treated as fresh for `MARKET_CACHE_TTL_SEC` (default 300s). An unsuccessful explicit refresh preserves the cached price.
+
+On each five-minute run the market cron refreshes TornW3B offers for active travel goods, starting with the oldest cached quotes. The cache stores each eligible offer's price, net rating, and activity expiry so a single upstream fetch can serve every minimum-rating setting. Item-page refreshes update this shared cache, and failed TornW3B requests leave prior offers available until their activity windows expire.
 
 ## Postgres
 

@@ -639,9 +639,9 @@ Requires **Minimal** access (or Custom with `user: travel`).
 
 Fetch market price for one item (uses server cache when possible).
 
-**Body:** `{ "itemId": 206, "apiKey": "..." }` — `apiKey` optional when a cached price exists. Live Torn fetch uses the visitor's key only; the server key is reserved for cron.
+**Body:** `{ "itemId": 206, "apiKey": "...", "refresh": true }`. The optional `refresh` flag requests a live update with the visitor's key when the cached result is at least 30 seconds old. Requests without a key can read cached prices. The server key is reserved for cron.
 
-**Response:** `{ itemId, marketPrice }`
+**Response:** `{ itemId, marketPrice }`. This is the gross Item Market average. The planner deducts the 5% sales tax when using it as a sell price.
 
 ---
 
@@ -652,3 +652,15 @@ Cached market prices for all known items.
 **Response:** `{ prices, fetchedAt, cacheTtlSec }`
 
 `prices` is `{ [itemId]: number | null }`.
+
+### `GET /api/trader-prices?minRating=30`
+
+Reads cached TornW3B quotes for all items. `minRating` is the minimum net rating (upvotes minus downvotes). It defaults to 30.
+
+**Response:** `{ prices, fetchedAt, cacheTtlSec }`, with `null` as the price when no cached offer meets the rating and activity criteria.
+
+### `GET /api/items/:country/:itemId/trader-price?minRating=30`
+
+Reads a cached quote for one item. `POST` on the same path refreshes the quote for an observed travel item, with a 30-second cache cooldown. These endpoints require no API key.
+
+**Response:** `{ itemId, traderPrice, fetchedAt }`. The timestamps are Unix seconds.

@@ -550,7 +550,8 @@ h1 {
 	flex-wrap: wrap;
 }
 
-.guest-travel.hidden {
+.guest-travel.hidden,
+.settings-field.hidden {
 	display: none;
 }
 
@@ -1428,12 +1429,11 @@ body.page-item {
 	outline: 1px solid var(--accent);
 }
 
-.profit-sell-controls input:disabled {
-	opacity: 0.55;
-	cursor: not-allowed;
+.profit-sell-controls input:read-only {
+	cursor: default;
 }
 
-:is(.profit-sell-reset, .profit-workday-recalculate) {
+:is(.profit-sell-refresh, .profit-workday-recalculate) {
 	background: var(--surface-2);
 	border: 1px solid var(--border);
 	color: var(--text-dim);
@@ -1446,12 +1446,12 @@ body.page-item {
 	flex: 0 0 auto;
 }
 
-:is(.profit-sell-reset, .profit-workday-recalculate):hover:not(:disabled) {
+:is(.profit-sell-refresh, .profit-workday-recalculate):hover:not(:disabled) {
 	color: var(--text);
 	border-color: var(--accent);
 }
 
-:is(.profit-sell-reset, .profit-workday-recalculate):disabled {
+:is(.profit-sell-refresh, .profit-workday-recalculate):disabled {
 	opacity: 0.55;
 	cursor: not-allowed;
 }
