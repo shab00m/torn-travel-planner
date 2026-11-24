@@ -91,8 +91,55 @@ test("API-only commits update both stock endpoints and push SSE without a succes
     assert.equal(globalStatus.timestamp, feed.timestamp);
     assert.notEqual(after.snapshotRevision, before.snapshotRevision);
 
-    const deprecationUrl = `${base}/api/items/mex/3460/deprecation`;
+    await admin.query(
+      `INSERT INTO ${schema}.restocks
+         (country, item_id, depleted_ts, restocked_ts, duration, rate_start_qty, rate_end_ts, rate_end_qty)
+       VALUES ('mex', 3460, $1, $2, 3000, 20, $3, 0)`,
+      [ts - 5400, ts - 2400, ts - 1200]
+    );
+    await admin.query(
+      `INSERT INTO ${schema}.empty_for_bounds (country, item_id, avg_empty_for) VALUES ('mex', 3460, 3000)`
+    );
+    const estimate = (workdayHours, settings = {}) => fetch(`${base}/api/workday-trips`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ travelType: "Standard", workdayHours, items: [
+        { country: "mex", itemId: 3460, itemsPerTrip: 5, settings },
+        { country: "mex", itemId: 999999, itemsPerTrip: 5, settings },
+      ] }),
+    });
     const headers = { "Content-Type": "application/json", "X-Api-Key": "admin-test-key" };
+    const regularHeaders = { "Content-Type": "application/json", "X-Api-Key": "regular-test-key" };
+    // The outbound flight is 25 minutes, so buying and starting the return fits inside half an hour.
+    const firstEstimate = await estimate(0.5);
+    assert.equal(firstEstimate.status, 200);
+    const saved = (await firstEstimate.json()).estimates["mex:3460"];
+    assert.equal(saved.trips, 1);
+    assert.equal((await (await estimate(0.25)).json()).estimates["mex:3460"].trips, 0);
+    assert.deepEqual(await (await estimate(0.5, { rangeHours: 0.01 })).json(), { estimates: {} });
+    assert.equal((await estimate(25)).status, 400);
+
+    // Much faster depletion would make the first trip miss the stock window. A saved
+    // count survives this history change until an authenticated admin refreshes it.
+    await admin.query(`UPDATE ${schema}.restocks SET rate_start_qty = 10000 WHERE item_id = 3460`);
+    assert.deepEqual((await (await estimate(0.5)).json()).estimates["mex:3460"], saved);
+    const recalculate = (headers) => fetch(`${base}/api/items/mex/3460/workday-trips/recalculate`, {
+      method: "POST", headers,
+      body: JSON.stringify({ travelType: "Standard", workdayHours: 0.5, itemsPerTrip: 5 }),
+    });
+    assert.equal((await recalculate({ "Content-Type": "application/json" })).status, 401);
+    assert.equal((await recalculate(regularHeaders)).status, 403);
+    const recalculated = await recalculate(headers);
+    assert.equal(recalculated.status, 200);
+    const refreshed = (await recalculated.json()).estimate;
+    assert.equal(refreshed.trips, 0);
+    assert.deepEqual((await (await estimate(0.5)).json()).estimates["mex:3460"], refreshed);
+    const persisted = await admin.query(`SELECT workday_trips FROM ${schema}.travel_items WHERE country = 'mex' AND item_id = 3460`);
+    assert.equal(Object.keys(persisted.rows[0].workday_trips).length, 2);
+    assert.ok(Object.values(persisted.rows[0].workday_trips).some((record) => record.trips === 0));
+    while (!frames.includes('"workday_trips":true')) frames += decoder.decode((await reader.read()).value);
+    frames = "";
+
+    const deprecationUrl = `${base}/api/items/mex/3460/deprecation`;
     for (const method of ["GET", "PUT"]) {
       const body = method === "PUT" ? JSON.stringify({ deprecated: true }) : undefined;
       assert.equal((await fetch(deprecationUrl, { method, body, headers: { "Content-Type": "application/json" } })).status, 401);

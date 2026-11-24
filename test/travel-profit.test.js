@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { simulateStockPredictions } from "../public/stock-predictions.js";
-import { schedulePurchaseTrips } from "../public/travel-profit.js";
+import { planWorkdayTrips, schedulePurchaseTrips } from "../public/travel-profit.js";
 
 test("daily travel waits for restocks, skips windows during a trip, and can return after the workday", () => {
   const startTs = 1000;
@@ -31,4 +31,17 @@ test("stock on arrival limits repeat trips within the same window", () => {
   // 15 units from the forecast, but 24 units have already been bought.
   assert.deepEqual(schedulePurchaseTrips(plan), { trips: 2, waitingSec: 0 });
   assert.deepEqual(schedulePurchaseTrips({ ...plan, itemsPerTrip: 36 }), { trips: 0, waitingSec: 0 });
+});
+
+test("the workday forecast includes a restock exactly at the return departure cutoff", () => {
+  const startTs = 1000;
+  const plan = {
+    stock: { snapshot_ts: startTs, quantity: 0 },
+    averages: { restockSec: 3600, rate: 1, restockQty: 20 },
+    startTs, workdayHours: 1, flightSec: 1800, itemsPerTrip: 5,
+    simulatePredictions: (startTs, endTs, startQty, averages, nowTs) => simulateStockPredictions({
+      startTs, endTs, startQty, averages, nowTs, rateForCycle: () => 1,
+    }),
+  };
+  assert.deepEqual(planWorkdayTrips(plan), { trips: 1, waitingSec: 1800 });
 });

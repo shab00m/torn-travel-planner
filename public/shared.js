@@ -52,8 +52,8 @@ const state = {
   emptyForBounds: {}, // { "uni:206": { minEmptyFor, maxEmptyFor, avgEmptyFor } } seconds
 };
 
-const SORT_COLUMNS = ["item", "stock", "cost", "items", "totalCost", "profit", "safeWindow", "leaveBy"];
-const STOCK_SORT_COLUMNS = ["item", "stock", "cost", "items", "totalCost", "profit", "country", "type"];
+const SORT_COLUMNS = ["item", "stock", "cost", "items", "totalCost", "profit", "profitDay", "safeWindow", "leaveBy"];
+const STOCK_SORT_COLUMNS = ["item", "stock", "cost", "items", "totalCost", "profit", "profitDay", "country", "type"];
 const STOCK_GROUP_BY_OPTIONS = ["country", "type", "none"];
 
 function parseOptionalNumber(value) {
@@ -1029,6 +1029,14 @@ function getItemSellPrice(country, itemId, marketPrice) {
   const stored = getSellPrice(country, itemId);
   if (stored != null) return stored;
   return marketPrice ?? null;
+}
+
+function workdayTripItem(country, itemId, itemsPerTrip, source) {
+  const { rangeHours, avgRateSamples, rateTiming, historicalRatePrediction, historicalRateMaxAgeDays } = source;
+  return {
+    country, itemId, itemsPerTrip,
+    settings: { rangeHours, avgRateSamples, rateTiming, historicalRatePrediction, historicalRateMaxAgeDays },
+  };
 }
 
 function getItemProfitPerHour(country, item) {

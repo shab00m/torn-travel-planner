@@ -1,3 +1,13 @@
+export function planWorkdayTrips({ stock, averages, startTs, workdayHours, flightSec, itemsPerTrip, simulatePredictions }) {
+  const endTs = startTs + workdayHours * 3600;
+  if (itemsPerTrip <= 0 || startTs + flightSec > endTs) return { trips: 0, waitingSec: 0 };
+  if (!stock || !averages || !(averages.rate > 0) || !(averages.restockQty > 0)) return null;
+
+  // Include the cutoff itself in the forecast for a return flight leaving right then.
+  const { segments } = simulatePredictions(stock.snapshot_ts, endTs + 1, stock.quantity, averages, startTs);
+  return schedulePurchaseTrips({ segments, startTs, endTs, flightSec, itemsPerTrip });
+}
+
 /** Schedule full-load trips whose return flights can depart by the workday cutoff. */
 export function schedulePurchaseTrips({ segments, startTs, endTs, flightSec, itemsPerTrip }) {
   let readyTs = startTs;

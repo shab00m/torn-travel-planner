@@ -22,6 +22,10 @@ const TRAVEL_SPEED = {
   Business: 0.3, // 70% faster (BCT)
 };
 
+export function isTravelType(travelType) {
+  return typeof travelType === "string" && Object.hasOwn(TRAVEL_SPEED, travelType);
+}
+
 /** One-way flight duration in seconds for a country and travel method. */
 export function getFlightSeconds(country, travelType = "Standard") {
   const base = STANDARD_SECONDS[country];

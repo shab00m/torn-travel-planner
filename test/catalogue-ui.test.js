@@ -40,7 +40,7 @@ test("stock refresh discovers new types while the initial type request is still 
   const state = { itemTypes: null };
   const context = vm.createContext({ state, lastStockTimestamp: null,
     el: { status: {} }, noteStockTimestamp() {}, clearPageError() {},
-    populateItemTypeFilter() {}, render() {}, loadSafeWindows: async () => {},
+    populateItemTypeFilter() {}, render() {}, loadWorkdayTrips() {}, loadSafeWindows: async () => {},
     fetchJson: async () => ({ timestamp: null, stocks: { sou: { update: null, stocks: [
       { id: 198, name: "Ketamine", item_type: "Drug", quantity: null, cost: null },
     ] } } }),

@@ -773,6 +773,33 @@ export async function getRestocks(country, itemId, limit) {
   }));
 }
 
+/** Load rate and stockout history for several workday estimates in one read. */
+export async function getWorkdayRestocks(items) {
+  const rows = await many(getPool(),
+    `SELECT r.country, r.item_id, r.depleted_ts, r.restocked_ts, r.duration, r.ignored,
+            r.adjusted_depleted_ts, r.adjusted_restocked_ts, r.adjusted_duration,
+            r.rate_start_qty, r.rate_end_ts, r.rate_end_qty
+     FROM unnest($1::text[], $2::integer[], $3::bigint[]) AS requested(country, item_id, since_ts)
+     CROSS JOIN LATERAL (
+       SELECT depleted_ts FROM restocks
+       WHERE country = requested.country AND item_id = requested.item_id
+       ORDER BY depleted_ts DESC LIMIT 1
+     ) latest
+     JOIN restocks r ON r.country = requested.country AND r.item_id = requested.item_id
+     WHERE r.restocked_ts >= requested.since_ts OR r.restocked_ts IS NULL
+        OR r.depleted_ts = latest.depleted_ts
+     ORDER BY r.country, r.item_id, r.depleted_ts`,
+    [items.map((item) => item.country), items.map((item) => item.itemId), items.map((item) => item.sinceTs)]
+  );
+  const byItem = new Map();
+  for (const row of rows) {
+    const key = `${row.country}:${row.item_id}`;
+    if (!byItem.has(key)) byItem.set(key, []);
+    byItem.get(key).push(row);
+  }
+  return byItem;
+}
+
 /** Mark a completed restock cycle as ignored (excluded from averages). */
 export async function setRestockIgnored(country, itemId, depletedTs, ignored) {
   return withTransaction(async (client) => {

@@ -77,6 +77,7 @@ const FAVORITES_TABLE_COLGROUP = `<colgroup>
     <col class="col-items" />
     <col class="col-total-cost" />
     <col class="col-profit" />
+    <col class="col-profit-day" />
     <col class="col-safe-window" />
     <col class="col-leave-by" />
   </colgroup>`;
@@ -89,6 +90,7 @@ const FAVORITES_SORT_COLUMNS = [
 	{ key: "items", label: "Items" },
 	{ key: "totalCost", label: "Total cost" },
 	{ key: "profit", label: "Profit/hr" },
+	{ key: "profitDay", label: "Profit/day" },
 	{ key: "safeWindow", label: 'Next<span class="col-label-full"> window</span>' },
 	{ key: "leaveBy", label: "Leave by" },
 ];
@@ -103,6 +105,7 @@ const STOCK_COL_CLASS = {
 	items: "col-items",
 	totalCost: "col-total-cost",
 	profit: "col-profit",
+	profitDay: "col-profit-day",
 };
 
 /** Stock list columns; omit the dimension currently used for grouping. */
@@ -123,6 +126,7 @@ function stockTableColumns() {
 		{ key: "items", label: "Items", col: "items" },
 		{ key: "totalCost", label: "Total cost", col: "totalCost" },
 		{ key: "profit", label: "Profit/hr", col: "profit" },
+		{ key: "profitDay", label: "Profit/day", col: "profitDay" },
 	);
 	return cols;
 }
@@ -219,6 +223,12 @@ function compareItemsBySort(aCountry, aItem, bCountry, bItem, sortState) {
 			return compareSortValues(
 				getItemProfitPerHour(aCountry, aItem),
 				getItemProfitPerHour(bCountry, bItem),
+				dir,
+			);
+		case "profitDay":
+			return compareSortValues(
+				getItemProfitPerDay(aCountry, aItem),
+				getItemProfitPerDay(bCountry, bItem),
 				dir,
 			);
 		case "country":
@@ -432,6 +442,7 @@ function favoriteRowHtml(country, item) {
           <td class="col-cost">${fmtListMoneyHtml(item.cost)}</td>
           ${purchaseQtyCellsHtml(country, item)}
           ${profitHrCell(country, item)}
+          ${profitDayCell(country, item)}
           ${safeWindowCell(country, item.id)}
           ${leaveByCell(country, item.id, item.name)}
         </tr>`;
@@ -546,6 +557,7 @@ function stockRowHtml(country, item) {
           <td class="col-cost">${fmtListMoneyHtml(item.cost)}</td>
           ${purchaseQtyCellsHtml(country, item)}
           ${profitHrCell(country, item)}
+          ${profitDayCell(country, item)}
         </tr>`;
 }
 
@@ -590,6 +602,23 @@ function profitHrCell(country, item) {
 			? "Market prices not cached yet — wait for the next cron refresh or log in on an item page"
 			: marketPriceTitle(country, item);
 	return `<td class="profit-hr profit-unavailable"${title ? ` title="${escapeHtml(title)}"` : ""}>—</td>`;
+}
+
+function getItemProfitPerDay(country, item, estimate = workdayTrips[restockAmountKey(country, item.id)]) {
+	if (!estimate || item.cost == null) return null;
+	const itemsPerTrip = getMaxPurchaseQty(country, item.id, item.cost);
+	if (estimate.itemsPerTrip !== itemsPerTrip) return null;
+	const sellPrice = getItemSellPrice(country, item.id, state.marketPrices?.[item.id]);
+	return sellPrice == null ? null : estimate.trips * (sellPrice - item.cost) * itemsPerTrip;
+}
+
+function profitDayCell(country, item) {
+	const estimate = workdayTrips[restockAmountKey(country, item.id)];
+	const profit = getItemProfitPerDay(country, item, estimate);
+	if (profit == null) return '<td class="col-profit-day profit-day profit-unavailable">—</td>';
+	const { trips, calculatedAt } = estimate;
+	const title = `${trips} trip${trips === 1 ? "" : "s"} in ${fmtNum(state.workdayHours)}h · Calculated ${fmtTime(calculatedAt)}`;
+	return `<td class="col-profit-day profit-day ${profitValueClass(profit)}" title="${escapeHtml(title)}">${fmtListMoneyHtml(profit)}</td>`;
 }
 
 function countryFilterLabel(code) {
@@ -658,6 +687,62 @@ function initFilterMenus() {
 
 let stocksRetryTimer = null;
 let lastStockTimestamp = null;
+const workdayColumnMedia = window.matchMedia("(width >= 951px)");
+const WORKDAY_BATCH_SIZE = 200;
+let workdayTrips = {};
+let workdayRequestId = 0;
+let workdayRequestKey = null;
+
+async function loadWorkdayTrips() {
+	const sortUsesProfitDay = state.favoritesSort.column === "profitDay" || state.stocksSort.column === "profitDay";
+	if (!state.stocks || (!workdayColumnMedia.matches && !sortUsesProfitDay)) return;
+	const { workdayHours, travelType } = state;
+	const defaults = loadPrefs();
+	const savedSettings = loadAllItemSettings();
+	const items = [];
+	for (const [country, destination] of Object.entries(state.stocks)) {
+		for (const item of destination.stocks) {
+			if (item.quantity == null || item.cost == null) continue;
+			const key = restockAmountKey(country, item.id);
+			const settings = normalizeItemSettings(savedSettings[key], defaults);
+			items.push(workdayTripItem(country, item.id, getMaxPurchaseQty(country, item.id, item.cost), settings));
+		}
+	}
+	const key = JSON.stringify({ items, workdayHours, travelType });
+	if (key === workdayRequestKey) return;
+	workdayRequestKey = key;
+	const requestId = ++workdayRequestId;
+
+	const trips = {};
+	try {
+		for (let i = 0; i < items.length; i += WORKDAY_BATCH_SIZE) {
+			const batch = items.slice(i, i + WORKDAY_BATCH_SIZE);
+			const data = await fetchJsonWithBody("/api/workday-trips", {
+				method: "POST",
+				body: { items: batch, workdayHours, travelType },
+			});
+			if (requestId !== workdayRequestId) return;
+			for (const { country, itemId, itemsPerTrip } of batch) {
+				const key = restockAmountKey(country, itemId);
+				const estimate = data.estimates?.[key];
+				if (estimate) trips[key] = { ...estimate, itemsPerTrip };
+			}
+		}
+	} catch {
+		if (requestId === workdayRequestId) workdayRequestKey = null;
+		return;
+	}
+	workdayTrips = trips;
+	render();
+}
+
+function refreshWorkdaySettings() {
+	workdayTrips = {};
+	workdayRequestId++;
+	workdayRequestKey = null;
+	render();
+	void loadWorkdayTrips();
+}
 
 async function loadMarketPrices() {
 	try {
@@ -711,6 +796,7 @@ async function loadStocks() {
 		el.status.textContent = `Last update: ${data.timestamp == null ? "Awaiting stock reports" : fmtTime(data.timestamp)} — live DB updates (YATA + API)`;
 		populateItemTypeFilter();
 		render();
+		void loadWorkdayTrips();
 		await loadSafeWindows();
 	} catch (err) {
 		el.status.textContent = "Unable to load stocks";
@@ -1009,7 +1095,7 @@ function syncMaxBudgetFromInput() {
 	const budget = parseOptionalNumber(el.maxBudget.value);
 	state.maxBudget = budget != null && budget >= 0 ? budget : null;
 	savePrefs({ maxBudget: state.maxBudget });
-	render();
+	refreshWorkdaySettings();
 }
 el.profitMin.addEventListener("change", syncProfitRangeFromInputs);
 el.profitMax.addEventListener("change", syncProfitRangeFromInputs);
@@ -1047,8 +1133,23 @@ window.addEventListener("timeformatchange", () => {
 });
 
 window.addEventListener("travelsettingschange", () => {
-	render();
+	refreshWorkdaySettings();
 	loadSafeWindows();
+});
+
+window.addEventListener("workdayhourschange", refreshWorkdaySettings);
+workdayColumnMedia.addEventListener("change", () => void loadWorkdayTrips());
+window.addEventListener("snapshotsupdated", (event) => {
+	if (event.detail?.items?.some((item) => item.workday_trips)) {
+		workdayRequestKey = null;
+		void loadWorkdayTrips();
+	}
+});
+document.addEventListener("visibilitychange", () => {
+	if (!document.hidden) {
+		workdayRequestKey = null;
+		void loadWorkdayTrips();
+	}
 });
 
 el.homeMain.addEventListener("click", async (e) => {
@@ -1139,12 +1240,12 @@ window.addEventListener("favoriteschange", () => {
 });
 
 window.addEventListener("restockamountchange", () => {
-	render();
+	refreshWorkdaySettings();
 	loadSafeWindows();
 });
 
 window.addEventListener("emptyforboundschange", () => {
-	render();
+	refreshWorkdaySettings();
 	loadSafeWindows();
 });
 

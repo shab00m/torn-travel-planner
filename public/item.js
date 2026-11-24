@@ -55,6 +55,9 @@ const el = {
   profitPerItemHour: document.getElementById("profit-per-item-hour"),
   profitPerDay: document.getElementById("profit-per-day"),
   profitNote: document.getElementById("profit-note"),
+  workdayAdmin: document.getElementById("profit-workday-admin"),
+  workdayRecalculate: document.getElementById("profit-workday-recalculate"),
+  workdayStatus: document.getElementById("profit-workday-status"),
   inspectControls: document.getElementById("inspect-controls"),
   inspectToggle: document.getElementById("inspect-toggle"),
   chartInspectLayer: document.getElementById("chart-inspect-layer"),
@@ -87,6 +90,8 @@ const profitSell = {
   marketPrice: null,
   item: null,
 };
+let itemWorkday = null;
+let recalculatingWorkday = false;
 
 function setProfitSellEnabled(enabled) {
   if (el.profitSell) el.profitSell.disabled = !enabled;
@@ -107,26 +112,73 @@ function syncSellPriceInput(marketPrice) {
   el.profitSell.value = String(stored ?? marketPrice);
 }
 
-function estimateWorkdayTrips(item, { itemsPerTrip, roundTripSec }, nowTs) {
-  const flightSec = roundTripSec / 2;
-  const endTs = nowTs + state.workdayHours * 3600;
-  if (itemsPerTrip <= 0 || nowTs + flightSec > endTs) return { trips: 0, waitingSec: 0 };
+function syncWorkdayAdminControls() {
+  const allowed = isAdminUser();
+  el.workdayAdmin?.classList.toggle("hidden", !allowed);
+  if (el.workdayRecalculate) {
+    el.workdayRecalculate.disabled = !allowed || !itemWorkday || itemWorkday.pending || recalculatingWorkday;
+  }
+  if (!allowed && el.workdayStatus) el.workdayStatus.textContent = "";
+}
 
-  const restockSec = currentEmptyForBounds().avgEmptyFor;
-  if (restockSec == null) return null;
-  const averages = getAverages(restockSec);
-  if (!averages || !(averages.rate > 0) || !(averages.restockQty > 0)) return null;
+function syncItemWorkdayEstimate(force = false) {
+  const item = profitSell.item;
+  if (item?.cost == null) return;
+  const { country, itemId } = state.item;
+  const { workdayHours, travelType } = state;
+  const itemsPerTrip = getMaxPurchaseQty(country, itemId, item.cost);
+  const body = { items: [workdayTripItem(country, itemId, itemsPerTrip, state)], workdayHours, travelType };
+  const key = JSON.stringify(body);
+  if (!force && itemWorkday?.key === key) return;
 
-  const latest = state.chartPoints.at(-1);
-  const stock = latest?.snapshot_ts > item.snapshot_ts ? latest : item;
-  // Include the cutoff itself in the forecast for a return flight leaving right then.
-  const { segments } = simulatePredictions(stock.snapshot_ts, endTs + 1, stock.quantity, averages, nowTs);
-  return window.TravelProfit.schedulePurchaseTrips({
-    segments, startTs: nowTs, endTs, flightSec, itemsPerTrip,
+  const request = {
+    body, key, pending: true, failed: false,
+    estimate: itemWorkday?.key === key ? itemWorkday.estimate : null,
+  };
+  itemWorkday = request;
+  syncWorkdayAdminControls();
+  fetchJsonWithBody("/api/workday-trips", { method: "POST", body }).then((data) => {
+    request.estimate = data.estimates?.[restockAmountKey(country, itemId)] ?? null;
+  }).catch(() => {
+    request.failed = true;
+  }).finally(() => {
+    request.pending = false;
+    if (itemWorkday !== request) return;
+    syncWorkdayAdminControls();
+    updateProfitCalcs();
   });
 }
 
+async function recalculateItemWorkday() {
+  const request = itemWorkday;
+  if (!isAdminUser() || !request || request.pending || recalculatingWorkday) return;
+
+  const { items: [item], workdayHours, travelType } = request.body;
+  recalculatingWorkday = true;
+  syncWorkdayAdminControls();
+  el.workdayStatus.textContent = "Recalculating…";
+  try {
+    const { estimate } = await fetchJsonWithBody(`/api/items/${item.country}/${item.itemId}/workday-trips/recalculate`, {
+      method: "POST", headers: adminApiHeaders(), body: { ...item, workdayHours, travelType },
+    });
+    if (itemWorkday === request) {
+      request.estimate = estimate;
+      request.failed = false;
+      updateProfitCalcs();
+    }
+    if (isAdminUser()) {
+      el.workdayStatus.textContent = `Saved ${estimate.trips} trip${estimate.trips === 1 ? "" : "s"} in ${fmtNum(workdayHours)}h.`;
+    }
+  } catch (err) {
+    if (isAdminUser()) el.workdayStatus.textContent = err.message;
+  } finally {
+    recalculatingWorkday = false;
+    syncWorkdayAdminControls();
+  }
+}
+
 function updateProfitCalcs() {
+  syncItemWorkdayEstimate();
   const item = profitSell.item;
   if (!item || profitSell.marketPrice == null) return;
 
@@ -155,7 +207,7 @@ function updateProfitCalcs() {
     profitValueClass(metrics.profitPerItemHour)
   );
 
-  const day = estimateWorkdayTrips(item, metrics, Math.floor(Date.now() / 1000));
+  const day = itemWorkday?.estimate;
   const profitPerDay = day == null ? null : day.trips * metrics.totalProfit;
   setProfitStat(
     el.profitPerDay,
@@ -171,9 +223,15 @@ function updateProfitCalcs() {
       state.maxBudget != null && metrics.itemsPerTrip < state.travelCapacity && (restock == null || metrics.itemsPerTrip < restock)
         ? ` · budget ${fmtMoney(state.maxBudget)}`
         : "";
-    const dayNote = day == null
-      ? "Daily estimate needs stockout and depletion history"
-      : `${day.trips} trip${day.trips === 1 ? "" : "s"} in ${fmtNum(state.workdayHours)}h${day.waitingSec > 0 ? ` · ${fmtDuration(day.waitingSec)} waiting before departures` : ""}`;
+    let dayNote = "Daily estimate needs stockout and depletion history";
+    if (day) {
+      const wait = day.waitingSec > 0 ? ` · ${fmtDuration(day.waitingSec)} waiting before departures` : "";
+      dayNote = `${day.trips} trip${day.trips === 1 ? "" : "s"} in ${fmtNum(state.workdayHours)}h${wait} · Calculated ${fmtTime(day.calculatedAt)}`;
+    } else if (itemWorkday?.pending) {
+      dayNote = "Loading trip estimate…";
+    } else if (itemWorkday?.failed) {
+      dayNote = "Trip estimate unavailable";
+    }
     el.profitNote.textContent =
       `${fmtNum(metrics.itemsPerTrip)} item${metrics.itemsPerTrip === 1 ? "" : "s"} per trip · ${state.travelCapacity} slots${restockNote}${budgetNote} · ${fmtDuration(metrics.roundTripSec)} round trip (${state.travelType}) · ${dayNote}`;
     el.profitNote.classList.remove("hidden");
@@ -203,6 +261,7 @@ function initProfitSellControls() {
 }
 
 initProfitSellControls();
+el.workdayRecalculate?.addEventListener("click", () => void recalculateItemWorkday());
 
 function fmtDuration(seconds) {
   const s = Math.round(seconds);
@@ -1010,9 +1069,11 @@ function rateForAverages() {
   return rateFromHistory();
 }
 
-function getAverages(restockSec = stockoutSecFromHistory()) {
+function getAverages() {
+  const restockSec = stockoutSecFromHistory();
+  if (restockSec == null) return null;
   const rate = rateForAverages();
-  if (restockSec == null || rate == null) return null;
+  if (rate == null) return null;
   const configuredQty = currentRestockAmount();
   const qtySample = getUsableRates().slice(0, state.avgRateSamples);
   const qtySource = qtySample.length ? qtySample : getUsableRates();
@@ -2031,10 +2092,11 @@ function renderProfitEstimate(item, marketPrice) {
   el.profitEstimate.classList.remove("hidden");
   resetValues();
   showNote("");
-  profitSell.item = null;
+  profitSell.item = item;
   profitSell.marketPrice = null;
   setProfitSellEnabled(false);
   if (el.profitSell) el.profitSell.value = "";
+  syncItemWorkdayEstimate();
 
   if (marketPrice === "no-key") {
     showNote("Log in for market prices (Torn API key with market access).");
@@ -2051,7 +2113,6 @@ function renderProfitEstimate(item, marketPrice) {
     return;
   }
 
-  profitSell.item = item;
   profitSell.marketPrice = marketPrice;
 
   setProfitStat(el.profitBuy, fmtMoney(item.cost));
@@ -2652,6 +2713,8 @@ async function loadCurrentStock() {
     const item = { ...data, id: state.item.itemId };
     const countryData = { update: data.snapshot_ts };
     if (!Number.isFinite(item.quantity)) {
+      profitSell.item = null;
+      itemWorkday = null;
       el.currentStock.classList.add("hidden");
       el.profitEstimate?.classList.add("hidden");
       setHeaderStockQty(null);
@@ -2669,6 +2732,8 @@ async function loadCurrentStock() {
     }
     renderProfitEstimate(item, marketPrice);
   } catch (err) {
+    profitSell.item = null;
+    itemWorkday = null;
     el.currentStock.classList.remove("hidden");
     el.currentQty.textContent = "—";
     el.currentQty.className = "current-qty";
@@ -3730,23 +3795,25 @@ window.addEventListener("timeformatchange", () => {
 
 window.addEventListener("travelsettingschange", () => {
   syncInspectAdminAccess();
-  if (!profitSell.item) return;
+  syncWorkdayAdminControls();
   updateProfitCalcs();
 });
 
-window.addEventListener("restockamountchange", () => {
-  if (!profitSell.item) return;
-  updateProfitCalcs();
-});
+window.addEventListener("restockamountchange", updateProfitCalcs);
 
 window.addEventListener("workdayhourschange", updateProfitCalcs);
+window.addEventListener("snapshotsupdated", (event) => {
+  if (!recalculatingWorkday && event.detail?.items?.some((item) => item.workday_trips &&
+      item.country === state.item?.country && item.itemId === state.item.itemId)) {
+    syncItemWorkdayEstimate(true);
+  }
+});
 
 (async () => {
-  const [adjustMod, boundsMod, predictionsMod, travelProfitMod] = await Promise.all([
+  const [adjustMod, boundsMod, predictionsMod] = await Promise.all([
     import("/adjust-restock-time.js"),
     import("/empty-for-bounds.js"),
     import("/stock-predictions.js"),
-    import("/travel-profit.js"),
   ]);
   window.AdjustRestockTime = {
     adjustRestockTime: adjustMod.adjustRestockTime,
@@ -3755,9 +3822,9 @@ window.addEventListener("workdayhourschange", updateProfitCalcs);
   };
   window.EmptyForBounds = boundsMod;
   window.StockPredictions = predictionsMod;
-  window.TravelProfit = travelProfitMod;
   await window.authReady;
   syncInspectAdminAccess();
+  syncWorkdayAdminControls();
   await loadCountries();
   const item = parseItemFromUrl();
   if (!item) {
@@ -3781,9 +3848,6 @@ window.addEventListener("workdayhourschange", updateProfitCalcs);
     refreshTravelStatus(),
   ]);
   startLiveChartTicker();
-  setInterval(() => {
-    if (!document.hidden) updateProfitCalcs();
-  }, 60_000);
   startStockUpdateWatcher(async () => {
     await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);
     // Re-sync after stock+restocks are both fresh (early restock may need qty).

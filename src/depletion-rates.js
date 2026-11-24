@@ -229,6 +229,12 @@ export async function getDepletionRates(country, itemId, limit) {
     ),
   ]);
 
+  const windows = depletionRatesFromRestocks(events, latest);
+  return limit == null ? windows : windows.slice(0, limit);
+}
+
+/** Build windows from persisted restocks ordered oldest first. */
+export function depletionRatesFromRestocks(events, latest) {
   const windows = [];
   for (let i = 0; i < events.length; i++) {
     const row = events[i];
@@ -268,8 +274,7 @@ export async function getDepletionRates(country, itemId, limit) {
     });
   }
 
-  const ordered = windows.reverse();
-  return limit == null ? ordered : ordered.slice(0, limit);
+  return windows.reverse();
 }
 
 /** True when any non-ignored closed cycle is still missing persisted rate endpoints. */

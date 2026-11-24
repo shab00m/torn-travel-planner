@@ -4,11 +4,16 @@ import {
   getDepletionRates,
   getHistory,
   getTravelCatalogueCost,
+  getWorkdayRestocks,
+  getAllRestockAmounts,
+  getAllEmptyForBounds,
   getRestockAmount as getStoredRestockAmount,
   getEmptyForBounds as getStoredEmptyForBounds,
 } from "./db.js";
 import { applyConfiguredEmptyForExtents } from "../public/empty-for-bounds.js";
 import { getFlightSeconds } from "./flight-times.js";
+import { depletionRatesFromRestocks } from "./depletion-rates.js";
+import { planWorkdayTrips } from "../public/travel-profit.js";
 import { getDepletionRateTod, rateFromTodHours, hoursFromRateWindows } from "./depletion-rate-tod.js";
 import {
   adjustRestockTime as adjustRestockTimeCore,
@@ -83,14 +88,17 @@ function createContext({
   emptyForBounds = { minEmptyFor: null, maxEmptyFor: null, avgEmptyFor: null },
 }) {
   const lastZeroLookup = buildLastZeroLookup(chartPoints);
+  const byRestockTime = new Map();
+  for (const restock of restocks) {
+    if (!byRestockTime.has(restock.restocked_ts)) byRestockTime.set(restock.restocked_ts, restock);
+  }
 
   function rateWindowForRestock(restockedTs) {
     return rates.find((w) => w.start_ts === restockedTs);
   }
 
   function isRateWindowIgnored(startTs) {
-    const restock = restocks.find((r) => r.restocked_ts === startTs);
-    return Boolean(restock?.ignored);
+    return Boolean(byRestockTime.get(startTs)?.ignored);
   }
 
   function effectiveDepletedTs(r) {
@@ -144,7 +152,7 @@ function createContext({
 
   function adjustedRateWindow(w) {
     if (!restockAmount || w.start_qty >= restockAmount) return w;
-    const restock = restocks.find((r) => r.restocked_ts === w.start_ts);
+    const restock = byRestockTime.get(w.start_ts);
     const startTs =
       restock?.adjusted_restocked_ts != null
         ? restock.adjusted_restocked_ts
@@ -614,4 +622,56 @@ export async function computeSafeWindowsBatch(items, opts = {}) {
     });
   }
   return windows;
+}
+
+export async function computeWorkdayEstimates(items, stocks, { travelType, workdayHours, startTs }) {
+  const [amounts, bounds] = await Promise.all([getAllRestockAmounts(), getAllEmptyForBounds()]);
+  const estimates = {};
+  const forecasts = [];
+
+  for (const item of items) {
+    const { country, itemId, itemsPerTrip, settings } = item;
+    const key = `${country}:${itemId}`;
+    const stock = stocks[country]?.stocks.find((row) => row.id === itemId);
+    if (stock?.snapshot_ts == null) continue;
+    const flightSec = getFlightSeconds(country, travelType);
+    if (itemsPerTrip === 0 || flightSec > workdayHours * 3600) {
+      estimates[key] = { trips: 0, waitingSec: 0 };
+    } else if (bounds[key]?.avgEmptyFor != null) {
+      const sinceTs = settings.rangeHours > 0 ? startTs - Math.round(settings.rangeHours * 3600) : 0;
+      forecasts.push({ ...item, key, stock, flightSec, sinceTs: Math.max(0, sinceTs) });
+    }
+  }
+  if (!forecasts.length) return estimates;
+
+  const history = await getWorkdayRestocks(forecasts);
+  await Promise.all(forecasts.map(async ({ country, itemId, key, stock, flightSec, sinceTs, itemsPerTrip, settings }) => {
+    const events = history.get(key) ?? [];
+    const rates = depletionRatesFromRestocks(events, stock);
+    const restockAmount = amounts[key] ?? null;
+    // Pre-adjustment records still need the chart snapshots for the existing fallback.
+    const needsHistory = restockAmount != null && events.some((row) => !row.ignored &&
+      row.restocked_ts != null && row.adjusted_restocked_ts == null &&
+      row.rate_start_qty > 0 && row.rate_start_qty < restockAmount);
+    const maxAgeDays = settings.historicalRateMaxAgeDays ?? null;
+    const [chartPoints, rateTod] = await Promise.all([
+      needsHistory ? getHistory(country, itemId, sinceTs, { effective: true }) : [],
+      settings.historicalRatePrediction && maxAgeDays == null ? getDepletionRateTod(country, itemId) : null,
+    ]);
+    const ctx = createContext({
+      restocks: events.toReversed(), rates, chartPoints, restockAmount,
+      avgRateSamples: settings.avgRateSamples ?? 3,
+      stockoutTiming: "avg", rateTiming: settings.rateTiming ?? "avg",
+      historicalRatePrediction: settings.historicalRatePrediction === true,
+      maxAgeDays, storedRateTodHours: rateTod?.hours,
+      historySinceTs: sinceTs, currentQty: stock.quantity, currentPollTs: stock.snapshot_ts,
+      wallTs: startTs, emptyForBounds: bounds[key],
+    });
+    const day = planWorkdayTrips({
+      stock, averages: ctx.getAverages(), startTs, workdayHours, flightSec, itemsPerTrip,
+      simulatePredictions: ctx.simulatePredictions,
+    });
+    if (day) estimates[key] = day;
+  }));
+  return estimates;
 }

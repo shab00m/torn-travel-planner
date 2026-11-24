@@ -2,7 +2,7 @@ import express from "express";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { COUNTRIES } from "./src/countries.js";
-import { getFlightMatrix } from "./src/flight-times.js";
+import { getFlightMatrix, isTravelType } from "./src/flight-times.js";
 import {
   initDb,
   ensureAdjustedRestocks,
@@ -36,6 +36,7 @@ import {
 import { getCachedItemTypes, startItemCataloguePolling } from "./src/item-types.js";
 import { getItemDeprecation, setItemDeprecation } from "./src/item-deprecation.js";
 import { computeNextSafeWindow, computeSafeWindowsBatch } from "./src/safe-windows.js";
+import { getSavedWorkdayEstimates, recalculateWorkdayEstimate } from "./src/workday-trips.js";
 import { getDepletionRateTod } from "./src/depletion-rate-tod.js";
 import { requireAdmin, resolveAllowedUser } from "./src/auth.js";
 import { createRestockRebuildJobs } from "./src/restock-rebuild-jobs.js";
@@ -558,6 +559,75 @@ app.post("/api/safe-windows", async (req, res) => {
     res.json({ windows: await computeSafeWindowsBatch(parsed, opts) });
   } catch (err) {
     res.status(400).json({ error: err.message });
+  }
+});
+
+function parseWorkdayOptions({ workdayHours, travelType } = {}) {
+  if (!Number.isFinite(workdayHours) || workdayHours <= 0 || workdayHours > 24) {
+    throw new Error("workdayHours must be greater than 0 and at most 24");
+  }
+  if (!isTravelType(travelType)) {
+    throw new Error("travelType must be a known flight type");
+  }
+  return { workdayHours, travelType };
+}
+
+function parseWorkdayItem({ country, itemId, itemsPerTrip, settings } = {}) {
+  if (typeof country !== "string" || !Object.hasOwn(COUNTRIES, country) ||
+      !Number.isInteger(itemId) || itemId < 1 || itemId > 2147483647 ||
+      !Number.isSafeInteger(itemsPerTrip) || itemsPerTrip < 0) {
+    throw new Error("each item needs a valid country, itemId, and itemsPerTrip");
+  }
+  const { rangeHours = 24, avgRateSamples, rateTiming, historicalRatePrediction, historicalRateMaxAgeDays } = settings ?? {};
+  if (!Number.isFinite(rangeHours) || rangeHours < 0) throw new Error("rangeHours must be non-negative");
+  const options = parseSafeWindowOptions({}, { avgRateSamples, rateTiming, historicalRatePrediction, historicalRateMaxAgeDays });
+  return { country, itemId, itemsPerTrip, settings: { ...options, rangeHours } };
+}
+
+app.post("/api/workday-trips", async (req, res) => {
+  const { items } = req.body ?? {};
+  if (!Array.isArray(items) || items.length < 1 || items.length > 200) {
+    return res.status(400).json({ error: "items must contain 1 to 200 entries" });
+  }
+  let options;
+  const parsed = new Map();
+  try {
+    options = parseWorkdayOptions(req.body);
+    for (const raw of items) {
+      const item = parseWorkdayItem(raw ?? {});
+      parsed.set(`${item.country}:${item.itemId}`, item);
+    }
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  try {
+    const estimates = await getSavedWorkdayEstimates([...parsed.values()], options, readCurrentStocks);
+    res.json({ estimates });
+  } catch (err) {
+    console.error("[workday-trips] Forecast failed:", err.message);
+    res.status(503).json({ error: "Could not estimate workday trips" });
+  }
+});
+
+app.post("/api/items/:country/:itemId/workday-trips/recalculate", requireAdmin, async (req, res) => {
+  const params = parseItemParams(req, res);
+  if (!params) return;
+  let options;
+  let item;
+  try {
+    options = parseWorkdayOptions(req.body);
+    item = parseWorkdayItem({ ...req.body, country: params.country, itemId: params.id });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  try {
+    const estimate = await recalculateWorkdayEstimate(item, options);
+    if (!estimate) return res.status(422).json({ error: "Not enough stock and depletion history to recalculate trips per day" });
+    res.json({ estimate });
+  } catch (err) {
+    console.error("[workday-trips] Recalculation failed:", err.message);
+    res.status(503).json({ error: "Could not recalculate trips per day" });
   }
 });
 

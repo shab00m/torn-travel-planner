@@ -867,6 +867,9 @@ h1 {
 .itemlist-card .col-profit {
 	width: 7rem;
 }
+.itemlist-card .col-profit-day {
+	width: 6.5rem;
+}
 
 .itemlist-card th,
 .itemlist-card td {
@@ -903,7 +906,7 @@ h1 {
 }
 
 .itemlist-card th:last-child,
-.itemlist-card td.profit-hr {
+.itemlist-card td:is(.profit-hr, .profit-day) {
 	font-variant-numeric: tabular-nums;
 }
 
@@ -1014,9 +1017,16 @@ tr.is-hidden-row {
 	}
 }
 
-@media (max-width: 950px) {
-	.favorites-card .col-label-full {
+@media (width < 951px) {
+	.favorites-card .col-label-full,
+	.itemlist-card .col-profit-day {
 		display: none;
+	}
+}
+
+@media (width >= 951px) {
+	.itemlist-card table {
+		width: 100%;
 	}
 }
 
@@ -1147,18 +1157,18 @@ tbody tr:not(:last-child) td {
 	color: var(--green);
 }
 
-td.profit-hr.positive {
+td:is(.profit-hr, .profit-day).positive {
 	color: var(--green);
 	font-weight: 600;
 }
-td.profit-hr.negative {
+td:is(.profit-hr, .profit-day).negative {
 	color: var(--red);
 	font-weight: 600;
 }
-td.profit-hr.neutral {
+td:is(.profit-hr, .profit-day).neutral {
 	color: var(--text-dim);
 }
-td.profit-hr.profit-unavailable {
+td:is(.profit-hr, .profit-day).profit-unavailable {
 	color: var(--text-dim);
 }
 
@@ -1423,7 +1433,7 @@ body.page-item {
 	cursor: not-allowed;
 }
 
-.profit-sell-reset {
+:is(.profit-sell-reset, .profit-workday-recalculate) {
 	background: var(--surface-2);
 	border: 1px solid var(--border);
 	color: var(--text-dim);
@@ -1436,14 +1446,28 @@ body.page-item {
 	flex: 0 0 auto;
 }
 
-.profit-sell-reset:hover:not(:disabled) {
+:is(.profit-sell-reset, .profit-workday-recalculate):hover:not(:disabled) {
 	color: var(--text);
 	border-color: var(--accent);
 }
 
-.profit-sell-reset:disabled {
+:is(.profit-sell-reset, .profit-workday-recalculate):disabled {
 	opacity: 0.55;
 	cursor: not-allowed;
+}
+
+.profit-workday-admin {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px 10px;
+	margin-top: 8px;
+	font-size: 0.78rem;
+	color: var(--text-dim);
+}
+
+.profit-workday-admin.hidden {
+	display: none;
 }
 
 .profit-stats-derived {
