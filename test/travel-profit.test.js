@@ -11,26 +11,25 @@ test("daily travel waits for restocks, skips windows during a trip, and can retu
     averages: { restockSec: 6000, rate: 1, restockQty: 20 },
     rateForCycle: () => 1,
   });
-  const plan = { segments, startTs, flightSec: 4500, itemsPerTrip: 10 };
+  const plan = { segments, startTs, flightSec: 4500 };
 
   // Buy 6,000, 20,400, 34,800 and 49,200 seconds into the day.
   // The preceding windows after each purchase end while the traveler is away
-  // or can no longer be reached in time for a full load.
+  // or can no longer be reached before depletion.
   assert.deepEqual(schedulePurchaseTrips({ ...plan, endTs }), { trips: 4, waitingSec: 17700 });
   assert.equal(schedulePurchaseTrips({ ...plan, endTs: startTs + 49200 }).trips, 4);
   assert.equal(schedulePurchaseTrips({ ...plan, endTs: startTs + 49199 }).trips, 3);
   assert.equal(schedulePurchaseTrips({ ...plan, endTs: startTs + 6000 }).trips, 1);
 });
 
-test("stock on arrival limits repeat trips within the same window", () => {
+test("every in-stock arrival qualifies, including repeat trips late in the window", () => {
   const plan = {
     segments: [{ start_ts: 1000, end_ts: 3400, start_qty: 40, rate: 1 }],
-    startTs: 1000, endTs: 3400, flightSec: 300, itemsPerTrip: 12,
+    startTs: 1000, endTs: 3400, flightSec: 300,
   };
-  // Stock drops to 35 and 25 before purchases. The third arrival would have
-  // 15 units from the forecast, but 24 units have already been bought.
-  assert.deepEqual(schedulePurchaseTrips(plan), { trips: 2, waitingSec: 0 });
-  assert.deepEqual(schedulePurchaseTrips({ ...plan, itemsPerTrip: 36 }), { trips: 0, waitingSec: 0 });
+  // Arrivals on 1300, 1900, 2500 and 3100 all precede depletion at 3400.
+  assert.deepEqual(schedulePurchaseTrips(plan), { trips: 4, waitingSec: 0 });
+  assert.deepEqual(schedulePurchaseTrips({ ...plan, flightSec: 2400, endTs: 3500 }), { trips: 0, waitingSec: 0 });
 });
 
 test("the workday forecast includes a restock exactly at the return departure cutoff", () => {
@@ -38,7 +37,7 @@ test("the workday forecast includes a restock exactly at the return departure cu
   const plan = {
     stock: { snapshot_ts: startTs, quantity: 0 },
     averages: { restockSec: 3600, rate: 1, restockQty: 20 },
-    startTs, workdayHours: 1, flightSec: 1800, itemsPerTrip: 5,
+    startTs, workdayHours: 1, flightSec: 1800,
     simulatePredictions: (startTs, endTs, startQty, averages, nowTs) => simulateStockPredictions({
       startTs, endTs, startQty, averages, nowTs, rateForCycle: () => 1,
     }),

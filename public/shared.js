@@ -1031,10 +1031,14 @@ function getItemSellPrice(country, itemId, marketPrice) {
   return marketPrice ?? null;
 }
 
-function workdayTripItem(country, itemId, itemsPerTrip, source) {
+function getWorkdayProfit(trips, profitPerItem) {
+  return trips == null ? null : trips * state.travelCapacity * profitPerItem;
+}
+
+function workdayTripItem(country, itemId, source) {
   const { rangeHours, avgRateSamples, rateTiming, historicalRatePrediction, historicalRateMaxAgeDays } = source;
   return {
-    country, itemId, itemsPerTrip,
+    country, itemId,
     settings: { rangeHours, avgRateSamples, rateTiming, historicalRatePrediction, historicalRateMaxAgeDays },
   };
 }

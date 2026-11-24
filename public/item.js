@@ -123,11 +123,10 @@ function syncWorkdayAdminControls() {
 
 function syncItemWorkdayEstimate(force = false) {
   const item = profitSell.item;
-  if (item?.cost == null) return;
+  if (!item) return;
   const { country, itemId } = state.item;
   const { workdayHours, travelType } = state;
-  const itemsPerTrip = getMaxPurchaseQty(country, itemId, item.cost);
-  const body = { items: [workdayTripItem(country, itemId, itemsPerTrip, state)], workdayHours, travelType };
+  const body = { items: [workdayTripItem(country, itemId, state)], workdayHours, travelType };
   const key = JSON.stringify(body);
   if (!force && itemWorkday?.key === key) return;
 
@@ -208,7 +207,7 @@ function updateProfitCalcs() {
   );
 
   const day = itemWorkday?.estimate;
-  const profitPerDay = day == null ? null : day.trips * metrics.totalProfit;
+  const profitPerDay = getWorkdayProfit(day?.trips, metrics.profitPerItem);
   setProfitStat(
     el.profitPerDay,
     profitPerDay == null ? "—" : fmtSignedMoney(profitPerDay),
@@ -226,7 +225,8 @@ function updateProfitCalcs() {
     let dayNote = "Daily estimate needs stockout and depletion history";
     if (day) {
       const wait = day.waitingSec > 0 ? ` · ${fmtDuration(day.waitingSec)} waiting before departures` : "";
-      dayNote = `${day.trips} trip${day.trips === 1 ? "" : "s"} in ${fmtNum(state.workdayHours)}h${wait} · Calculated ${fmtTime(day.calculatedAt)}`;
+      const fullLoad = metrics.itemsPerTrip < state.travelCapacity ? " assuming full inventory" : "";
+      dayNote = `${day.trips} trip${day.trips === 1 ? "" : "s"} in ${fmtNum(state.workdayHours)}h${fullLoad}${wait} · Calculated ${fmtTime(day.calculatedAt)}`;
     } else if (itemWorkday?.pending) {
       dayNote = "Loading trip estimate…";
     } else if (itemWorkday?.failed) {

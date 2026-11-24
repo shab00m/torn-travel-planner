@@ -606,10 +606,8 @@ function profitHrCell(country, item) {
 
 function getItemProfitPerDay(country, item, estimate = workdayTrips[restockAmountKey(country, item.id)]) {
 	if (!estimate || item.cost == null) return null;
-	const itemsPerTrip = getMaxPurchaseQty(country, item.id, item.cost);
-	if (estimate.itemsPerTrip !== itemsPerTrip) return null;
 	const sellPrice = getItemSellPrice(country, item.id, state.marketPrices?.[item.id]);
-	return sellPrice == null ? null : estimate.trips * (sellPrice - item.cost) * itemsPerTrip;
+	return sellPrice == null ? null : getWorkdayProfit(estimate.trips, sellPrice - item.cost);
 }
 
 function profitDayCell(country, item) {
@@ -617,7 +615,7 @@ function profitDayCell(country, item) {
 	const profit = getItemProfitPerDay(country, item, estimate);
 	if (profit == null) return '<td class="col-profit-day profit-day profit-unavailable">—</td>';
 	const { trips, calculatedAt } = estimate;
-	const title = `${trips} trip${trips === 1 ? "" : "s"} in ${fmtNum(state.workdayHours)}h · Calculated ${fmtTime(calculatedAt)}`;
+	const title = `${trips} trip${trips === 1 ? "" : "s"} in ${fmtNum(state.workdayHours)}h · ${fmtNum(state.travelCapacity)} slots per trip · Calculated ${fmtTime(calculatedAt)}`;
 	return `<td class="col-profit-day profit-day ${profitValueClass(profit)}" title="${escapeHtml(title)}">${fmtListMoneyHtml(profit)}</td>`;
 }
 
@@ -692,6 +690,7 @@ const WORKDAY_BATCH_SIZE = 200;
 let workdayTrips = {};
 let workdayRequestId = 0;
 let workdayRequestKey = null;
+let workdayTravelType = state.travelType;
 
 async function loadWorkdayTrips() {
 	const sortUsesProfitDay = state.favoritesSort.column === "profitDay" || state.stocksSort.column === "profitDay";
@@ -702,10 +701,10 @@ async function loadWorkdayTrips() {
 	const items = [];
 	for (const [country, destination] of Object.entries(state.stocks)) {
 		for (const item of destination.stocks) {
-			if (item.quantity == null || item.cost == null) continue;
+			if (item.quantity == null) continue;
 			const key = restockAmountKey(country, item.id);
 			const settings = normalizeItemSettings(savedSettings[key], defaults);
-			items.push(workdayTripItem(country, item.id, getMaxPurchaseQty(country, item.id, item.cost), settings));
+			items.push(workdayTripItem(country, item.id, settings));
 		}
 	}
 	const key = JSON.stringify({ items, workdayHours, travelType });
@@ -722,11 +721,7 @@ async function loadWorkdayTrips() {
 				body: { items: batch, workdayHours, travelType },
 			});
 			if (requestId !== workdayRequestId) return;
-			for (const { country, itemId, itemsPerTrip } of batch) {
-				const key = restockAmountKey(country, itemId);
-				const estimate = data.estimates?.[key];
-				if (estimate) trips[key] = { ...estimate, itemsPerTrip };
-			}
+			Object.assign(trips, data.estimates);
 		}
 	} catch {
 		if (requestId === workdayRequestId) workdayRequestKey = null;
@@ -1095,7 +1090,7 @@ function syncMaxBudgetFromInput() {
 	const budget = parseOptionalNumber(el.maxBudget.value);
 	state.maxBudget = budget != null && budget >= 0 ? budget : null;
 	savePrefs({ maxBudget: state.maxBudget });
-	refreshWorkdaySettings();
+	render();
 }
 el.profitMin.addEventListener("change", syncProfitRangeFromInputs);
 el.profitMax.addEventListener("change", syncProfitRangeFromInputs);
@@ -1133,7 +1128,12 @@ window.addEventListener("timeformatchange", () => {
 });
 
 window.addEventListener("travelsettingschange", () => {
-	refreshWorkdaySettings();
+	if (workdayTravelType !== state.travelType) {
+		workdayTravelType = state.travelType;
+		refreshWorkdaySettings();
+	} else {
+		render();
+	}
 	loadSafeWindows();
 });
 
@@ -1240,12 +1240,12 @@ window.addEventListener("favoriteschange", () => {
 });
 
 window.addEventListener("restockamountchange", () => {
-	refreshWorkdaySettings();
+	render();
 	loadSafeWindows();
 });
 
 window.addEventListener("emptyforboundschange", () => {
-	refreshWorkdaySettings();
+	render();
 	loadSafeWindows();
 });
 

@@ -5,7 +5,8 @@ import { computeWorkdayEstimates } from "./safe-windows.js";
 function tripRequest(item, { travelType, workdayHours }) {
   const { rangeHours, avgRateSamples = 3, rateTiming = "avg", historicalRatePrediction = false,
     historicalRateMaxAgeDays = null } = item.settings;
-  const profile = JSON.stringify([travelType, workdayHours, item.itemsPerTrip, rangeHours,
+  // The shorter key also skips saved estimates from the load-dependent calculation.
+  const profile = JSON.stringify([travelType, workdayHours, rangeHours,
     avgRateSamples, rateTiming, historicalRatePrediction, historicalRateMaxAgeDays]);
   return { ...item, key: `${item.country}:${item.itemId}`, profile };
 }

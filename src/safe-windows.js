@@ -630,12 +630,12 @@ export async function computeWorkdayEstimates(items, stocks, { travelType, workd
   const forecasts = [];
 
   for (const item of items) {
-    const { country, itemId, itemsPerTrip, settings } = item;
+    const { country, itemId, settings } = item;
     const key = `${country}:${itemId}`;
     const stock = stocks[country]?.stocks.find((row) => row.id === itemId);
     if (stock?.snapshot_ts == null) continue;
     const flightSec = getFlightSeconds(country, travelType);
-    if (itemsPerTrip === 0 || flightSec > workdayHours * 3600) {
+    if (flightSec > workdayHours * 3600) {
       estimates[key] = { trips: 0, waitingSec: 0 };
     } else if (bounds[key]?.avgEmptyFor != null) {
       const sinceTs = settings.rangeHours > 0 ? startTs - Math.round(settings.rangeHours * 3600) : 0;
@@ -645,7 +645,7 @@ export async function computeWorkdayEstimates(items, stocks, { travelType, workd
   if (!forecasts.length) return estimates;
 
   const history = await getWorkdayRestocks(forecasts);
-  await Promise.all(forecasts.map(async ({ country, itemId, key, stock, flightSec, sinceTs, itemsPerTrip, settings }) => {
+  await Promise.all(forecasts.map(async ({ country, itemId, key, stock, flightSec, sinceTs, settings }) => {
     const events = history.get(key) ?? [];
     const rates = depletionRatesFromRestocks(events, stock);
     const restockAmount = amounts[key] ?? null;
@@ -668,7 +668,7 @@ export async function computeWorkdayEstimates(items, stocks, { travelType, workd
       wallTs: startTs, emptyForBounds: bounds[key],
     });
     const day = planWorkdayTrips({
-      stock, averages: ctx.getAverages(), startTs, workdayHours, flightSec, itemsPerTrip,
+      stock, averages: ctx.getAverages(), startTs, workdayHours, flightSec,
       simulatePredictions: ctx.simulatePredictions,
     });
     if (day) estimates[key] = day;

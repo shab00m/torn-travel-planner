@@ -572,16 +572,15 @@ function parseWorkdayOptions({ workdayHours, travelType } = {}) {
   return { workdayHours, travelType };
 }
 
-function parseWorkdayItem({ country, itemId, itemsPerTrip, settings } = {}) {
+function parseWorkdayItem({ country, itemId, settings } = {}) {
   if (typeof country !== "string" || !Object.hasOwn(COUNTRIES, country) ||
-      !Number.isInteger(itemId) || itemId < 1 || itemId > 2147483647 ||
-      !Number.isSafeInteger(itemsPerTrip) || itemsPerTrip < 0) {
-    throw new Error("each item needs a valid country, itemId, and itemsPerTrip");
+      !Number.isInteger(itemId) || itemId < 1 || itemId > 2147483647) {
+    throw new Error("each item needs a valid country and itemId");
   }
   const { rangeHours = 24, avgRateSamples, rateTiming, historicalRatePrediction, historicalRateMaxAgeDays } = settings ?? {};
   if (!Number.isFinite(rangeHours) || rangeHours < 0) throw new Error("rangeHours must be non-negative");
   const options = parseSafeWindowOptions({}, { avgRateSamples, rateTiming, historicalRatePrediction, historicalRateMaxAgeDays });
-  return { country, itemId, itemsPerTrip, settings: { ...options, rangeHours } };
+  return { country, itemId, settings: { ...options, rangeHours } };
 }
 
 app.post("/api/workday-trips", async (req, res) => {

@@ -100,11 +100,16 @@ test("API-only commits update both stock endpoints and push SSE without a succes
     await admin.query(
       `INSERT INTO ${schema}.empty_for_bounds (country, item_id, avg_empty_for) VALUES ('mex', 3460, 3000)`
     );
-    const estimate = (workdayHours, settings = {}) => fetch(`${base}/api/workday-trips`, {
+    await admin.query(
+      `INSERT INTO ${schema}.travel_items (country, item_id, workday_trips) VALUES ('mex', 3460, $1)
+       ON CONFLICT (country, item_id) DO UPDATE SET workday_trips = EXCLUDED.workday_trips`,
+      [{ [JSON.stringify(["Standard", 0.5, 5, 24, 3, "avg", false, null])]: { trips: 0, waitingSec: 0, calculatedAt: ts } }]
+    );
+    const estimate = (workdayHours, settings = {}, legacyItemsPerTrip) => fetch(`${base}/api/workday-trips`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ travelType: "Standard", workdayHours, items: [
-        { country: "mex", itemId: 3460, itemsPerTrip: 5, settings },
-        { country: "mex", itemId: 999999, itemsPerTrip: 5, settings },
+        { country: "mex", itemId: 3460, itemsPerTrip: legacyItemsPerTrip, settings },
+        { country: "mex", itemId: 999999, settings },
       ] }),
     });
     const headers = { "Content-Type": "application/json", "X-Api-Key": "admin-test-key" };
@@ -114,6 +119,7 @@ test("API-only commits update both stock endpoints and push SSE without a succes
     assert.equal(firstEstimate.status, 200);
     const saved = (await firstEstimate.json()).estimates["mex:3460"];
     assert.equal(saved.trips, 1);
+    assert.deepEqual((await (await estimate(0.5, {}, 0)).json()).estimates["mex:3460"], saved);
     assert.equal((await (await estimate(0.25)).json()).estimates["mex:3460"].trips, 0);
     assert.deepEqual(await (await estimate(0.5, { rangeHours: 0.01 })).json(), { estimates: {} });
     assert.equal((await estimate(25)).status, 400);
@@ -124,7 +130,7 @@ test("API-only commits update both stock endpoints and push SSE without a succes
     assert.deepEqual((await (await estimate(0.5)).json()).estimates["mex:3460"], saved);
     const recalculate = (headers) => fetch(`${base}/api/items/mex/3460/workday-trips/recalculate`, {
       method: "POST", headers,
-      body: JSON.stringify({ travelType: "Standard", workdayHours: 0.5, itemsPerTrip: 5 }),
+      body: JSON.stringify({ travelType: "Standard", workdayHours: 0.5 }),
     });
     assert.equal((await recalculate({ "Content-Type": "application/json" })).status, 401);
     assert.equal((await recalculate(regularHeaders)).status, 403);
@@ -134,7 +140,7 @@ test("API-only commits update both stock endpoints and push SSE without a succes
     assert.equal(refreshed.trips, 0);
     assert.deepEqual((await (await estimate(0.5)).json()).estimates["mex:3460"], refreshed);
     const persisted = await admin.query(`SELECT workday_trips FROM ${schema}.travel_items WHERE country = 'mex' AND item_id = 3460`);
-    assert.equal(Object.keys(persisted.rows[0].workday_trips).length, 2);
+    assert.equal(Object.keys(persisted.rows[0].workday_trips).length, 3);
     assert.ok(Object.values(persisted.rows[0].workday_trips).some((record) => record.trips === 0));
     while (!frames.includes('"workday_trips":true')) frames += decoder.decode((await reader.read()).value);
     frames = "";

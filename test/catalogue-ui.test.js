@@ -50,3 +50,14 @@ test("stock refresh discovers new types while the initial type request is still 
   assert.equal(state.itemTypes[198], "Drug");
   assert.match(context.el.status.textContent, /Awaiting stock reports/);
 });
+
+test("daily profit uses the saved trip count and full inventory capacity", () => {
+  const state = { travelCapacity: 5, maxBudget: 0, marketPrices: { 198: 150 } };
+  const context = vm.createContext({ state, getItemSellPrice: (_country, _itemId, value) => value });
+  vm.runInContext(`${fn(shared, "getWorkdayProfit")}\n${fn(app, "getItemProfitPerDay")}`, context);
+  const item = { id: 198, cost: 100 };
+  const estimate = { trips: 2 };
+  assert.equal(context.getItemProfitPerDay("sou", item, estimate), 500);
+  state.travelCapacity = 15;
+  assert.equal(context.getItemProfitPerDay("sou", item, estimate), 1500);
+});

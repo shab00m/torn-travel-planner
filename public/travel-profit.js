@@ -1,31 +1,26 @@
-export function planWorkdayTrips({ stock, averages, startTs, workdayHours, flightSec, itemsPerTrip, simulatePredictions }) {
+export function planWorkdayTrips({ stock, averages, startTs, workdayHours, flightSec, simulatePredictions }) {
   const endTs = startTs + workdayHours * 3600;
-  if (itemsPerTrip <= 0 || startTs + flightSec > endTs) return { trips: 0, waitingSec: 0 };
+  if (startTs + flightSec > endTs) return { trips: 0, waitingSec: 0 };
   if (!stock || !averages || !(averages.rate > 0) || !(averages.restockQty > 0)) return null;
 
   // Include the cutoff itself in the forecast for a return flight leaving right then.
   const { segments } = simulatePredictions(stock.snapshot_ts, endTs + 1, stock.quantity, averages, startTs);
-  return schedulePurchaseTrips({ segments, startTs, endTs, flightSec, itemsPerTrip });
+  return schedulePurchaseTrips({ segments, startTs, endTs, flightSec });
 }
 
-/** Schedule full-load trips whose return flights can depart by the workday cutoff. */
-export function schedulePurchaseTrips({ segments, startTs, endTs, flightSec, itemsPerTrip }) {
+/** Treat any arrival during a predicted in-stock window as a full load. */
+export function schedulePurchaseTrips({ segments, startTs, endTs, flightSec }) {
   let readyTs = startTs;
   let trips = 0;
   let waitingSec = 0;
-  if (!(flightSec > 0) || !(itemsPerTrip > 0)) return { trips, waitingSec };
+  if (!(flightSec > 0)) return { trips, waitingSec };
 
   for (const segment of segments) {
-    let purchased = 0;
     let arriveTs = Math.max(readyTs + flightSec, segment.start_ts);
     while (arriveTs < segment.end_ts && arriveTs <= endTs) {
-      const remaining = segment.start_qty - segment.rate * ((arriveTs - segment.start_ts) / 60) - purchased;
-      if (remaining < itemsPerTrip) break;
-
       waitingSec += arriveTs - flightSec - readyTs;
       readyTs = arriveTs + flightSec;
       trips++;
-      purchased += itemsPerTrip;
       arriveTs = readyTs + flightSec;
     }
     if (readyTs + flightSec > endTs) break;
