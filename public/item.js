@@ -52,6 +52,8 @@ const el = {
   profitTotalCost: document.getElementById("profit-total-cost"),
   profitTotal: document.getElementById("profit-total"),
   profitPerHour: document.getElementById("profit-per-hour"),
+  profitPerItemHour: document.getElementById("profit-per-item-hour"),
+  profitPerDay: document.getElementById("profit-per-day"),
   profitNote: document.getElementById("profit-note"),
   inspectControls: document.getElementById("inspect-controls"),
   inspectToggle: document.getElementById("inspect-toggle"),
@@ -105,6 +107,25 @@ function syncSellPriceInput(marketPrice) {
   el.profitSell.value = String(stored ?? marketPrice);
 }
 
+function estimateWorkdayTrips(item, { itemsPerTrip, roundTripSec }, nowTs) {
+  const flightSec = roundTripSec / 2;
+  const endTs = nowTs + state.workdayHours * 3600;
+  if (itemsPerTrip <= 0 || nowTs + flightSec > endTs) return { trips: 0, waitingSec: 0 };
+
+  const restockSec = currentEmptyForBounds().avgEmptyFor;
+  if (restockSec == null) return null;
+  const averages = getAverages(restockSec);
+  if (!averages || !(averages.rate > 0) || !(averages.restockQty > 0)) return null;
+
+  const latest = state.chartPoints.at(-1);
+  const stock = latest?.snapshot_ts > item.snapshot_ts ? latest : item;
+  // Include the cutoff itself in the forecast for a return flight leaving right then.
+  const { segments } = simulatePredictions(stock.snapshot_ts, endTs + 1, stock.quantity, averages, nowTs);
+  return window.TravelProfit.schedulePurchaseTrips({
+    segments, startTs: nowTs, endTs, flightSec, itemsPerTrip,
+  });
+}
+
 function updateProfitCalcs() {
   const item = profitSell.item;
   if (!item || profitSell.marketPrice == null) return;
@@ -128,6 +149,19 @@ function updateProfitCalcs() {
     fmtProfitPerHour(metrics.profitPerHour),
     profitValueClass(metrics.profitPerHour)
   );
+  setProfitStat(
+    el.profitPerItemHour,
+    fmtProfitPerHour(metrics.profitPerItemHour),
+    profitValueClass(metrics.profitPerItemHour)
+  );
+
+  const day = estimateWorkdayTrips(item, metrics, Math.floor(Date.now() / 1000));
+  const profitPerDay = day == null ? null : day.trips * metrics.totalProfit;
+  setProfitStat(
+    el.profitPerDay,
+    profitPerDay == null ? "—" : fmtSignedMoney(profitPerDay),
+    profitPerDay == null ? null : profitValueClass(profitPerDay)
+  );
 
   if (el.profitNote) {
     const restock = getRestockAmount(item.country, item.itemId);
@@ -137,8 +171,11 @@ function updateProfitCalcs() {
       state.maxBudget != null && metrics.itemsPerTrip < state.travelCapacity && (restock == null || metrics.itemsPerTrip < restock)
         ? ` · budget ${fmtMoney(state.maxBudget)}`
         : "";
+    const dayNote = day == null
+      ? "Daily estimate needs stockout and depletion history"
+      : `${day.trips} trip${day.trips === 1 ? "" : "s"} in ${fmtNum(state.workdayHours)}h${day.waitingSec > 0 ? ` · ${fmtDuration(day.waitingSec)} waiting before departures` : ""}`;
     el.profitNote.textContent =
-      `${fmtNum(metrics.itemsPerTrip)} item${metrics.itemsPerTrip === 1 ? "" : "s"} per trip · ${state.travelCapacity} slots${restockNote}${budgetNote} · ${fmtDuration(metrics.roundTripSec)} round trip (${state.travelType})`;
+      `${fmtNum(metrics.itemsPerTrip)} item${metrics.itemsPerTrip === 1 ? "" : "s"} per trip · ${state.travelCapacity} slots${restockNote}${budgetNote} · ${fmtDuration(metrics.roundTripSec)} round trip (${state.travelType}) · ${dayNote}`;
     el.profitNote.classList.remove("hidden");
   }
 }
@@ -973,8 +1010,7 @@ function rateForAverages() {
   return rateFromHistory();
 }
 
-function getAverages() {
-  const restockSec = stockoutSecFromHistory();
+function getAverages(restockSec = stockoutSecFromHistory()) {
   const rate = rateForAverages();
   if (restockSec == null || rate == null) return null;
   const configuredQty = currentRestockAmount();
@@ -1978,7 +2014,10 @@ function renderProfitEstimate(item, marketPrice) {
   if (!el.profitEstimate) return;
 
   const resetValues = () => {
-    for (const node of [el.profitBuy, el.profitMarket, el.profitPerItem, el.profitTotalCost, el.profitTotal, el.profitPerHour]) {
+    for (const node of [
+      el.profitBuy, el.profitMarket, el.profitPerItem, el.profitTotalCost,
+      el.profitTotal, el.profitPerHour, el.profitPerItemHour, el.profitPerDay,
+    ]) {
       setProfitStat(node, "—");
     }
   };
@@ -1992,6 +2031,8 @@ function renderProfitEstimate(item, marketPrice) {
   el.profitEstimate.classList.remove("hidden");
   resetValues();
   showNote("");
+  profitSell.item = null;
+  profitSell.marketPrice = null;
   setProfitSellEnabled(false);
   if (el.profitSell) el.profitSell.value = "";
 
@@ -2556,6 +2597,7 @@ function refreshChart(timeline, { resetView = false } = {}) {
   itemViewportRestore.followLive = false;
   state.lastTimeline = timeline;
   state.predictedEvents = timeline.events ?? [];
+  updateProfitCalcs();
   const dataTs = timeline.dataTs;
   const endTs = Math.round(timeline.xMax / 1000);
   const startQty = predictionStartQty();
@@ -3054,7 +3096,10 @@ async function drawChart() {
 }
 
 function redrawPrediction() {
-  if (!state.item || !state.chartPoints.length) return;
+  if (!state.item || !state.chartPoints.length) {
+    updateProfitCalcs();
+    return;
+  }
   const timeline = buildTimeline(state.chartPoints, state.predictionHours);
   refreshChart(timeline);
 }
@@ -3187,14 +3232,6 @@ function setupItemPage(item) {
   }
 }
 
-function refreshRestockAdjustments() {
-  renderCycleHistory();
-  if (typeof syncActiveItemChartView === "function") syncActiveItemChartView();
-  if (!state.chartPoints.length) return;
-  const timeline = buildTimeline(state.chartPoints, state.predictionHours);
-  refreshChart(timeline);
-}
-
 function loadRestockData({ restocks, rates, rateTod } = {}) {
   if (restocks) {
     state.restocks = restocks;
@@ -3209,10 +3246,7 @@ function loadRestockData({ restocks, rates, rateTod } = {}) {
 function refreshRestockViews() {
   renderCycleHistory();
   if (typeof syncActiveItemChartView === "function") syncActiveItemChartView();
-  if (state.chartPoints.length) {
-    const timeline = buildTimeline(state.chartPoints, state.predictionHours);
-    refreshChart(timeline);
-  }
+  redrawPrediction();
 }
 
 async function setCycleIgnored(depletedTs, ignored) {
@@ -3705,11 +3739,14 @@ window.addEventListener("restockamountchange", () => {
   updateProfitCalcs();
 });
 
+window.addEventListener("workdayhourschange", updateProfitCalcs);
+
 (async () => {
-  const [adjustMod, boundsMod, predictionsMod] = await Promise.all([
+  const [adjustMod, boundsMod, predictionsMod, travelProfitMod] = await Promise.all([
     import("/adjust-restock-time.js"),
     import("/empty-for-bounds.js"),
     import("/stock-predictions.js"),
+    import("/travel-profit.js"),
   ]);
   window.AdjustRestockTime = {
     adjustRestockTime: adjustMod.adjustRestockTime,
@@ -3718,6 +3755,7 @@ window.addEventListener("restockamountchange", () => {
   };
   window.EmptyForBounds = boundsMod;
   window.StockPredictions = predictionsMod;
+  window.TravelProfit = travelProfitMod;
   await window.authReady;
   syncInspectAdminAccess();
   await loadCountries();
@@ -3732,17 +3770,20 @@ window.addEventListener("restockamountchange", () => {
     refreshItemDeprecation(),
     loadRestockAmountForItem(item.country, item.itemId).then(() => {
       el.restockAmount.value = getRestockAmount(item.country, item.itemId) ?? "";
-      refreshRestockAdjustments();
+      refreshRestockViews();
     }),
     loadEmptyForBoundsForItem(item.country, item.itemId).then(() => {
       fillEmptyForBoundInputs();
-      refreshRestockAdjustments();
+      refreshRestockViews();
     }),
     drawChart(),
     loadCurrentStock(),
     refreshTravelStatus(),
   ]);
   startLiveChartTicker();
+  setInterval(() => {
+    if (!document.hidden) updateProfitCalcs();
+  }, 60_000);
   startStockUpdateWatcher(async () => {
     await Promise.all([drawChart(), loadCurrentStock(), refreshTravelStatus()]);
     // Re-sync after stock+restocks are both fresh (early restock may need qty).

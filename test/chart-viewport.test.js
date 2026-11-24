@@ -36,6 +36,7 @@ function harness() {
     rebuildLastZeroLookup() {}, loadRestockData() {}, renderCycleHistory() {},
     buildTimeline: () => ({ ...nextTimeline }),
     predictionStartQty: () => null, renderPredictionPanel() {}, chartDatasets: () => [],
+    updateProfitCalcs() {},
     syncOffsetInput() {}, syncScaleInput() {}, syncChartViewInteraction() {},
     updateChartMarkers() {}, repositionChartMarkers() {}, renderSnapshotInspector() {},
     buildAnnotations: () => ({}), updateTimeMarkers() {},

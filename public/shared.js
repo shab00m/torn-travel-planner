@@ -11,6 +11,7 @@ const state = {
   profitMin: null, // number | null — profit/hr lower bound
   profitMax: null, // number | null — profit/hr upper bound
   maxBudget: null, // number | null — cap purchase qty so total cost stays under this
+  workdayHours: 16,
   itemTypes: null, // { [itemId]: typeString } from items.item_type via /api/item-types
   itemTypesStatus: null, // null | "empty" | "ready" | "error"
   chart: null,
@@ -158,6 +159,7 @@ function applyStoredPrefs() {
   state.profitMax = parseOptionalNumber(prefs.profitMax);
   const budget = parseOptionalNumber(prefs.maxBudget);
   state.maxBudget = budget != null && budget >= 0 ? budget : null;
+  state.workdayHours = parseWorkdayHours(prefs.workdayHours) ?? state.workdayHours;
   state.timeFormat = TIME_FORMATS.includes(prefs.timeFormat) ? prefs.timeFormat : "european";
   state.timeZone = TIME_ZONES.includes(prefs.timeZone) ? prefs.timeZone : "local";
   state.flightTimeVariance = prefs.flightTimeVariance !== false;
@@ -367,13 +369,18 @@ function setSettingsOpen(open) {
   }
 }
 
+function parseWorkdayHours(value) {
+  const hours = parseOptionalNumber(value);
+  return hours > 0 && hours <= 24 ? hours : null;
+}
+
 function siteSettingsPanelHtml() {
   return `
     <div id="settings-panel" class="settings-panel hidden">
       <div id="guest-travel" class="guest-travel settings-group">
         <span class="settings-group-title">Travel (guest)</span>
         <div class="settings-group-controls">
-          <label class="guest-travel-field" title="Flight travel type">
+          <label class="settings-field" title="Flight travel type">
             <span class="guest-travel-label">Flight</span>
             <select id="guest-travel-type">
               <option value="Standard">🎫 Standard</option>
@@ -382,10 +389,20 @@ function siteSettingsPanelHtml() {
               <option value="Business">💼 Business</option>
             </select>
           </label>
-          <label class="guest-travel-field" title="Travel item inventory slots">
+          <label class="settings-field" title="Travel item inventory slots">
             <span class="guest-travel-label">🧳</span>
             <input id="guest-capacity" type="number" min="1" step="1" />
             <span class="guest-travel-suffix">slots</span>
+          </label>
+        </div>
+      </div>
+      <div class="settings-group">
+        <span class="settings-group-title">Profit estimate</span>
+        <div class="settings-group-controls">
+          <label class="settings-field">
+            <span>Workday</span>
+            <input id="workday-hours" type="number" min="0" max="24" step="any" />
+            <span>hours</span>
           </label>
         </div>
       </div>
@@ -434,6 +451,17 @@ function injectSiteSettings() {
   wrap.innerHTML = siteSettingsPanelHtml().trim();
   const panel = wrap.firstElementChild;
   header.appendChild(panel);
+
+  const workdayHours = panel.querySelector("#workday-hours");
+  workdayHours.value = String(state.workdayHours);
+  workdayHours.addEventListener("change", () => {
+    const hours = parseWorkdayHours(workdayHours.value);
+    workdayHours.value = String(hours ?? state.workdayHours);
+    if (hours == null || hours === state.workdayHours) return;
+    state.workdayHours = hours;
+    savePrefs({ workdayHours: hours });
+    window.dispatchEvent(new CustomEvent("workdayhourschange"));
+  });
 
   toggle.addEventListener("click", () => {
     setSettingsOpen(!isSettingsOpen());
@@ -988,6 +1016,7 @@ function computeProfitMetrics({ buyPrice, sellPrice, country, itemId }) {
     buyPrice,
     sellPrice,
     profitPerItem,
+    profitPerItemHour: profitPerItem / (roundTripSec / 3600),
     totalCost,
     totalProfit,
     profitPerHour,

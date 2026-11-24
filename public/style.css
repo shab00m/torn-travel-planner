@@ -554,7 +554,7 @@ h1 {
 	display: none;
 }
 
-.guest-travel-field {
+.settings-field {
 	display: flex;
 	align-items: center;
 	gap: 6px;
@@ -567,8 +567,8 @@ h1 {
 	white-space: nowrap;
 }
 
-.guest-travel-field select,
-.guest-travel-field input {
+.settings-field select,
+.settings-field input {
 	background: var(--surface-2);
 	border: 1px solid var(--border);
 	color: var(--text);
@@ -578,15 +578,15 @@ h1 {
 	font-size: 0.85rem;
 }
 
-.guest-travel-field select {
+.settings-field select {
 	cursor: pointer;
 }
-.guest-travel-field input {
+.settings-field input {
 	width: 3.5rem;
 	text-align: center;
 }
-.guest-travel-field select:focus,
-.guest-travel-field input:focus {
+.settings-field select:focus,
+.settings-field input:focus {
 	outline: 1px solid var(--accent);
 }
 
@@ -1313,7 +1313,8 @@ body.page-item {
 }
 
 .profit-estimate {
-	min-width: 24rem;
+	min-width: min(24rem, 100%);
+	max-width: 100%;
 }
 
 .profit-stats {
@@ -1324,7 +1325,7 @@ body.page-item {
 
 .profit-stats-prices {
 	display: flex;
-	flex-wrap: nowrap;
+	flex-wrap: wrap;
 	align-items: flex-start;
 	gap: 14px;
 }
@@ -1334,7 +1335,7 @@ body.page-item {
 }
 
 .profit-stats-prices .profit-stat-sell {
-	flex: 1 1 auto;
+	flex: 1 0 8.5rem;
 	min-width: 0;
 }
 
